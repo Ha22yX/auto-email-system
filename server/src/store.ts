@@ -114,75 +114,91 @@ function isFinancialRecordEmail(email: ProcessedEmail) {
     email.fromAddress,
     email.toText,
     email.summaryZh,
-    email.reasonZh,
-    email.originalText,
-    email.rawSource
+    email.originalText
   ]
     .filter(Boolean)
     .join("\n")
     .toLowerCase();
-  const financialTerms = [
-    "payment",
-    "autopay",
-    "auto pay",
-    "billing",
-    "bill",
-    "invoice",
-    "receipt",
-    "charge",
-    "charged",
-    "paid",
-    "transaction",
-    "statement",
-    "order",
-    "subscription",
-    "renewal",
-    "credit card",
-    "card ending",
-    "付款",
-    "支付",
-    "扣款",
-    "自动付款",
-    "自动扣款",
-    "账单",
-    "发票",
-    "收据",
-    "回执",
-    "交易",
-    "订单",
-    "续费",
-    "信用卡"
-  ];
-  const recordTerms = [
-    "confirmation",
-    "confirmed",
-    "receipt",
-    "successful",
-    "succeeded",
-    "processed",
-    "paid",
-    "charged",
+  const subject = (email.subject || "").toLowerCase();
+  const recordPhrases = [
     "autopay confirmation",
+    "auto pay confirmation",
+    "autopay payment",
     "payment confirmation",
     "payment received",
-    "order confirmation",
+    "payment receipt",
+    "payment in the amount",
+    "thanks for your autopay payment",
+    "invoice",
+    "receipt",
+    "receipt number",
+    "billing statement",
+    "statement is ready",
     "transaction receipt",
-    "确认",
-    "成功",
+    "transaction id",
+    "confirmation number",
+    "has been charged",
+    "was charged",
+    "charged your",
+    "charged to",
+    "card ending",
+    "credit card account ending",
+    "order confirmation",
+    "order confirmed",
+    "your order has been confirmed",
+    "order receipt",
+    "subscription renewed",
+    "renewal confirmation",
+    "transaction receipt",
+    "付款确认",
+    "付款回执",
+    "付款成功",
     "已付款",
     "已支付",
     "已扣款",
     "扣款成功",
     "支付成功",
-    "付款成功",
     "成功扣除",
-    "回执",
+    "账单",
+    "发票",
     "收据",
     "凭证",
+    "交易凭证",
+    "确认号",
     "订单确认"
   ];
+  const promotionalSubjectTerms = [
+    "% off",
+    "off ",
+    " sale",
+    "flash sale",
+    "discount",
+    "deal",
+    "coupon",
+    "offer",
+    "promo",
+    "promotion",
+    "折扣",
+    "优惠",
+    "促销",
+    "闪购"
+  ];
+  const hasRecordPhrase = includesAny(text, recordPhrases) || includesAny(subject, recordPhrases);
+  if (!hasRecordPhrase) return false;
 
-  return includesAny(text, financialTerms) && includesAny(text, recordTerms);
+  if (!isPromotionalOrNewsEmail(email)) return true;
+  return !includesAny(subject, promotionalSubjectTerms) || includesAny(subject, [
+    "receipt",
+    "invoice",
+    "payment",
+    "autopay",
+    "order confirmation",
+    "收据",
+    "发票",
+    "付款",
+    "扣款",
+    "订单确认"
+  ]);
 }
 
 function processedEmailText(email: ProcessedEmail) {
