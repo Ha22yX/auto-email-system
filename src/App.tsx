@@ -167,6 +167,7 @@ function App() {
 
   const activeMailboxName =
     selectedMailbox === "all" ? "全部邮箱" : mailboxMap.get(selectedMailbox)?.name || "当前邮箱";
+  const pageEyebrow = view === "mail" ? activeMailboxName : "系统配置";
 
   return (
     <div className="app-shell">
@@ -182,10 +183,36 @@ function App() {
         </div>
 
         <nav className="nav-stack">
-          <button className={view === "mail" ? "nav-item active" : "nav-item"} onClick={() => setView("mail")}>
-            <SealCheck size={18} />
-            处理台
-          </button>
+          <div className={view === "mail" ? "nav-group active" : "nav-group"}>
+            <button className={view === "mail" ? "nav-item active" : "nav-item"} onClick={() => setView("mail")}>
+              <SealCheck size={18} />
+              处理台
+            </button>
+            {view === "mail" && (
+              <div className="mailbox-submenu" aria-label="处理台邮箱视图">
+                <p className="submenu-label">邮箱视图</p>
+                <button
+                  className={selectedMailbox === "all" ? "mailbox-chip active" : "mailbox-chip"}
+                  onClick={() => setSelectedMailbox("all")}
+                >
+                  <MailboxIcon size={17} />
+                  <span>全部邮箱</span>
+                  <em>{dashboard?.total ?? 0}</em>
+                </button>
+                {dashboard?.mailboxes.map((mailbox) => (
+                  <button
+                    key={mailbox.id}
+                    className={selectedMailbox === mailbox.id ? "mailbox-chip active" : "mailbox-chip"}
+                    onClick={() => setSelectedMailbox(mailbox.id)}
+                  >
+                    <span className={mailbox.enabled ? "status-dot online" : "status-dot"} />
+                    <span>{mailbox.name}</span>
+                    <em>{mailbox.protocol.toUpperCase()}</em>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             className={view === "settings" ? "nav-item active" : "nav-item"}
             onClick={() => setView("settings")}
@@ -194,29 +221,6 @@ function App() {
             管理设置
           </button>
         </nav>
-
-        <div className="mailbox-filter">
-          <p className="section-kicker">邮箱视图</p>
-          <button
-            className={selectedMailbox === "all" ? "mailbox-chip active" : "mailbox-chip"}
-            onClick={() => setSelectedMailbox("all")}
-          >
-            <MailboxIcon size={17} />
-            <span>全部邮箱</span>
-            <em>{dashboard?.total ?? 0}</em>
-          </button>
-          {dashboard?.mailboxes.map((mailbox) => (
-            <button
-              key={mailbox.id}
-              className={selectedMailbox === mailbox.id ? "mailbox-chip active" : "mailbox-chip"}
-              onClick={() => setSelectedMailbox(mailbox.id)}
-            >
-              <span className={mailbox.enabled ? "status-dot online" : "status-dot"} />
-              <span>{mailbox.name}</span>
-              <em>{mailbox.protocol.toUpperCase()}</em>
-            </button>
-          ))}
-        </div>
 
         <div className="side-footer">
           <ClockCounterClockwise size={17} />
@@ -231,7 +235,7 @@ function App() {
       <main className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">{activeMailboxName}</p>
+            <p className="eyebrow">{pageEyebrow}</p>
             <h1>{view === "mail" ? "邮件处理台" : "管理设置"}</h1>
           </div>
           <div className="topbar-actions">

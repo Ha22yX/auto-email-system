@@ -99,9 +99,28 @@ button:disabled {
 }
 
 .nav-stack,
-.mailbox-filter {
+.nav-group,
+.mailbox-submenu {
   display: grid;
   gap: 8px;
+}
+
+.nav-group.active {
+  gap: 10px;
+}
+
+.mailbox-submenu {
+  margin-left: 15px;
+  padding-left: 12px;
+  border-left: 1px solid rgb(32 90 75 / 0.18);
+}
+
+.submenu-label {
+  margin: 0 0 2px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .nav-item,
@@ -136,7 +155,13 @@ button:disabled {
 
 .mailbox-chip {
   justify-content: flex-start;
+  min-height: 38px;
   width: 100%;
+}
+
+.mailbox-submenu .mailbox-chip {
+  padding: 0 10px;
+  font-size: 13px;
 }
 
 .mailbox-chip span:nth-child(2),
