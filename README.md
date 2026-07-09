@@ -2,10 +2,14 @@
   <img src="public/favicon.svg" width="72" height="72" alt="Auto Email System logo" />
 </p>
 
-<h1 align="center">自动邮件系统</h1>
+<h1 align="center">Auto Email System</h1>
 
 <p align="center">
-  一个会读邮件、判断轻重缓急、生成中文摘要，并把重要事项推送到微信的 AI Inbox Console。
+  An AI inbox console that reads unread mail, triages what matters, writes Chinese summaries, and can notify you through WeChat.
+</p>
+
+<p align="center">
+  <a href="README.zh-CN.md">中文版本</a>
 </p>
 
 <p align="center">
@@ -19,80 +23,79 @@
   <img src="docs/readme-hero.svg" alt="Auto Email System interface concept" />
 </p>
 
-## 这是什么
+## What It Is
 
-自动邮件系统不是另一个收件箱客户端，而是一个面向“处理结果”的邮件控制台。它会定时读取多个邮箱里的未读邮件，用 AI 判断每封邮件是否值得你看，然后把邮件整理成三类：
+Auto Email System is not another inbox client. It is a result-oriented email control center: it scans unread messages from one or more mailboxes, asks AI to decide whether each message is worth your attention, and turns the chaos into three clean queues.
 
-| 分类 | 适合放什么 | 默认处理方式 |
+| Queue | What belongs here | Default behavior |
 | --- | --- | --- |
-| 重要 | 老师、学校事务、账号安全、付款异常、合同、截止日期、需要回复的邮件 | 留在处理台，系统内默认未读，可微信通知 |
-| 次重要 | 付款回执、订单确认、账单记录、一般通知、之后可以看的资料 | 点击即系统内已读，可按需微信通知 |
-| 不用管 | 推广、招生广告、新闻简报、订阅营销、社交提醒、低价值通知 | 自动归档为系统已读 |
+| Important | Teachers, school staff, security alerts, payment problems, contracts, deadlines, replies required | Kept unread inside the console, can trigger WeChat notifications |
+| Secondary | Payment receipts, order confirmations, billing records, general notices, useful-but-not-urgent information | Marked read when opened, optional notifications |
+| Ignore | Promotions, admissions marketing, newsletters, subscriptions, social reminders, low-value notices | Archived as system-read |
 
-每封邮件都会有中文摘要、判断理由、建议动作和原件预览。你不需要在一堆英文邮件里猜重点，系统会把该看的东西递到你面前。
+Every processed email gets a Chinese summary, classification reason, suggested actions, and a safe original-email preview. The goal is simple: stop reading everything, and start seeing only what matters.
 
-## 项目亮点
+## Why It Feels Different
 
-| 能力 | 说明 |
+| Capability | Why it matters |
 | --- | --- |
-| 多邮箱处理 | 支持 IMAP 和 POP3，可分别查看每个邮箱，也可汇总全部邮箱。 |
-| AI 分类摘要 | 默认面向智谱 GLM Coding Plan，可在管理面板修改 Base URL、模型、API Key 和 temperature。 |
-| 多模态识别 | 邮件内嵌图片、图片附件和 PDF 可交给 GLM-5V-Turbo 分析，避免重要内容藏在图片或附件里被漏掉。 |
-| 实时入库 | 处理完一封就入库一封，确认入库后才标记邮箱已读，避免中断任务造成漏处理。 |
-| 邮件原件安全预览 | 原件在 sandbox iframe 中渲染，脚本、表单、插件被禁用，远程图片通过本地安全代理加载。 |
-| 系统内已读/未读 | 重要邮件停留 2 秒后才标记系统已读，次重要邮件点击即已读，也支持右键改状态。 |
-| 微信通知 | 集成项目内 WeClaw/ClawBot 桥接，重要邮件可自动推送到扫码绑定的微信。 |
-| 管理面板 | 配置 AI、邮箱、轮询策略、自动加载图片、微信通知、登录密码等。 |
-| 自托管部署 | 单个 Node 服务即可运行，适合本地、VPS、宝塔 Node 项目或其他 Node 托管环境。 |
+| Multi-mailbox processing | Add IMAP and POP3 accounts, then view each mailbox separately or all mail together. |
+| AI triage and summaries | Configure provider name, Base URL, model, API key, and temperature from the admin panel. |
+| Multimodal understanding | Built-in support for GLM-5V-Turbo to inspect embedded images, image attachments, and PDFs so important content does not hide inside files. |
+| Real-time persistence | Each email is saved as soon as it is processed. The original mailbox is marked read only after the record is safely stored. |
+| Safe original preview | Email HTML is rendered in a sandboxed iframe. Scripts, forms, plugins, unsafe links, and unsafe image loads are blocked. |
+| Internal read state | Important mail stays system-unread until you spend time in the detail view. Secondary mail becomes read on click. Right-click toggles are supported. |
+| WeChat notifications | Integrated WeClaw / ClawBot bridge can push important email summaries to a bound WeChat account. |
+| Self-hosted control | Runs as a single Node app with local JSON storage. Works locally, on a VPS, or as a Baota / BT Panel Node project. |
 
-## 工作流
+## Workflow
 
 ```mermaid
 flowchart LR
-  A["IMAP / POP3 邮箱"] --> B["读取未读邮件"]
-  B --> C["解析正文、HTML、附件、内嵌图片"]
-  C --> D["AI / 多模态分析"]
-  D --> E{"重要程度"}
-  E -->|重要| F["处理台：重要"]
-  E -->|次重要| G["处理台：次重要"]
-  E -->|不用管| H["自动归档"]
-  F --> I["微信通知"]
-  G --> J["可选通知"]
-  F --> K["确认入库后标记邮箱已读"]
+  A["IMAP / POP3 mailboxes"] --> B["Fetch unread messages"]
+  B --> C["Parse text, HTML, attachments, embedded images"]
+  C --> D["AI + multimodal analysis"]
+  D --> E{"Priority"}
+  E -->|Important| F["Important queue"]
+  E -->|Secondary| G["Secondary queue"]
+  E -->|Ignore| H["Auto archive"]
+  F --> I["WeChat notification"]
+  G --> J["Optional notification"]
+  F --> K["Persist first, then mark mailbox read"]
   G --> K
   H --> K
 ```
 
-## 界面结构
+## Product Shape
 
 ```text
-自动邮件系统
-├─ 处理台
-│  ├─ 全部邮箱
-│  ├─ 单个邮箱视图
-│  ├─ 重要 / 次重要 / 不用管
-│  ├─ 邮件中文摘要列表
-│  └─ 邮件详情：中文概况、判断理由、建议动作、原件渲染
-└─ 管理设置
-   ├─ AI API 与多模态模型
-   ├─ 轮询策略
-   ├─ 多邮箱配置
-   ├─ 微信 ClawBot 推送
-   └─ 登录密码
+Auto Email System
+├─ Processing Desk
+│  ├─ All mailboxes
+│  ├─ Per-mailbox views
+│  ├─ Important / Secondary / Ignore queues
+│  ├─ Chinese summary list
+│  └─ Email detail: summary, reason, actions, original render
+└─ Admin Settings
+   ├─ AI API and multimodal model
+   ├─ Polling strategy
+   ├─ Multi-mailbox setup
+   ├─ WeChat ClawBot notifications
+   └─ Login password
 ```
 
-## 技术栈
+## Tech Stack
 
-| 层 | 技术 |
+| Layer | Stack |
 | --- | --- |
-| 前端 | React 19, Vite, TypeScript, Phosphor Icons |
-| 后端 | Express 5, TypeScript, tsx |
-| 邮件 | imapflow, mailparser, 自定义 POP3 读取 |
-| AI | 智谱 GLM Coding Plan / Anthropic-compatible API, GLM-5V-Turbo 多模态 |
-| 存储 | 本地 JSON 数据库：`data/app.db.json` |
-| 通知 | 项目内 WeClaw/ClawBot 桥接 |
+| Frontend | React 19, Vite, TypeScript, Phosphor Icons |
+| Backend | Express 5, TypeScript, tsx |
+| Email | imapflow, mailparser, custom POP3 reader |
+| AI | Zhipu GLM Coding Plan / Anthropic-compatible API, GLM-5V-Turbo multimodal |
+| Storage | Local JSON database: `data/app.db.json` |
+| Notifications | In-project WeClaw / ClawBot bridge |
 
-## 快速开始
+## Quick Start
 
 ```bash
 npm install
@@ -100,121 +103,121 @@ npm run build
 npm run start
 ```
 
-打开：
+Open:
 
 ```text
 http://127.0.0.1:8787
 ```
 
-开发模式：
+Development mode:
 
 ```bash
 npm run dev
 ```
 
-前端默认运行在 `http://127.0.0.1:5173`，后端 API 默认运行在 `http://127.0.0.1:8787`。
+The web app defaults to `http://127.0.0.1:5173`; the API defaults to `http://127.0.0.1:8787`.
 
-## 首次配置
+## First-Time Setup
 
-1. 登录管理面板。
-2. 修改默认登录密码。默认密码是 `Admin12345`，公开部署前必须修改。
-3. 在 AI API 中填入模型服务配置。
-4. 在多邮箱配置中添加 IMAP/POP3 邮箱。
-5. 点击测试连接，确认邮箱授权码、主机、端口无误。
-6. 回到处理台，点击“立即处理”，或开启自动轮询。
+1. Log in to the admin panel.
+2. Change the default password. The initial password is `Admin12345`; change it before exposing the service.
+3. Fill in your AI API settings.
+4. Add one or more IMAP / POP3 mailboxes.
+5. Test each mailbox connection.
+6. Go back to the Processing Desk and click "Process now", or enable automatic polling.
 
-常用邮箱端口：
+Common email ports:
 
-| 协议 | SSL/TLS | 非加密 |
+| Protocol | SSL/TLS | Plain |
 | --- | ---: | ---: |
 | IMAP | `993` | `143` |
 | POP3 | `995` | `110` |
 
-多数邮箱需要在邮箱后台开启 IMAP/POP3，并使用“授权码”而不是网页登录密码。
+Most providers require enabling IMAP/POP3 in mailbox settings and using an app password or authorization code instead of your normal web-login password.
 
-## AI 配置
+## AI Configuration
 
-默认面向智谱 GLM Coding Plan：
+The default setup targets Zhipu GLM Coding Plan:
 
-| 项 | 默认值 |
+| Field | Default |
 | --- | --- |
 | Anthropic-compatible Base URL | `https://open.bigmodel.cn/api/anthropic` |
 | Chat Completions Base URL | `https://open.bigmodel.cn/api/coding/paas/v4` |
-| 文本模型 | `glm-5.2` |
-| 多模态模型 | `glm-5v-turbo` |
+| Text model | `glm-5.2` |
+| Multimodal model | `glm-5v-turbo` |
 
-系统提示词会强约束分类逻辑：
+The classification prompt is intentionally strict:
 
-- 需要你处理、查看、确认、回复、保存的重要信息进入“重要/次重要”。
-- 推广、招生广告、新闻、订阅营销进入“不用管”。
-- 付款回执、扣款确认、订单确认、账单记录进入“次重要”，不直接归为不用管。
-- 老师、学校工作人员、课程、作业、截止时间、账号安全等进入“重要”。
+- Anything you must read, confirm, reply to, save, or act on should become Important or Secondary.
+- Promotions, admissions marketing, newsletters, and subscription marketing should become Ignore.
+- Payment receipts, charge confirmations, order confirmations, and billing records should become Secondary, not Ignore.
+- Teachers, school staff, courses, assignments, deadlines, and account security should become Important.
 
-## 微信通知
+## WeChat Notifications
 
-管理面板内置 ClawBot 推送配置。开启后，系统可以在重要邮件入库后推送到微信。
+The admin panel includes ClawBot notification settings. When enabled, the system can push processed important-mail summaries to WeChat.
 
-特性：
+Highlights:
 
-- 项目启动时可自动启动通知桥接。
-- 扫码绑定后会保存会话状态，重启后继续使用。
-- 可分别控制重要、次重要、不用管是否通知。
-- 只发送系统整理后的邮件信息，不会把你的微信聊天内容交给 AI。
+- The notification bridge can start with the app.
+- QR-code binding stores session state and survives restarts.
+- Notification categories are configurable: Important, Secondary, Ignore.
+- The bridge sends only the email summary produced by this system. It does not forward your WeChat chats to AI.
 
-WeClaw 来源：<https://github.com/fastclaw-ai/weclaw>  
-相关许可文件保存在 `tools/weclaw/LICENSE`。
+WeClaw source: <https://github.com/fastclaw-ai/weclaw>  
+Related license file: `tools/weclaw/LICENSE`.
 
-## 安全设计
+## Security Model
 
-这个项目会接触邮箱授权码、AI Key 和邮件原文，因此安全设计不是装饰项。
+This project handles mailbox authorization codes, AI keys, and raw email content, so security is part of the core design.
 
-| 防护 | 说明 |
+| Protection | Details |
 | --- | --- |
-| 登录保护 | 管理面板需要密码登录，会话默认保存 7 天。 |
-| 密码存储 | 管理密码使用 PBKDF2 + salt 哈希存储。 |
-| 防爆破 | 登录失败过多会临时限制来源 IP。 |
-| CSRF 防护 | 非可信来源的修改请求会被拦截。 |
-| 安全响应头 | 启用 CSP、X-Frame-Options、nosniff、Referrer-Policy 等。 |
-| 邮件原件沙箱 | 邮件 HTML 在 sandbox iframe 中显示，禁用脚本、表单和插件。 |
-| 图片代理 | 远程图片经过后端代理，阻止内网地址、认证 URL、异常端口和超大文件。 |
-| 搜索引擎屏蔽 | 内置 `robots.txt` 与 `X-Robots-Tag`，避免被搜索引擎索引。 |
+| Password login | The admin panel is password protected. Sessions last 7 days by default. |
+| Password hashing | Admin password is stored with PBKDF2 + salt. |
+| Brute-force protection | Too many failed login attempts temporarily block the source IP. |
+| CSRF defense | Mutating requests from untrusted origins are rejected. |
+| Security headers | CSP, X-Frame-Options, nosniff, Referrer-Policy, and related headers are enabled. |
+| Sandboxed original email | Original HTML is rendered in a sandboxed iframe with scripts, forms, and plugins disabled. |
+| Image proxy | Remote images are fetched through a backend proxy that blocks private IPs, credential URLs, unsafe ports, and oversized files. |
+| No indexing | `robots.txt` and `X-Robots-Tag` are included to discourage search engine indexing. |
 
-重要提醒：`data/` 会保存邮箱授权码、AI Key、处理后的邮件数据和运行状态，已经在 `.gitignore` 中排除。不要把 `data/`、`.env`、服务器密码或宝塔 API Key 提交到仓库。
+Important: `data/` stores mailbox authorization codes, AI keys, processed email records, and runtime state. It is excluded by `.gitignore`. Do not commit `data/`, `.env`, server passwords, or BT/Baota API keys.
 
-## 部署建议
+## Deployment Notes
 
-推荐部署方式：
+Recommended deployment targets:
 
-- 本地长期运行
+- Local long-running process
 - VPS + Node.js
-- 宝塔面板 Node 项目
-- systemd / PM2 / Docker 自行封装
+- Baota / BT Panel Node project
+- systemd, PM2, or your own Docker packaging
 
-生产环境建议：
+Production suggestions:
 
-- 使用 HTTPS 域名访问。
-- 修改默认登录密码。
-- 限制服务器 SSH 登录方式。
-- 定期备份 `data/app.db.json`。
-- 不要把应用直接暴露给不可信用户共同使用。
+- Use HTTPS.
+- Change the default login password.
+- Harden SSH access on the server.
+- Back up `data/app.db.json` regularly.
+- Do not expose the app to untrusted shared users.
 
-## 数据与版本管理
+## Repository Layout
 
 ```text
-data/app.db.json      本地数据库，保存配置、邮箱、邮件、运行记录
-public/robots.txt     搜索引擎屏蔽规则
-server/src/           Express API、邮件处理、AI、通知、安全逻辑
-src/                  React 管理面板
-tools/weclaw/         WeClaw/ClawBot 相关运行文件
+data/app.db.json      Local database for settings, mailboxes, emails, and run history
+public/robots.txt     Search engine blocking rule
+server/src/           Express API, email processing, AI, notifications, security
+src/                  React admin console
+tools/weclaw/         WeClaw / ClawBot runtime files
 ```
 
-## 适合谁
+## Who This Is For
 
-- 邮件很多，但真正需要处理的很少。
-- 经常收到学校、老师、账单、安全、订单、付款回执等混杂邮件。
-- 希望 AI 先帮你读一遍，再只把重点推给你。
-- 想自托管，不想把邮箱长期交给第三方邮件客户端。
+- You receive too many emails, but only a few actually matter.
+- School, teacher, billing, security, order, and receipt emails are mixed with noise.
+- You want AI to read first and surface the real work.
+- You prefer a self-hosted system instead of giving a third-party client long-term mailbox access.
 
 ## License
 
-当前仓库未声明统一开源许可证。若要用于公开二次分发，请先补充项目 License，并遵守 `tools/weclaw/LICENSE` 中 WeClaw 相关许可要求。
+This repository currently does not declare a project-wide open-source license. If you plan to redistribute it publicly, add a project license first and follow the license requirements in `tools/weclaw/LICENSE`.
