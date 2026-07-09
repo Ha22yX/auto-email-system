@@ -5,7 +5,7 @@
 <h1 align="center">Auto Email System</h1>
 
 <p align="center">
-  An AI inbox console that reads unread mail, triages what matters, writes Chinese summaries, and can notify you through WeChat.
+  Self-hosted AI email triage for IMAP/POP3 inboxes: turn unread mail into Chinese summaries, priority queues, multimodal attachment analysis, and optional WeChat alerts.
 </p>
 
 <p align="center">
@@ -23,79 +23,30 @@
   <img src="docs/readme-hero.svg" alt="Auto Email System interface concept" />
 </p>
 
-## What It Is
+## Why This Exists
 
-Auto Email System is not another inbox client. It is a result-oriented email control center: it scans unread messages from one or more mailboxes, asks AI to decide whether each message is worth your attention, and turns the chaos into three clean queues.
+Most inboxes are not hard because of email volume alone. They are hard because school notices, security warnings, bills, receipts, deadlines, and marketing messages all look equally noisy.
 
-| Queue | What belongs here | Default behavior |
-| --- | --- | --- |
-| Important | Teachers, school staff, security alerts, payment problems, contracts, deadlines, replies required | Kept unread inside the console, can trigger WeChat notifications |
-| Secondary | Payment receipts, order confirmations, billing records, general notices, useful-but-not-urgent information | Marked read when opened, optional notifications |
-| Ignore | Promotions, admissions marketing, newsletters, subscriptions, social reminders, low-value notices | Archived as system-read |
+Auto Email System reads first, then gives you a clean work queue:
 
-Every processed email gets a Chinese summary, classification reason, suggested actions, and a safe original-email preview. The goal is simple: stop reading everything, and start seeing only what matters.
-
-## Why It Feels Different
-
-| Capability | Why it matters |
+| Inbox pain | What the system does |
 | --- | --- |
-| Multi-mailbox processing | Add IMAP and POP3 accounts, then view each mailbox separately or all mail together. |
-| AI triage and summaries | Configure provider name, Base URL, model, API key, and temperature from the admin panel. |
-| Multimodal understanding | Built-in support for GLM-5V-Turbo to inspect embedded images, image attachments, and PDFs so important content does not hide inside files. |
-| Real-time persistence | Each email is saved as soon as it is processed. The original mailbox is marked read only after the record is safely stored. |
-| Safe original preview | Email HTML is rendered in a sandboxed iframe. Scripts, forms, plugins, unsafe links, and unsafe image loads are blocked. |
-| Internal read state | Important mail stays system-unread until you spend time in the detail view. Secondary mail becomes read on click. Right-click toggles are supported. |
-| WeChat notifications | Integrated WeClaw / ClawBot bridge can push important email summaries to a bound WeChat account. |
-| Self-hosted control | Runs as a single Node app with local JSON storage. Works locally, on a VPS, or as a Baota / BT Panel Node project. |
-
-## Workflow
-
-```mermaid
-flowchart LR
-  A["IMAP / POP3 mailboxes"] --> B["Fetch unread messages"]
-  B --> C["Parse text, HTML, attachments, embedded images"]
-  C --> D["AI + multimodal analysis"]
-  D --> E{"Priority"}
-  E -->|Important| F["Important queue"]
-  E -->|Secondary| G["Secondary queue"]
-  E -->|Ignore| H["Auto archive"]
-  F --> I["WeChat notification"]
-  G --> J["Optional notification"]
-  F --> K["Persist first, then mark mailbox read"]
-  G --> K
-  H --> K
-```
-
-## Product Shape
-
-```text
-Auto Email System
-├─ Processing Desk
-│  ├─ All mailboxes
-│  ├─ Per-mailbox views
-│  ├─ Important / Secondary / Ignore queues
-│  ├─ Chinese summary list
-│  └─ Email detail: summary, reason, actions, original render
-└─ Admin Settings
-   ├─ AI API and multimodal model
-   ├─ Polling strategy
-   ├─ Multi-mailbox setup
-   ├─ WeChat ClawBot notifications
-   └─ Login password
-```
-
-## Tech Stack
-
-| Layer | Stack |
-| --- | --- |
-| Frontend | React 19, Vite, TypeScript, Phosphor Icons |
-| Backend | Express 5, TypeScript, tsx |
-| Email | imapflow, mailparser, custom POP3 reader |
-| AI | Zhipu GLM Coding Plan / Anthropic-compatible API, GLM-5V-Turbo multimodal |
-| Storage | Local JSON database: `data/app.db.json` |
-| Notifications | In-project WeClaw / ClawBot bridge |
+| Too many unread messages | Fetches unread IMAP/POP3 mail from one or more accounts |
+| Hard to know what matters | Classifies mail into Important, Secondary, or Ignore |
+| Long or foreign-language emails | Generates Chinese summaries, reasons, and suggested actions |
+| Important content hidden in files | Uses multimodal analysis for embedded images, image attachments, and PDFs |
+| You miss urgent mail | Sends optional WeChat notifications for selected categories |
 
 ## Quick Start
+
+Prerequisites:
+
+- Node.js 24.x
+- npm
+- An IMAP or POP3 mailbox account
+- An AI API key compatible with the configured model provider
+
+Run locally:
 
 ```bash
 npm install
@@ -124,7 +75,7 @@ The web app defaults to `http://127.0.0.1:5173`; the API defaults to `http://127
 3. Fill in your AI API settings.
 4. Add one or more IMAP / POP3 mailboxes.
 5. Test each mailbox connection.
-6. Go back to the Processing Desk and click "Process now", or enable automatic polling.
+6. Click "Process now" in the Processing Desk, or enable automatic polling.
 
 Common email ports:
 
@@ -134,6 +85,56 @@ Common email ports:
 | POP3 | `995` | `110` |
 
 Most providers require enabling IMAP/POP3 in mailbox settings and using an app password or authorization code instead of your normal web-login password.
+
+## Core Features
+
+| Feature | Why it matters |
+| --- | --- |
+| Multi-mailbox console | Add IMAP and POP3 accounts, then view each mailbox separately or all mail together. |
+| AI triage | Classifies unread mail into Important, Secondary, or Ignore. |
+| Chinese summaries | Produces concise Chinese summaries, classification reasons, and suggested actions. |
+| Multimodal attachment analysis | GLM-5V-Turbo can inspect embedded images, image attachments, and PDFs. |
+| Safe original preview | Email HTML is rendered in a sandboxed iframe with dangerous behavior blocked. |
+| Internal read state | Important mail can stay system-unread until you spend time in the detail view. |
+| WeChat alerts | Integrated WeClaw / ClawBot bridge can push selected email summaries to WeChat. |
+| Self-hosted storage | Runs as a Node app with local JSON storage in `data/app.db.json`. |
+
+## Priority Queues
+
+| Queue | What belongs here | Default behavior |
+| --- | --- | --- |
+| Important | Teachers, school staff, security alerts, payment problems, contracts, deadlines, replies required | Kept unread inside the console, can trigger WeChat notifications |
+| Secondary | Payment receipts, order confirmations, billing records, general notices, useful-but-not-urgent information | Marked read when opened, optional notifications |
+| Ignore | Promotions, admissions marketing, newsletters, subscriptions, social reminders, low-value notices | Archived as system-read |
+
+## Workflow
+
+```mermaid
+flowchart LR
+  A["IMAP / POP3 mailboxes"] --> B["Fetch unread messages"]
+  B --> C["Parse text, HTML, attachments, embedded images"]
+  C --> D["AI + multimodal analysis"]
+  D --> E{"Priority"}
+  E -->|Important| F["Important queue"]
+  E -->|Secondary| G["Secondary queue"]
+  E -->|Ignore| H["Auto archive"]
+  F --> I["WeChat notification"]
+  G --> J["Optional notification"]
+  F --> K["Persist first, then mark mailbox read"]
+  G --> K
+  H --> K
+```
+
+## Tech Stack
+
+| Layer | Stack |
+| --- | --- |
+| Frontend | React 19, Vite, TypeScript, Phosphor Icons |
+| Backend | Express 5, TypeScript, tsx |
+| Email | imapflow, mailparser, custom POP3 reader |
+| AI | Zhipu GLM Coding Plan / Anthropic-compatible API, GLM-5V-Turbo multimodal |
+| Storage | Local JSON database: `data/app.db.json` |
+| Notifications | In-project WeClaw / ClawBot bridge |
 
 ## AI Configuration
 
