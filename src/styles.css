@@ -414,6 +414,7 @@ body.resizing-detail iframe {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
+  padding-top: 3px;
 }
 
 .metric-card {
