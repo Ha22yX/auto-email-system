@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import {
   Archive,
   CheckCircle,
@@ -19,6 +20,7 @@ import {
   Warning,
   X
 } from "@phosphor-icons/react";
+import DOMPurify from "dompurify";
 import { api } from "./api";
 import type {
   AiSettings,
@@ -83,6 +85,153 @@ function senderName(email: EmailListItem | ProcessedEmail) {
   return email.fromName || email.fromAddress || "未知发件人";
 }
 
+const blockedEmailTags = [
+  "script",
+  "iframe",
+  "object",
+  "embed",
+  "form",
+  "input",
+  "button",
+  "textarea",
+  "select",
+  "option",
+  "link",
+  "base",
+  "meta"
+];
+
+const resourceAttributes = new Set(["src", "srcset", "poster", "background", "action", "formaction", "ping"]);
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function cleanInlineStyle(value: string) {
+  return value
+    .replace(/@import[^;]+;?/gi, "")
+    .replace(/url\s*\([^)]*\)/gi, "")
+    .replace(/expression\s*\([^)]*\)/gi, "")
+    .replace(/behavior\s*:[^;]+;?/gi, "")
+    .replace(/-moz-binding\s*:[^;]+;?/gi, "")
+    .trim();
+}
+
+function postProcessEmailHtml(html: string) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+
+  template.content.querySelectorAll("*").forEach((node) => {
+    const element = node as HTMLElement;
+
+    Array.from(element.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim();
+
+      if (name.startsWith("on")) {
+        element.removeAttribute(attribute.name);
+        return;
+      }
+
+      if (name === "href" || name.endsWith(":href")) {
+        element.removeAttribute(attribute.name);
+        return;
+      }
+
+      if (resourceAttributes.has(name)) {
+        const isSafeEmbeddedImage =
+          name === "src" && /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value);
+
+        if (!isSafeEmbeddedImage) {
+          element.removeAttribute(attribute.name);
+        }
+        return;
+      }
+
+      if (name === "style") {
+        const safeStyle = cleanInlineStyle(value);
+        if (safeStyle) {
+          element.setAttribute("style", safeStyle);
+        } else {
+          element.removeAttribute(attribute.name);
+        }
+      }
+    });
+  });
+
+  return template.innerHTML;
+}
+
+function textToSafeHtml(text: string) {
+  return `<pre class="plain-email">${escapeHtml(text || "无可展示原文。")}</pre>`;
+}
+
+function createSafeEmailSrcDoc(sourceHtml: string) {
+  const sanitized = DOMPurify.sanitize(sourceHtml, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: blockedEmailTags,
+    FORBID_ATTR: ["autofocus", "srcdoc"],
+    ALLOW_DATA_ATTR: false
+  });
+  const body = postProcessEmailHtml(sanitized);
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; frame-src 'none'; connect-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none';"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Aptos, "Segoe UI", system-ui, sans-serif;
+        color: #151a19;
+        background: #ffffff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #ffffff;
+      }
+      body {
+        padding: 18px;
+      }
+      img {
+        max-width: 100%;
+        height: auto;
+      }
+      table {
+        max-width: 100%;
+        border-collapse: collapse;
+      }
+      a {
+        color: inherit;
+        text-decoration: underline;
+        text-decoration-style: dotted;
+      }
+      .plain-email {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 13px/1.65 "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      }
+    </style>
+  </head>
+  <body>${body || textToSafeHtml("无可展示原文。")}</body>
+</html>`;
+}
+
 function App() {
   const [view, setView] = useState<View>("mail");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -95,6 +244,56 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+  const [detailWidth, setDetailWidth] = useState(560);
+  const mailLayoutRef = useRef<HTMLElement | null>(null);
+
+  const clampDetailWidth = useCallback((nextWidth: number) => {
+    const layoutWidth = mailLayoutRef.current?.getBoundingClientRect().width;
+    const minDetailWidth = 500;
+    const maxDetailWidth = layoutWidth
+      ? Math.max(minDetailWidth, Math.min(920, layoutWidth - 520))
+      : 920;
+
+    return Math.round(Math.min(Math.max(nextWidth, minDetailWidth), maxDetailWidth));
+  }, []);
+
+  const startDetailResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      document.body.classList.add("resizing-detail");
+
+      const move = (moveEvent: PointerEvent) => {
+        const bounds = mailLayoutRef.current?.getBoundingClientRect();
+        if (!bounds) return;
+        setDetailWidth(clampDetailWidth(bounds.right - moveEvent.clientX));
+      };
+
+      const stop = () => {
+        document.body.classList.remove("resizing-detail");
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+      };
+
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", stop);
+      window.addEventListener("pointercancel", stop);
+    },
+    [clampDetailWidth]
+  );
+
+  const nudgeDetailWidth = useCallback(
+    (delta: number) => {
+      setDetailWidth((current) => clampDetailWidth(current + delta));
+    },
+    [clampDetailWidth]
+  );
+
+  const mailLayoutStyle = useMemo(
+    () => ({ "--detail-width": `${detailWidth}px` }) as CSSProperties,
+    [detailWidth]
+  );
 
   const mailboxMap = useMemo(() => {
     const map = new Map<string, Mailbox>();
@@ -265,7 +464,7 @@ function App() {
         </header>
 
         {view === "mail" ? (
-          <section className="mail-layout">
+          <section ref={mailLayoutRef} className="mail-layout" style={mailLayoutStyle}>
             <div className="mail-main">
               <div className="metric-grid">
                 {(Object.keys(categoryMeta) as MailCategory[]).map((category) => {
@@ -341,6 +540,27 @@ function App() {
               </div>
             </div>
 
+            <div
+              className="mail-resizer"
+              role="separator"
+              aria-label="调整邮件预览宽度"
+              aria-orientation="vertical"
+              tabIndex={0}
+              onPointerDown={startDetailResize}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  nudgeDetailWidth(32);
+                }
+                if (event.key === "ArrowRight") {
+                  event.preventDefault();
+                  nudgeDetailWidth(-32);
+                }
+              }}
+            >
+              <span />
+            </div>
+
             <EmailDetail detail={detail} mailbox={detail ? mailboxMap.get(detail.mailboxId) : undefined} />
           </section>
         ) : (
@@ -368,6 +588,26 @@ function App() {
 }
 
 function EmailDetail({ detail, mailbox }: { detail: ProcessedEmail | null; mailbox?: Mailbox }) {
+  const [originalMode, setOriginalMode] = useState<"rendered" | "source">("rendered");
+
+  useEffect(() => {
+    setOriginalMode("rendered");
+  }, [detail?.id]);
+
+  const originalSource = useMemo(() => {
+    if (!detail) return "无可展示原文。";
+    return detail.rawSource || detail.originalHtml || detail.originalText || "无可展示原文。";
+  }, [detail]);
+
+  const originalPreview = useMemo(() => {
+    if (!detail) return "";
+    const sourceHtml = detail.originalHtml?.trim()
+      ? detail.originalHtml
+      : textToSafeHtml(detail.originalText || originalSource);
+
+    return createSafeEmailSrcDoc(sourceHtml);
+  }, [detail, originalSource]);
+
   if (!detail) {
     return (
       <aside className="detail-panel empty">
@@ -379,8 +619,6 @@ function EmailDetail({ detail, mailbox }: { detail: ProcessedEmail | null; mailb
       </aside>
     );
   }
-
-  const original = detail.rawSource || detail.originalText || "无可展示原文。";
 
   return (
     <aside className="detail-panel">
@@ -417,8 +655,42 @@ function EmailDetail({ detail, mailbox }: { detail: ProcessedEmail | null; mailb
       )}
 
       <section className="original-block">
-        <p className="section-kicker">邮件原件</p>
-        <pre>{original}</pre>
+        <div className="original-heading">
+          <div>
+            <p className="section-kicker">邮件原件</p>
+            <span className="security-note">
+              <ShieldCheck size={14} />
+              安全沙箱预览，已禁用脚本、表单、插件和外链资源
+            </span>
+          </div>
+          <div className="view-toggle" role="tablist" aria-label="邮件原件视图">
+            <button
+              className={originalMode === "rendered" ? "active" : ""}
+              type="button"
+              onClick={() => setOriginalMode("rendered")}
+            >
+              渲染
+            </button>
+            <button
+              className={originalMode === "source" ? "active" : ""}
+              type="button"
+              onClick={() => setOriginalMode("source")}
+            >
+              源码
+            </button>
+          </div>
+        </div>
+        {originalMode === "rendered" ? (
+          <iframe
+            className="email-html-frame"
+            title="邮件原件安全预览"
+            sandbox=""
+            referrerPolicy="no-referrer"
+            srcDoc={originalPreview}
+          />
+        ) : (
+          <pre className="raw-source">{originalSource}</pre>
+        )}
       </section>
     </aside>
   );

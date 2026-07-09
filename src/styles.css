@@ -315,13 +315,55 @@ button:disabled {
 
 .mail-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 430px);
-  gap: 18px;
+  grid-template-columns: minmax(420px, 1fr) 12px minmax(500px, var(--detail-width, 560px));
+  gap: 12px;
   align-items: start;
 }
 
 .mail-main {
   min-width: 0;
+}
+
+.mail-resizer {
+  position: sticky;
+  top: 24px;
+  display: grid;
+  height: calc(100dvh - 48px);
+  place-items: center;
+  border-radius: 8px;
+  color: rgb(32 90 75 / 0.38);
+  cursor: col-resize;
+  touch-action: none;
+  transition:
+    background 260ms var(--ease),
+    color 260ms var(--ease);
+}
+
+.mail-resizer span {
+  width: 2px;
+  height: 76px;
+  border-radius: 99px;
+  background: currentColor;
+}
+
+.mail-resizer:hover,
+.mail-resizer:focus-visible {
+  outline: 0;
+  background: rgb(32 90 75 / 0.08);
+  color: var(--accent);
+}
+
+body.resizing-detail {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.resizing-detail * {
+  cursor: col-resize !important;
+}
+
+body.resizing-detail iframe {
+  pointer-events: none;
 }
 
 .metric-grid {
@@ -597,6 +639,7 @@ button:disabled {
 .detail-panel {
   position: sticky;
   top: 24px;
+  min-width: 0;
   max-height: calc(100dvh - 48px);
   overflow: auto;
   padding: 20px;
@@ -681,7 +724,62 @@ button:disabled {
   padding-top: 16px;
 }
 
-.original-block pre {
+.original-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.security-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.view-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(21 26 25 / 0.05);
+}
+
+.view-toggle button {
+  min-width: 54px;
+  height: 32px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  transition:
+    background 240ms var(--ease),
+    color 240ms var(--ease);
+}
+
+.view-toggle button:hover,
+.view-toggle button.active {
+  background: var(--ink);
+  color: white;
+}
+
+.email-html-frame {
+  display: block;
+  width: 100%;
+  min-height: 520px;
+  height: min(68dvh, 760px);
+  margin: 10px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.original-block .raw-source {
   max-height: 420px;
   margin: 10px 0 0;
   overflow: auto;
@@ -923,6 +1021,10 @@ button:disabled {
   .mail-layout,
   .settings-layout {
     grid-template-columns: 1fr;
+  }
+
+  .mail-resizer {
+    display: none;
   }
 
   .detail-panel {
