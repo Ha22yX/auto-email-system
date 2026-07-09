@@ -1597,6 +1597,53 @@ function SettingsPanel({
                   onChange={(event) => setAiForm({ ...aiForm, temperature: Number(event.target.value) })}
                 />
               </label>
+              <label className="switch-row full-span">
+                <span>
+                  <strong>多模态附件识别</strong>
+                  <small>内嵌图片、图片附件和 PDF 会先交给 GLM-5V-Turbo 摘要，再参与邮件分类。</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(aiForm.multimodalEnabled)}
+                  onChange={(event) => setAiForm({ ...aiForm, multimodalEnabled: event.target.checked })}
+                />
+              </label>
+              <label>
+                多模态 Base URL
+                <input
+                  value={aiForm.multimodalBaseUrl}
+                  onChange={(event) => setAiForm({ ...aiForm, multimodalBaseUrl: event.target.value })}
+                />
+              </label>
+              <label>
+                多模态模型
+                <input
+                  value={aiForm.multimodalModel}
+                  onChange={(event) => setAiForm({ ...aiForm, multimodalModel: event.target.value })}
+                />
+              </label>
+              <label>
+                单附件上限 MB
+                <input
+                  type="number"
+                  min="1"
+                  max="32"
+                  value={aiForm.multimodalMaxAttachmentMb}
+                  onChange={(event) =>
+                    setAiForm({ ...aiForm, multimodalMaxAttachmentMb: Number(event.target.value) })
+                  }
+                />
+              </label>
+              <label>
+                单封总上限 MB
+                <input
+                  type="number"
+                  min="1"
+                  max="64"
+                  value={aiForm.multimodalMaxTotalMb}
+                  onChange={(event) => setAiForm({ ...aiForm, multimodalMaxTotalMb: Number(event.target.value) })}
+                />
+              </label>
               <label className="full-span">
                 API Key
                 <input

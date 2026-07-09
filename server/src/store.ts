@@ -28,7 +28,12 @@ const defaultState: AppState = {
       baseUrl: "https://open.bigmodel.cn/api/anthropic",
       apiKey: "",
       model: "glm-5.2",
-      temperature: 0.1
+      temperature: 0.1,
+      multimodalEnabled: true,
+      multimodalBaseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+      multimodalModel: "glm-5v-turbo",
+      multimodalMaxAttachmentMb: 8,
+      multimodalMaxTotalMb: 18
     },
     system: {
       autoProcessEnabled: true,

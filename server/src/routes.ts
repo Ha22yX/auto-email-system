@@ -52,7 +52,12 @@ const aiSchema = z.object({
   baseUrl: z.string().url(),
   apiKey: z.string().optional().default(""),
   model: z.string().min(1),
-  temperature: z.coerce.number().min(0).max(2)
+  temperature: z.coerce.number().min(0).max(2),
+  multimodalEnabled: z.coerce.boolean().optional().default(true),
+  multimodalBaseUrl: z.string().url().optional().default("https://open.bigmodel.cn/api/paas/v4/chat/completions"),
+  multimodalModel: z.string().min(1).optional().default("glm-5v-turbo"),
+  multimodalMaxAttachmentMb: z.coerce.number().min(1).max(32).optional().default(8),
+  multimodalMaxTotalMb: z.coerce.number().min(1).max(64).optional().default(18)
 });
 
 const systemSchema = z.object({

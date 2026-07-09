@@ -8,6 +8,11 @@ export type AiSettings = {
   apiKey: string;
   model: string;
   temperature: number;
+  multimodalEnabled: boolean;
+  multimodalBaseUrl: string;
+  multimodalModel: string;
+  multimodalMaxAttachmentMb: number;
+  multimodalMaxTotalMb: number;
 };
 
 export type SystemSettings = {
@@ -68,12 +73,38 @@ export type ProcessedEmail = {
   originalText: string;
   originalHtml?: string;
   rawSource?: string;
+  attachments?: EmailAttachment[];
+  multimodalAnalysis?: MultimodalAnalysis;
   panelRead?: boolean;
   panelReadAt?: string;
   readMarked: boolean;
   readMarkNote?: string;
   notifiedAt?: string;
   notificationError?: string;
+};
+
+export type EmailAttachment = {
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  contentId?: string;
+  disposition?: string;
+  related: boolean;
+  supportedForVision: boolean;
+  contentBase64?: string;
+};
+
+export type MultimodalAnalysis = {
+  model: string;
+  summaryZh: string;
+  reasonZh: string;
+  categoryHint?: MailCategory;
+  importantSignalsZh: string[];
+  analyzedAt: string;
+  attachmentCount: number;
+  analyzedAttachmentNames: string[];
+  skippedAttachmentNames: string[];
 };
 
 export type ProcessingRun = {
@@ -127,6 +158,8 @@ export type IncomingEmail = {
   originalText: string;
   originalHtml?: string;
   rawSource?: string;
+  attachments?: EmailAttachment[];
+  multimodalAnalysis?: MultimodalAnalysis;
 };
 
 export type ClassificationResult = {

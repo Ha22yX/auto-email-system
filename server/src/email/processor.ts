@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { classifyEmail } from "../ai";
 import {
+  analyzeEmailAttachments,
+  hasMultimodalWork,
+  stripAttachmentContent,
+  withMultimodalContext
+} from "../multimodal";
+import {
   addProcessedEmail,
   addRun,
   getProcessedEmail,
@@ -129,13 +135,14 @@ export async function processMailboxes(options: {
     }
 
     const processFetchedItem = async (mailbox: Mailbox, item: FetchedEmail, recovered = false) => {
+      const currentStepTotal = hasMultimodalWork(item.email, state.settings.ai) ? 5 : 4;
       persistRun(run, {
         currentMailboxName: mailbox.name,
         currentSubject: item.email.subject,
         currentStage: "正在检查处理记录",
         currentEmailStep: "检查处理记录",
         currentEmailStepIndex: 1,
-        currentEmailStepTotal: 4
+        currentEmailStepTotal: currentStepTotal
       });
 
       const existing = getProcessedEmail(item.email.mailboxId, item.email.externalUid);
@@ -144,8 +151,8 @@ export async function processMailboxes(options: {
           persistRun(run, {
             currentStage: "邮件已在数据库中，正在补标已读",
             currentEmailStep: "补标已读",
-            currentEmailStepIndex: 4,
-            currentEmailStepTotal: 4
+            currentEmailStepIndex: currentStepTotal,
+            currentEmailStepTotal: currentStepTotal
           });
           const readMark = await withTimeout(item.markRead(), 30000, "标记已读超时");
           updateProcessedEmailReadMark(item.email.mailboxId, item.email.externalUid, readMark);
@@ -161,30 +168,57 @@ export async function processMailboxes(options: {
         return;
       }
 
+      let emailForClassification = item.email;
       let classification;
+      try {
+        if (currentStepTotal === 5) {
+          persistRun(run, {
+            currentStage: "正在识别内嵌图片/PDF",
+            currentEmailStep: "多模态识别",
+            currentEmailStepIndex: 2,
+            currentEmailStepTotal: currentStepTotal
+          });
+          const multimodalAnalysis = await analyzeEmailAttachments(item.email, state.settings.ai, { timeoutMs: 90000 });
+          emailForClassification = withMultimodalContext(item.email, multimodalAnalysis);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        run.errors.push(`${mailbox.name}: 多模态识别失败，邮件保持未读，稍后可重新处理。${message}`);
+        persistRun(run, {
+          currentStage: "多模态识别失败，邮件保持未读",
+          currentEmailStep: "等待重试",
+          currentEmailStepIndex: 2,
+          currentEmailStepTotal: currentStepTotal
+        });
+        return;
+      }
+
       try {
         persistRun(run, {
           currentStage: recovered ? "正在恢复并请求 AI 分类" : "正在请求 AI 分类",
           currentEmailStep: "AI 分类",
-          currentEmailStepIndex: 2,
-          currentEmailStepTotal: 4
+          currentEmailStepIndex: currentStepTotal === 5 ? 3 : 2,
+          currentEmailStepTotal: currentStepTotal
         });
-        classification = await classifyEmail(item.email, state.settings.ai, { timeoutMs: 45000 });
+        classification = await classifyEmail(emailForClassification, state.settings.ai, { timeoutMs: 45000 });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         run.errors.push(`${mailbox.name}: AI 分类失败，邮件保持未读，稍后可重新处理。${message}`);
         persistRun(run, {
           currentStage: "AI 分类失败，邮件保持未读",
           currentEmailStep: "等待重试",
-          currentEmailStepIndex: 2,
-          currentEmailStepTotal: 4
+          currentEmailStepIndex: currentStepTotal === 5 ? 3 : 2,
+          currentEmailStepTotal: currentStepTotal
         });
         return;
       }
 
       const processedEmail = {
         id: randomUUID(),
-        ...item.email,
+        ...stripAttachmentContent({
+          ...item.email,
+          multimodalAnalysis: emailForClassification.multimodalAnalysis
+        }),
         processedAt: new Date().toISOString(),
         category: classification.category,
         summaryZh: recovered ? `[中断恢复] ${classification.summaryZh}` : classification.summaryZh,
@@ -202,8 +236,8 @@ export async function processMailboxes(options: {
       persistRun(run, {
         currentStage: "已写入数据库，正在标记已读",
         currentEmailStep: "写入数据库",
-        currentEmailStepIndex: 3,
-        currentEmailStepTotal: 4
+        currentEmailStepIndex: currentStepTotal === 5 ? 4 : 3,
+        currentEmailStepTotal: currentStepTotal
       });
 
       if (insertedEmail && shouldNotifyEmail(state.settings.notification, insertedEmail)) {
@@ -211,8 +245,8 @@ export async function processMailboxes(options: {
           persistRun(run, {
             currentStage: "重要邮件已入库，正在发送微信通知",
             currentEmailStep: "微信通知",
-            currentEmailStepIndex: 3,
-            currentEmailStepTotal: 4
+            currentEmailStepIndex: currentStepTotal === 5 ? 4 : 3,
+            currentEmailStepTotal: currentStepTotal
           });
           await withTimeout(
             sendEmailNotification(state.settings.notification, insertedEmail, mailbox),
@@ -238,8 +272,8 @@ export async function processMailboxes(options: {
         persistRun(run, {
           currentStage: "已写入数据库，正在标记已读",
           currentEmailStep: "标记已读",
-          currentEmailStepIndex: 4,
-          currentEmailStepTotal: 4
+          currentEmailStepIndex: currentStepTotal,
+          currentEmailStepTotal: currentStepTotal
         });
         const readMark = await withTimeout(item.markRead(), 30000, "标记已读超时");
         updateProcessedEmailReadMark(item.email.mailboxId, item.email.externalUid, readMark);
@@ -254,8 +288,8 @@ export async function processMailboxes(options: {
       persistRun(run, {
         currentStage: `已处理 ${run.processedCount} 封`,
         currentEmailStep: "完成",
-        currentEmailStepIndex: 4,
-        currentEmailStepTotal: 4
+        currentEmailStepIndex: currentStepTotal,
+        currentEmailStepTotal: currentStepTotal
       });
     };
 
