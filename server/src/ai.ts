@@ -6,11 +6,13 @@ const systemPrompt =
   [
     "你是一个可靠的中文邮件助理。请只根据邮件内容和以下分类准则判断重要程度，并输出严格 JSON。",
     "分类只能是 important、secondary、ignore。",
+    "第一原则：只要这封邮件需要用户看、确认、留意、稍后阅读或留档，就不能归为 ignore，必须在 important 或 secondary 中选择。",
     "important：需要用户处理、回复、付款、确认、安全风险、合同、老师/学校直接联系、课程作业、成绩、考勤、会议或明确截止时间。",
     "只有真正来自老师、advisor、counselor、faculty、principal、dean、教务等，并且和用户本人学校事务有关的邮件，才归为 important。",
-    "secondary：值得留档或稍后阅读但无需立刻行动，例如付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等真实财务/账户记录。",
-    "ignore：任何推广邮件、招生广告、教育机构推广、私校广告、college search、open house、gift card、visit campus、newsletter、news、digest、新闻摘要、品牌宣传、活动宣传、促销折扣、sale、discount、coupon、% off、flash sale 都必须归为 ignore。",
+    "secondary：需要用户看但无需立刻行动，或值得留档、稍后阅读、了解状态的邮件，例如付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认、账户通知、物流/预约/报名状态、非紧急学校信息等。",
+    "ignore：只有完全不需要用户看的邮件才归为 ignore，例如普通推广邮件、招生广告、教育机构推广、私校广告、college search、open house、gift card、visit campus、普通 newsletter、news、digest、新闻摘要、品牌宣传、活动宣传、促销折扣、sale、discount、coupon、% off、flash sale。",
     "不要因为促销邮件里出现 limited time、today、tomorrow、order、subscription、confirmation、shop、campus 等普通营销词就归为 secondary 或 important。",
+    "如果邮件虽然看起来像通知或 newsletter，但包含用户个人账户、学校、课程、付款、预约、物流、身份、安全、截止时间或需要了解的具体信息，应归为 secondary 或 important，而不是 ignore。",
     "不要输出规则命中、关键词命中或系统后处理的说法；你自己给出最终分类理由。"
   ].join(" ");
 
@@ -31,10 +33,12 @@ function userPrompt(email: IncomingEmail) {
     "请用中文整理并分类这封邮件。",
     "只输出一个 JSON 对象，不要 Markdown，不要解释。",
     "JSON 字段必须是：category, summaryZh, reasonZh, actionItemsZh。",
+    "先判断用户是否需要看这封邮件。只要需要看、需要留意、需要稍后阅读或需要留档，就不能标为 ignore。",
     "注意：老师、advisor、counselor、faculty、principal、dean、教务等发来的，并且涉及课程、作业、成绩、考勤、会议、提交、确认、回复等用户本人学校事务的邮件，必须标为 important。",
-    "注意：任何推广、招生广告、教育机构广告、私校推广、college search、open house、gift card、visit campus、newsletter、news、digest、新闻摘要、品牌宣传、活动宣传、促销折扣，都必须标为 ignore，不要因为有截止时间或 school/college/education 字样就标为 important。",
+    "注意：普通推广、招生广告、教育机构广告、私校推广、college search、open house、gift card、visit campus、普通 newsletter、news、digest、新闻摘要、品牌宣传、活动宣传、促销折扣，且没有用户需要看的个人信息时，标为 ignore。",
     "注意：付款成功、扣款确认、AutoPay confirmation、收据、账单记录、订单确认等财务留档邮件，即使不需要操作，也必须标为 secondary，不能标为 ignore。",
-    "注意：促销折扣、sale、discount、coupon、% off、flash sale、品牌营销邮件必须归为 ignore；不要因为正文或页脚出现 order、subscription、confirmation、today、tomorrow、limited time 就升为 secondary。",
+    "注意：普通且非个人化的促销折扣、sale、discount、coupon、% off、flash sale、品牌营销邮件应归为 ignore；不要因为正文或页脚出现 order、subscription、confirmation、today、tomorrow、limited time 就升为 secondary。",
+    "注意：如果邮件包含用户个人账户、学校、课程、付款、预约、物流、身份、安全、截止时间或需要了解的具体信息，但无需马上行动，应标为 secondary。",
     "最终分类由你根据提示词直接决定，后端不会再用关键词规则替你改分类，所以请谨慎区分促销邮件和真实付款/订单/账单记录。",
     "",
     compactEmail(email)
