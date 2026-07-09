@@ -8,7 +8,8 @@
 - IMAP 读取未读邮件后会自动追加 `\Seen`，也就是服务端已读标记。
 - POP3 没有标准已读概念，系统会用 UIDL 在本地记录「已处理」，不会删除邮件。
 - 默认 AI 配置为智谱 GLM Coding Plan：
-  - Base URL: `https://open.bigmodel.cn/api/coding/paas/v4`
+  - Anthropic Message Base URL: `https://open.bigmodel.cn/api/anthropic`
+  - OpenAI Chat Completion Base URL: `https://open.bigmodel.cn/api/coding/paas/v4`
   - Model: `glm-5.2`
 - 管理面板可修改 AI Base URL、模型、API Key、邮箱账号、轮询间隔。
 - 邮件列表展示中文概况，详情页展示中文概况、判断理由、建议动作和邮件原件。

@@ -17,7 +17,7 @@ const defaultState: AppState = {
   settings: {
     ai: {
       providerName: "智谱 GLM Coding Plan",
-      baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+      baseUrl: "https://open.bigmodel.cn/api/anthropic",
       apiKey: "",
       model: "glm-5.2",
       temperature: 0.1

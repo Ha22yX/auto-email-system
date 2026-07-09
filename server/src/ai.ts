@@ -2,6 +2,9 @@ import type { AiSettings, ClassificationResult, IncomingEmail, MailCategory } fr
 
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
 
+const systemPrompt =
+  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同或明确截止时间。secondary 表示值得阅读但无需立刻行动。ignore 表示营销、通知、订阅、社交提醒或明显无需处理。";
+
 function compactEmail(email: IncomingEmail) {
   const body = email.originalText || email.rawSource || "";
   return [
@@ -14,13 +17,25 @@ function compactEmail(email: IncomingEmail) {
   ].join("\n");
 }
 
+function userPrompt(email: IncomingEmail) {
+  return [
+    "请用中文整理并分类这封邮件。",
+    "只输出一个 JSON 对象，不要 Markdown，不要解释。",
+    "JSON 字段必须是：category, summaryZh, reasonZh, actionItemsZh。",
+    "",
+    compactEmail(email)
+  ].join("\n");
+}
+
 function extractJson(text: string) {
   const trimmed = text.trim();
-  if (trimmed.startsWith("{")) return trimmed;
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]?.trim().startsWith("{")) return fenced[1].trim();
 
   const match = trimmed.match(/\{[\s\S]*\}/);
-  if (!match) return "";
-  return match[0];
+  return match?.[0] ?? "";
 }
 
 function normalizeCategory(value: unknown): MailCategory {
@@ -109,17 +124,29 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
-export async function classifyEmail(
+function isAnthropicEndpoint(baseUrl: string) {
+  return /\/anthropic(?:\/|$)/i.test(baseUrl) || /\/v1\/messages$/i.test(baseUrl);
+}
+
+function resolveOpenAiChatUrl(baseUrl: string) {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  if (/\/chat\/completions$/i.test(normalized)) return normalized;
+  return `${normalized}/chat/completions`;
+}
+
+function resolveAnthropicMessagesUrl(baseUrl: string) {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  if (/\/v1\/messages$/i.test(normalized)) return normalized;
+  if (/\/v1$/i.test(normalized)) return `${normalized}/messages`;
+  return `${normalized}/v1/messages`;
+}
+
+async function requestOpenAiCompatible(
   email: IncomingEmail,
   settings: AiSettings,
-  options: { timeoutMs?: number } = {}
-): Promise<ClassificationResult> {
-  if (!settings.apiKey.trim()) {
-    return heuristicClassify(email);
-  }
-
-  const baseUrl = settings.baseUrl.replace(/\/+$/, "");
-  const response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
+  timeoutMs: number
+) {
+  const response = await fetchWithTimeout(resolveOpenAiChatUrl(settings.baseUrl), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${settings.apiKey}`,
@@ -130,18 +157,11 @@ export async function classifyEmail(
       temperature: settings.temperature,
       response_format: { type: "json_object" },
       messages: [
-        {
-          role: "system",
-          content:
-            "你是一个极其可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同或明确截止时间。secondary 表示值得阅读但无需立刻行动。ignore 表示营销、通知、订阅、社交提醒或明显无需处理。"
-        },
-        {
-          role: "user",
-          content: `请用中文整理并分类这封邮件。只输出 JSON，不要 Markdown。字段如下：category, summaryZh, reasonZh, actionItemsZh。\n\n${compactEmail(email)}`
-        }
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt(email) }
       ]
     })
-  }, options.timeoutMs ?? 90000);
+  }, timeoutMs);
 
   if (!response.ok) {
     const detail = await response.text();
@@ -149,12 +169,68 @@ export async function classifyEmail(
   }
 
   const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>;
   };
-  const content = payload.choices?.[0]?.message?.content ?? "";
+  const content = payload.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((item) => item.text ?? "").join("\n");
+  return "";
+}
+
+async function requestAnthropicCompatible(
+  email: IncomingEmail,
+  settings: AiSettings,
+  timeoutMs: number
+) {
+  const response = await fetchWithTimeout(resolveAnthropicMessagesUrl(settings.baseUrl), {
+    method: "POST",
+    headers: {
+      "x-api-key": settings.apiKey,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      max_tokens: 1200,
+      temperature: settings.temperature,
+      system: systemPrompt,
+      messages: [
+        {
+          role: "user",
+          content: userPrompt(email)
+        }
+      ]
+    })
+  }, timeoutMs);
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`AI 请求失败 ${response.status}: ${detail.slice(0, 300)}`);
+  }
+
+  const payload = (await response.json()) as {
+    content?: Array<{ type?: string; text?: string }>;
+  };
+  return payload.content?.map((item) => item.text ?? "").join("\n") ?? "";
+}
+
+export async function classifyEmail(
+  email: IncomingEmail,
+  settings: AiSettings,
+  options: { timeoutMs?: number } = {}
+): Promise<ClassificationResult> {
+  if (!settings.apiKey.trim()) {
+    return heuristicClassify(email);
+  }
+
+  const timeoutMs = options.timeoutMs ?? 90000;
+  const content = isAnthropicEndpoint(settings.baseUrl)
+    ? await requestAnthropicCompatible(email, settings, timeoutMs)
+    : await requestOpenAiCompatible(email, settings, timeoutMs);
+
   const jsonText = extractJson(content);
   if (!jsonText) {
-    throw new Error("AI 返回内容不是 JSON");
+    throw new Error(`AI 返回内容不是 JSON: ${content.slice(0, 160) || "空响应"}`);
   }
 
   return normalizeResult(JSON.parse(jsonText));
