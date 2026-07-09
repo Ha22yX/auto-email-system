@@ -438,7 +438,9 @@ async function monitorAccount(account: WeclawCredentialRecord, signal: AbortSign
         continue;
       }
 
-      if (response?.ret !== 0 && response?.errcode !== 0) {
+      const retError = typeof response?.ret === "number" && response.ret !== 0;
+      const errCodeError = typeof response?.errcode === "number" && response.errcode !== 0;
+      if (retError || errCodeError) {
         appendLog("system", `notification bridge server error ret=${response?.ret} errcode=${response?.errcode}`);
         await new Promise((resolve) => setTimeout(resolve, 3000));
         continue;
