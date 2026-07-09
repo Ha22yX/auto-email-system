@@ -72,6 +72,88 @@ function saveState(state: AppState) {
   stateCache = state;
 }
 
+function includesAny(text: string, words: string[]) {
+  return words.some((word) => text.includes(word));
+}
+
+function isFinancialRecordEmail(email: ProcessedEmail) {
+  const text = [
+    email.subject,
+    email.fromName,
+    email.fromAddress,
+    email.toText,
+    email.summaryZh,
+    email.reasonZh,
+    email.originalText,
+    email.rawSource
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  const financialTerms = [
+    "payment",
+    "autopay",
+    "auto pay",
+    "billing",
+    "bill",
+    "invoice",
+    "receipt",
+    "charge",
+    "charged",
+    "paid",
+    "transaction",
+    "statement",
+    "order",
+    "subscription",
+    "renewal",
+    "credit card",
+    "card ending",
+    "付款",
+    "支付",
+    "扣款",
+    "自动付款",
+    "自动扣款",
+    "账单",
+    "发票",
+    "收据",
+    "回执",
+    "交易",
+    "订单",
+    "续费",
+    "信用卡"
+  ];
+  const recordTerms = [
+    "confirmation",
+    "confirmed",
+    "receipt",
+    "successful",
+    "succeeded",
+    "processed",
+    "paid",
+    "charged",
+    "autopay confirmation",
+    "payment confirmation",
+    "payment received",
+    "order confirmation",
+    "transaction receipt",
+    "确认",
+    "成功",
+    "已付款",
+    "已支付",
+    "已扣款",
+    "扣款成功",
+    "支付成功",
+    "付款成功",
+    "成功扣除",
+    "回执",
+    "收据",
+    "凭证",
+    "订单确认"
+  ];
+
+  return includesAny(text, financialTerms) && includesAny(text, recordTerms);
+}
+
 export function readState(): AppState {
   return clone(loadState());
 }
@@ -221,6 +303,20 @@ export function markInterruptedRuns() {
     }
   });
   return interruptedCount;
+}
+
+export function promoteFinancialRecordEmails() {
+  let promotedCount = 0;
+  updateState((draft) => {
+    for (const email of draft.emails) {
+      if (email.category === "ignore" && isFinancialRecordEmail(email)) {
+        promotedCount += 1;
+        email.category = "secondary";
+        email.reasonZh = `${email.reasonZh} 系统规则更新：付款回执、扣款确认、收据、账单记录或订单确认类邮件需要留档，至少归为次重要。`;
+      }
+    }
+  });
+  return promotedCount;
 }
 
 export function updateMailboxSync(id: string, patch: Partial<Pick<Mailbox, "lastSyncAt" | "lastError">>) {

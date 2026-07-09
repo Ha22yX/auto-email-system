@@ -3,7 +3,7 @@ import type { AiSettings, ClassificationResult, IncomingEmail, MailCategory } fr
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
 
 const systemPrompt =
-  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同或明确截止时间。secondary 表示值得阅读但无需立刻行动。ignore 表示营销、通知、订阅、社交提醒或明显无需处理。";
+  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同或明确截止时间。secondary 表示值得阅读但无需立刻行动，付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等财务记录至少必须归为 secondary，不能归为 ignore。ignore 只用于营销、订阅推广、社交提醒或明显无需留档的低价值通知。";
 
 function compactEmail(email: IncomingEmail) {
   const body = email.originalText || email.rawSource || "";
@@ -22,6 +22,7 @@ function userPrompt(email: IncomingEmail) {
     "请用中文整理并分类这封邮件。",
     "只输出一个 JSON 对象，不要 Markdown，不要解释。",
     "JSON 字段必须是：category, summaryZh, reasonZh, actionItemsZh。",
+    "注意：付款成功、扣款确认、AutoPay confirmation、收据、账单记录、订单确认等财务留档邮件，即使不需要操作，也必须标为 secondary，不能标为 ignore。",
     "",
     compactEmail(email)
   ].join("\n");
@@ -59,26 +60,126 @@ function normalizeResult(value: unknown): ClassificationResult {
   };
 }
 
-function heuristicClassify(email: IncomingEmail): ClassificationResult {
-  const haystack = `${email.subject}\n${email.fromAddress}\n${email.originalText}`.toLowerCase();
-  const importantWords = [
-    "invoice",
+function includesAny(text: string, words: string[]) {
+  return words.some((word) => text.includes(word));
+}
+
+function emailText(email: IncomingEmail) {
+  return [
+    email.subject,
+    email.fromName,
+    email.fromAddress,
+    email.toText,
+    email.originalText,
+    email.rawSource
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+}
+
+function isFinancialRecordEmail(email: IncomingEmail) {
+  const text = emailText(email);
+  const financialTerms = [
     "payment",
+    "autopay",
+    "auto pay",
+    "billing",
+    "bill",
+    "invoice",
+    "receipt",
+    "charge",
+    "charged",
+    "paid",
+    "transaction",
+    "statement",
+    "order",
+    "subscription",
+    "renewal",
+    "credit card",
+    "card ending",
+    "付款",
+    "支付",
+    "扣款",
+    "自动付款",
+    "自动扣款",
+    "账单",
+    "发票",
+    "收据",
+    "回执",
+    "交易",
+    "订单",
+    "续费",
+    "信用卡"
+  ];
+  const recordTerms = [
+    "confirmation",
+    "confirmed",
+    "receipt",
+    "successful",
+    "succeeded",
+    "processed",
+    "paid",
+    "charged",
+    "autopay confirmation",
+    "payment confirmation",
+    "payment received",
+    "order confirmation",
+    "transaction receipt",
+    "确认",
+    "成功",
+    "已付款",
+    "已支付",
+    "已扣款",
+    "扣款成功",
+    "支付成功",
+    "付款成功",
+    "成功扣除",
+    "回执",
+    "收据",
+    "凭证",
+    "订单确认"
+  ];
+
+  return includesAny(text, financialTerms) && includesAny(text, recordTerms);
+}
+
+function normalizeBusinessRules(email: IncomingEmail, result: ClassificationResult): ClassificationResult {
+  if (result.category === "ignore" && isFinancialRecordEmail(email)) {
+    return {
+      ...result,
+      category: "secondary",
+      reasonZh: `${result.reasonZh} 这封邮件属于付款、扣款、账单、收据或订单确认类财务留档邮件，系统规则要求至少归为次重要，不能归入不用管。`
+    };
+  }
+
+  return result;
+}
+
+function heuristicClassify(email: IncomingEmail): ClassificationResult {
+  const haystack = emailText(email);
+  const financialRecordHit = isFinancialRecordEmail(email);
+  const importantWords = [
     "contract",
     "urgent",
     "security",
     "verify",
     "deadline",
     "meeting",
-    "账单",
-    "付款",
+    "payment failed",
+    "past due",
+    "overdue",
+    "action required",
     "合同",
-    "发票",
     "紧急",
     "验证码",
     "安全",
     "会议",
-    "截止"
+    "截止",
+    "付款失败",
+    "支付失败",
+    "逾期",
+    "需要操作"
   ];
   const ignoreWords = [
     "unsubscribe",
@@ -94,16 +195,18 @@ function heuristicClassify(email: IncomingEmail): ClassificationResult {
 
   const importantHit = importantWords.some((word) => haystack.includes(word));
   const ignoreHit = ignoreWords.some((word) => haystack.includes(word));
-  const category: MailCategory = importantHit ? "important" : ignoreHit ? "ignore" : "secondary";
+  const category: MailCategory = importantHit ? "important" : financialRecordHit ? "secondary" : ignoreHit ? "ignore" : "secondary";
 
   return {
     category,
     summaryZh: `来自 ${email.fromName || email.fromAddress || "未知发件人"} 的邮件，主题为“${email.subject || "无主题"}”。当前未配置可用 AI Key，系统使用规则兜底完成分类。`,
     reasonZh: importantHit
-      ? "邮件包含账单、合同、安全、会议或截止时间等高优先级信号。"
-      : ignoreHit
-        ? "邮件包含营销、订阅或退订等低优先级信号。"
-        : "邮件没有明显紧急信号，但仍可能包含需要稍后查看的信息。",
+      ? "邮件包含安全、会议、截止时间、失败付款或需要操作等高优先级信号。"
+      : financialRecordHit
+        ? "邮件属于付款、扣款、收据、账单或订单确认类财务留档邮件，应归为次重要。"
+        : ignoreHit
+          ? "邮件包含营销、订阅或退订等低优先级信号。"
+          : "邮件没有明显紧急信号，但仍可能包含需要稍后查看的信息。",
     actionItemsZh: importantHit ? ["尽快打开原件确认是否需要回复或处理。"] : []
   };
 }
@@ -220,7 +323,7 @@ export async function classifyEmail(
   options: { timeoutMs?: number } = {}
 ): Promise<ClassificationResult> {
   if (!settings.apiKey.trim()) {
-    return heuristicClassify(email);
+    return normalizeBusinessRules(email, heuristicClassify(email));
   }
 
   const timeoutMs = options.timeoutMs ?? 90000;
@@ -233,5 +336,5 @@ export async function classifyEmail(
     throw new Error(`AI 返回内容不是 JSON: ${content.slice(0, 160) || "空响应"}`);
   }
 
-  return normalizeResult(JSON.parse(jsonText));
+  return normalizeBusinessRules(email, normalizeResult(JSON.parse(jsonText)));
 }
