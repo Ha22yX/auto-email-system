@@ -60,6 +60,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 22px;
+  min-width: 0;
+  overflow: hidden;
   padding: 22px;
   border-right: 1px solid var(--line);
   background: rgb(253 252 248 / 0.88);
@@ -103,6 +105,7 @@ button:disabled {
 .mailbox-submenu {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .nav-group.active {
@@ -111,6 +114,7 @@ button:disabled {
 
 .mailbox-submenu {
   margin-left: 15px;
+  max-width: calc(100% - 15px);
   padding-left: 12px;
   border-left: 1px solid rgb(32 90 75 / 0.18);
 }
@@ -128,6 +132,8 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 42px;
   border-radius: 8px;
   background: transparent;
@@ -164,8 +170,11 @@ button:disabled {
   font-size: 13px;
 }
 
-.mailbox-chip span:nth-child(2),
-.mailbox-chip span:first-child:not(.status-dot) {
+.mailbox-chip svg {
+  flex: 0 0 auto;
+}
+
+.mailbox-chip-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -174,6 +183,7 @@ button:disabled {
 }
 
 .mailbox-chip em {
+  flex: 0 0 auto;
   color: inherit;
   font-size: 11px;
   font-style: normal;

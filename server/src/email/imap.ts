@@ -54,6 +54,7 @@ export async function fetchUnreadImap(mailbox: Mailbox, limit: number): Promise<
   try {
     const unseen = (await client.search({ seen: false }, { uid: true })) || [];
     const uids = unseen.slice(0, limit);
+    if (!uids.length) return results;
 
     for await (const message of client.fetch(
       uids,
@@ -107,12 +108,15 @@ export async function fetchInterruptedImapRecovery(mailbox: Mailbox, options: {
   await client.connect();
   const lock = await client.getMailboxLock(mailbox.folder || "INBOX", { acquireTimeout: 15000 });
   try {
+    const seenInWindow = await client.search({ uid: `${startUid}:${endUid}`, seen: true }, { uid: true });
+    const uids = Array.isArray(seenInWindow) ? seenInWindow.slice(0, limit) : [];
+    if (!uids.length) return results;
+
     for await (const message of client.fetch(
-      `${startUid}:${endUid}`,
+      uids,
       { uid: true, source: true, flags: true, internalDate: true },
       { uid: true }
     )) {
-      if (results.length >= limit) break;
       if (!message.source || !isSeen(message.flags)) continue;
 
       const fallbackDate =

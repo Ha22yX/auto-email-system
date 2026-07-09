@@ -112,12 +112,12 @@ export async function processMailboxes(options: {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         run.errors.push(`${mailbox.name}: AI 分类失败，已使用规则兜底。${message}`);
-        classification = {
-          category: "secondary" as const,
-          summaryZh: `AI 分类失败，系统临时归入次重要。主题：“${item.email.subject || "无主题"}”。`,
-          reasonZh: "AI 接口不可用或返回格式异常，需要稍后检查 API 设置。",
-          actionItemsZh: ["检查管理面板中的 AI Base URL、模型和 API Key。"]
-        };
+        classification = await classifyEmail(
+          item.email,
+          { ...state.settings.ai, apiKey: "" },
+          { timeoutMs: 1000 }
+        );
+        classification.reasonZh = `${classification.reasonZh} AI 接口本次不可用或返回格式异常，系统已使用本地规则兜底。`;
       }
 
       addProcessedEmail({
@@ -169,18 +169,25 @@ export async function processMailboxes(options: {
             persistRun(run, {
               currentStage: "正在恢复旧任务可能遗漏的已读邮件"
             });
-            const recoveryItems = await withTimeout(
-              fetchInterruptedImapRecovery(mailbox, {
-                afterUid: maxProcessedUid,
-                uidWindow: 5000,
-                limit: 5
-              }),
-              120000,
-              `${mailbox.name}: 中断恢复扫描超时`
-            );
+            try {
+              const recoveryItems = await withTimeout(
+                fetchInterruptedImapRecovery(mailbox, {
+                  afterUid: maxProcessedUid,
+                  uidWindow: 5000,
+                  limit: 5
+                }),
+                45000,
+                `${mailbox.name}: 中断恢复扫描超时`
+              );
 
-            for (const item of recoveryItems) {
-              await processFetchedItem(mailbox, item, true);
+              for (const item of recoveryItems) {
+                await processFetchedItem(mailbox, item, true);
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              persistRun(run, {
+                currentStage: `${message}，已跳过恢复扫描并继续读取未读邮件`
+              });
             }
           }
         }

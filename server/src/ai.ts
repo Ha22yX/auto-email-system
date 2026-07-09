@@ -3,7 +3,7 @@ import type { AiSettings, ClassificationResult, IncomingEmail, MailCategory } fr
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
 
 const systemPrompt =
-  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同或明确截止时间。secondary 表示值得阅读但无需立刻行动，付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等财务记录至少必须归为 secondary，不能归为 ignore。ignore 只用于营销、订阅推广、社交提醒或明显无需留档的低价值通知。";
+  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同、学校/老师联系、课程作业、成绩、考勤、会议或明确截止时间。来自学校官方域名、老师、advisor、counselor、faculty、principal、dean，或明显是学校事务且和用户有关的邮件，必须归为 important。secondary 表示值得阅读但无需立刻行动，付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等财务记录至少必须归为 secondary，不能归为 ignore。ignore 只用于营销、订阅推广、社交提醒或明显无需留档的低价值通知。";
 
 function compactEmail(email: IncomingEmail) {
   const body = email.originalText || email.rawSource || "";
@@ -22,6 +22,7 @@ function userPrompt(email: IncomingEmail) {
     "请用中文整理并分类这封邮件。",
     "只输出一个 JSON 对象，不要 Markdown，不要解释。",
     "JSON 字段必须是：category, summaryZh, reasonZh, actionItemsZh。",
+    "注意：学校官方、老师、advisor、counselor、faculty、principal、dean 发来的邮件，或涉及课程、作业、成绩、考勤、会议、学校活动、学校截止时间并和用户有关的邮件，必须标为 important。",
     "注意：付款成功、扣款确认、AutoPay confirmation、收据、账单记录、订单确认等财务留档邮件，即使不需要操作，也必须标为 secondary，不能标为 ignore。",
     "",
     compactEmail(email)
@@ -144,7 +145,95 @@ function isFinancialRecordEmail(email: IncomingEmail) {
   return includesAny(text, financialTerms) && includesAny(text, recordTerms);
 }
 
+function isSchoolPriorityEmail(email: IncomingEmail) {
+  const text = emailText(email);
+  const from = `${email.fromName || ""} ${email.fromAddress || ""}`.toLowerCase();
+  const to = `${email.toText || ""}`.toLowerCase();
+  const senderIsKnownSchool = from.includes("@whschool.org") || from.includes("wardlaw-hartridge");
+  const messageIsForSchoolMailbox = to.includes("@whschool.org");
+  const directSchoolSenderTerms = [
+    "teacher",
+    "advisor",
+    "adviser",
+    "counselor",
+    "faculty",
+    "principal",
+    "dean",
+    "registrar",
+    "老师",
+    "班主任",
+    "辅导员",
+    "教务",
+    "校长"
+  ];
+  const schoolContextTerms = [
+    "class",
+    "course",
+    "assignment",
+    "homework",
+    "grade",
+    "attendance",
+    "absence",
+    "exam",
+    "quiz",
+    "schedule",
+    "conference",
+    "meeting",
+    "permission slip",
+    "field trip",
+    "老师",
+    "课程",
+    "班级",
+    "作业",
+    "成绩",
+    "考勤",
+    "缺勤",
+    "考试",
+    "测验",
+    "会议",
+    "家长会"
+  ];
+  const directActionTerms = [
+    "reply",
+    "respond",
+    "action required",
+    "deadline",
+    "due",
+    "tomorrow",
+    "today",
+    "confirm",
+    "sign",
+    "submit",
+    "register",
+    "请回复",
+    "需要回复",
+    "需要处理",
+    "截止",
+    "今天",
+    "明天",
+    "确认",
+    "提交",
+    "报名",
+    "签字"
+  ];
+
+  if (senderIsKnownSchool || includesAny(from, directSchoolSenderTerms)) return true;
+  if (!messageIsForSchoolMailbox) return false;
+  return includesAny(text, schoolContextTerms) && includesAny(text, directActionTerms);
+}
+
 function normalizeBusinessRules(email: IncomingEmail, result: ClassificationResult): ClassificationResult {
+  if (result.category !== "important" && isSchoolPriorityEmail(email)) {
+    return {
+      ...result,
+      category: "important",
+      reasonZh: `${result.reasonZh} 这封邮件命中学校/老师/课程事务规则，系统要求归为重要，方便优先查看和处理。`,
+      actionItemsZh: result.actionItemsZh.length
+        ? result.actionItemsZh
+        : ["优先打开原件确认是否需要回复、提交材料、参加会议或完成学校相关事项。"]
+    };
+  }
+
   if (result.category === "ignore" && isFinancialRecordEmail(email)) {
     return {
       ...result,
@@ -159,6 +248,7 @@ function normalizeBusinessRules(email: IncomingEmail, result: ClassificationResu
 function heuristicClassify(email: IncomingEmail): ClassificationResult {
   const haystack = emailText(email);
   const financialRecordHit = isFinancialRecordEmail(email);
+  const schoolPriorityHit = isSchoolPriorityEmail(email);
   const importantWords = [
     "contract",
     "urgent",
@@ -195,19 +285,23 @@ function heuristicClassify(email: IncomingEmail): ClassificationResult {
 
   const importantHit = importantWords.some((word) => haystack.includes(word));
   const ignoreHit = ignoreWords.some((word) => haystack.includes(word));
-  const category: MailCategory = importantHit ? "important" : financialRecordHit ? "secondary" : ignoreHit ? "ignore" : "secondary";
+  const category: MailCategory =
+    importantHit || schoolPriorityHit ? "important" : financialRecordHit ? "secondary" : ignoreHit ? "ignore" : "secondary";
 
   return {
     category,
     summaryZh: `来自 ${email.fromName || email.fromAddress || "未知发件人"} 的邮件，主题为“${email.subject || "无主题"}”。当前未配置可用 AI Key，系统使用规则兜底完成分类。`,
-    reasonZh: importantHit
+    reasonZh: schoolPriorityHit
+      ? "邮件命中学校/老师/课程事务规则，属于需要优先查看的学校相关邮件。"
+      : importantHit
       ? "邮件包含安全、会议、截止时间、失败付款或需要操作等高优先级信号。"
       : financialRecordHit
         ? "邮件属于付款、扣款、收据、账单或订单确认类财务留档邮件，应归为次重要。"
         : ignoreHit
           ? "邮件包含营销、订阅或退订等低优先级信号。"
           : "邮件没有明显紧急信号，但仍可能包含需要稍后查看的信息。",
-    actionItemsZh: importantHit ? ["尽快打开原件确认是否需要回复或处理。"] : []
+    actionItemsZh:
+      importantHit || schoolPriorityHit ? ["尽快打开原件确认是否需要回复或处理。"] : []
   };
 }
 

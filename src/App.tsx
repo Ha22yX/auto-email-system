@@ -407,9 +407,10 @@ function App() {
                 <button
                   className={selectedMailbox === "all" ? "mailbox-chip active" : "mailbox-chip"}
                   onClick={() => setSelectedMailbox("all")}
+                  title="全部邮箱"
                 >
                   <MailboxIcon size={17} />
-                  <span>全部邮箱</span>
+                  <span className="mailbox-chip-label">全部邮箱</span>
                   <em>{dashboard?.total ?? 0}</em>
                 </button>
                 {dashboard?.mailboxes.map((mailbox) => (
@@ -417,9 +418,10 @@ function App() {
                     key={mailbox.id}
                     className={selectedMailbox === mailbox.id ? "mailbox-chip active" : "mailbox-chip"}
                     onClick={() => setSelectedMailbox(mailbox.id)}
+                    title={`${mailbox.name} · ${mailbox.email}`}
                   >
                     <span className={mailbox.enabled ? "status-dot online" : "status-dot"} />
-                    <span>{mailbox.name}</span>
+                    <span className="mailbox-chip-label">{mailbox.name}</span>
                     <em>{mailbox.protocol.toUpperCase()}</em>
                   </button>
                 ))}

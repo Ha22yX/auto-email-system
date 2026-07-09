@@ -12,6 +12,7 @@ import type {
 
 const DATA_DIR = path.resolve(process.env.DATA_DIR ?? "data");
 const DATA_FILE = path.join(DATA_DIR, "app.db.json");
+const schoolPriorityReason = "系统规则更新：学校官方、老师或课程事务相关邮件需要优先查看，归为重要。";
 
 const defaultState: AppState = {
   settings: {
@@ -152,6 +153,120 @@ function isFinancialRecordEmail(email: ProcessedEmail) {
   ];
 
   return includesAny(text, financialTerms) && includesAny(text, recordTerms);
+}
+
+function processedEmailText(email: ProcessedEmail) {
+  return [
+    email.subject,
+    email.fromName,
+    email.fromAddress,
+    email.toText,
+    email.summaryZh,
+    email.reasonZh,
+    email.originalText,
+    email.rawSource
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+}
+
+function isSchoolPriorityEmail(email: ProcessedEmail) {
+  const text = processedEmailText(email);
+  const from = `${email.fromName || ""} ${email.fromAddress || ""}`.toLowerCase();
+  const to = `${email.toText || ""}`.toLowerCase();
+  const senderIsKnownSchool = from.includes("@whschool.org") || from.includes("wardlaw-hartridge");
+  const messageIsForSchoolMailbox = to.includes("@whschool.org");
+  const directSchoolSenderTerms = [
+    "teacher",
+    "advisor",
+    "adviser",
+    "counselor",
+    "faculty",
+    "principal",
+    "dean",
+    "registrar",
+    "老师",
+    "班主任",
+    "辅导员",
+    "教务",
+    "校长"
+  ];
+  const schoolContextTerms = [
+    "class",
+    "course",
+    "assignment",
+    "homework",
+    "grade",
+    "attendance",
+    "absence",
+    "exam",
+    "quiz",
+    "schedule",
+    "conference",
+    "meeting",
+    "permission slip",
+    "field trip",
+    "老师",
+    "课程",
+    "班级",
+    "作业",
+    "成绩",
+    "考勤",
+    "缺勤",
+    "考试",
+    "测验",
+    "会议",
+    "家长会"
+  ];
+  const directActionTerms = [
+    "reply",
+    "respond",
+    "action required",
+    "deadline",
+    "due",
+    "tomorrow",
+    "today",
+    "confirm",
+    "sign",
+    "submit",
+    "register",
+    "请回复",
+    "需要回复",
+    "需要处理",
+    "截止",
+    "今天",
+    "明天",
+    "确认",
+    "提交",
+    "报名",
+    "签字"
+  ];
+
+  if (senderIsKnownSchool || includesAny(from, directSchoolSenderTerms)) return true;
+  if (!messageIsForSchoolMailbox) return false;
+  return includesAny(text, schoolContextTerms) && includesAny(text, directActionTerms);
+}
+
+function isLikelyIgnorableEmail(email: ProcessedEmail) {
+  const text = processedEmailText(email);
+  return includesAny(text, [
+    "unsubscribe",
+    "promotion",
+    "newsletter",
+    "sale",
+    "discount",
+    "advertisement",
+    "marketing",
+    "admissions",
+    "gift card",
+    "退订",
+    "促销",
+    "折扣",
+    "广告",
+    "招生",
+    "营销"
+  ]);
 }
 
 export function readState(): AppState {
@@ -317,6 +432,48 @@ export function promoteFinancialRecordEmails() {
     }
   });
   return promotedCount;
+}
+
+export function promoteSchoolPriorityEmails() {
+  let promotedCount = 0;
+  updateState((draft) => {
+    for (const email of draft.emails) {
+      if (email.category !== "important" && isSchoolPriorityEmail(email)) {
+        promotedCount += 1;
+        email.category = "important";
+        email.reasonZh = `${email.reasonZh} ${schoolPriorityReason}`;
+        if (!email.actionItemsZh.length) {
+          email.actionItemsZh = ["优先打开原件确认是否需要回复、提交材料、参加会议或完成学校相关事项。"];
+        }
+      }
+    }
+  });
+  return promotedCount;
+}
+
+export function repairSchoolPriorityPromotions() {
+  let repairedCount = 0;
+  updateState((draft) => {
+    for (const email of draft.emails) {
+      if (
+        email.category === "important" &&
+        email.reasonZh.includes(schoolPriorityReason) &&
+        !isSchoolPriorityEmail(email)
+      ) {
+        repairedCount += 1;
+        email.category = isFinancialRecordEmail(email) ? "secondary" : isLikelyIgnorableEmail(email) ? "ignore" : "secondary";
+        email.reasonZh = email.reasonZh.replace(` ${schoolPriorityReason}`, "").replace(schoolPriorityReason, "").trim();
+        if (email.actionItemsZh.length === 1 && email.actionItemsZh[0].includes("学校相关事项")) {
+          email.actionItemsZh = [];
+        }
+      }
+    }
+  });
+  return repairedCount;
+}
+
+export function hasInterruptedRecoveryRetry() {
+  return loadState().mailboxes.some((mailbox) => mailbox.lastError?.includes("中断恢复扫描超时"));
 }
 
 export function updateMailboxSync(id: string, patch: Partial<Pick<Mailbox, "lastSyncAt" | "lastError">>) {

@@ -4,7 +4,13 @@ import cors from "cors";
 import express from "express";
 import router from "./routes";
 import { startProcessingWorker } from "./email/processor";
-import { markInterruptedRuns, promoteFinancialRecordEmails } from "./store";
+import {
+  hasInterruptedRecoveryRetry,
+  markInterruptedRuns,
+  promoteFinancialRecordEmails,
+  promoteSchoolPriorityEmails,
+  repairSchoolPriorityPromotions
+} from "./store";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,7 +30,10 @@ app.get(/.*/, (_req, res) => {
 
 app.listen(port, () => {
   promoteFinancialRecordEmails();
+  repairSchoolPriorityPromotions();
+  promoteSchoolPriorityEmails();
+  const retryInterruptedRecovery = hasInterruptedRecoveryRetry();
   const interruptedCount = markInterruptedRuns();
-  startProcessingWorker({ recoverInterruptedOnFirstRun: interruptedCount > 0 });
+  startProcessingWorker({ recoverInterruptedOnFirstRun: interruptedCount > 0 || retryInterruptedRecovery });
   console.log(`自动邮件系统已启动: http://127.0.0.1:${port}`);
 });
