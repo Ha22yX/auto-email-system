@@ -269,6 +269,36 @@ function isLikelyIgnorableEmail(email: ProcessedEmail) {
   ]);
 }
 
+function isEducationMarketingEmail(email: ProcessedEmail) {
+  const text = processedEmailText(email);
+  return includesAny(text, [
+    "admissions",
+    "admission",
+    "apply now",
+    "college search",
+    "open house",
+    "visit campus",
+    "campus visit",
+    "gift card",
+    "tuition",
+    "financial aid",
+    "private education",
+    "enroll",
+    "enrollment",
+    "prospective student",
+    "unsubscribe",
+    "newsletter",
+    "招生",
+    "申请入学",
+    "校园参观",
+    "开放日",
+    "教育推广",
+    "教育广告",
+    "礼品卡",
+    "退订"
+  ]);
+}
+
 export function readState(): AppState {
   return clone(loadState());
 }
@@ -470,6 +500,21 @@ export function repairSchoolPriorityPromotions() {
     }
   });
   return repairedCount;
+}
+
+export function demoteEducationMarketingEmails() {
+  let demotedCount = 0;
+  updateState((draft) => {
+    for (const email of draft.emails) {
+      if (email.category === "important" && !isSchoolPriorityEmail(email) && isEducationMarketingEmail(email)) {
+        demotedCount += 1;
+        email.category = "ignore";
+        email.reasonZh = `${email.reasonZh} 系统规则更新：招生、教育机构或私校推广类营销邮件不来自用户学校官方或老师时，不归为重要。`;
+        email.actionItemsZh = [];
+      }
+    }
+  });
+  return demotedCount;
 }
 
 export function hasInterruptedRecoveryRetry() {

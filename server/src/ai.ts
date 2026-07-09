@@ -3,7 +3,7 @@ import type { AiSettings, ClassificationResult, IncomingEmail, MailCategory } fr
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
 
 const systemPrompt =
-  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同、学校/老师联系、课程作业、成绩、考勤、会议或明确截止时间。来自学校官方域名、老师、advisor、counselor、faculty、principal、dean，或明显是学校事务且和用户有关的邮件，必须归为 important。secondary 表示值得阅读但无需立刻行动，付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等财务记录至少必须归为 secondary，不能归为 ignore。ignore 只用于营销、订阅推广、社交提醒或明显无需留档的低价值通知。";
+  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同、学校/老师联系、课程作业、成绩、考勤、会议或明确截止时间。来自学校官方域名、老师、advisor、counselor、faculty、principal、dean，或明显是用户本人学校事务且和用户有关的邮件，必须归为 important。普通大学招生广告、教育机构推广、私校广告、college search、open house、gift card 这类营销邮件，不要因为包含 school、college、education 就标 important，除非它来自用户学校官方或老师并需要用户处理。secondary 表示值得阅读但无需立刻行动，付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等财务记录至少必须归为 secondary，不能归为 ignore。ignore 只用于营销、订阅推广、社交提醒或明显无需留档的低价值通知。";
 
 function compactEmail(email: IncomingEmail) {
   const body = email.originalText || email.rawSource || "";
@@ -23,6 +23,7 @@ function userPrompt(email: IncomingEmail) {
     "只输出一个 JSON 对象，不要 Markdown，不要解释。",
     "JSON 字段必须是：category, summaryZh, reasonZh, actionItemsZh。",
     "注意：学校官方、老师、advisor、counselor、faculty、principal、dean 发来的邮件，或涉及课程、作业、成绩、考勤、会议、学校活动、学校截止时间并和用户有关的邮件，必须标为 important。",
+    "注意：大学招生、教育机构广告、私校推广、college search、open house、gift card、visit campus 等营销邮件，如果不是来自用户学校官方或老师，不要标为 important。",
     "注意：付款成功、扣款确认、AutoPay confirmation、收据、账单记录、订单确认等财务留档邮件，即使不需要操作，也必须标为 secondary，不能标为 ignore。",
     "",
     compactEmail(email)
@@ -222,6 +223,36 @@ function isSchoolPriorityEmail(email: IncomingEmail) {
   return includesAny(text, schoolContextTerms) && includesAny(text, directActionTerms);
 }
 
+function isEducationMarketingEmail(email: IncomingEmail) {
+  const text = emailText(email);
+  return includesAny(text, [
+    "admissions",
+    "admission",
+    "apply now",
+    "college search",
+    "open house",
+    "visit campus",
+    "campus visit",
+    "gift card",
+    "tuition",
+    "financial aid",
+    "private education",
+    "enroll",
+    "enrollment",
+    "prospective student",
+    "unsubscribe",
+    "newsletter",
+    "招生",
+    "申请入学",
+    "校园参观",
+    "开放日",
+    "教育推广",
+    "教育广告",
+    "礼品卡",
+    "退订"
+  ]);
+}
+
 function normalizeBusinessRules(email: IncomingEmail, result: ClassificationResult): ClassificationResult {
   if (result.category !== "important" && isSchoolPriorityEmail(email)) {
     return {
@@ -231,6 +262,15 @@ function normalizeBusinessRules(email: IncomingEmail, result: ClassificationResu
       actionItemsZh: result.actionItemsZh.length
         ? result.actionItemsZh
         : ["优先打开原件确认是否需要回复、提交材料、参加会议或完成学校相关事项。"]
+    };
+  }
+
+  if (result.category === "important" && !isSchoolPriorityEmail(email) && isEducationMarketingEmail(email)) {
+    return {
+      ...result,
+      category: "ignore",
+      reasonZh: `${result.reasonZh} 这封邮件属于招生、教育机构或私校推广类营销邮件，并非来自用户学校官方或老师，不应归为重要。`,
+      actionItemsZh: []
     };
   }
 
@@ -277,10 +317,19 @@ function heuristicClassify(email: IncomingEmail): ClassificationResult {
     "sale",
     "discount",
     "newsletter",
+    "admissions",
+    "admission",
+    "college search",
+    "open house",
+    "visit campus",
+    "gift card",
+    "private education",
+    "enroll",
     "退订",
     "促销",
     "折扣",
-    "广告"
+    "广告",
+    "招生"
   ];
 
   const importantHit = importantWords.some((word) => haystack.includes(word));
