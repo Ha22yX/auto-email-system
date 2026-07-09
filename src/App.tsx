@@ -284,17 +284,17 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
-  const [detailWidth, setDetailWidth] = useState(560);
+  const [detailWidth, setDetailWidth] = useState(720);
   const [contextMenu, setContextMenu] = useState<EmailContextMenu | null>(null);
   const [autoReadSuppressedId, setAutoReadSuppressedId] = useState<string | null>(null);
   const mailLayoutRef = useRef<HTMLElement | null>(null);
 
   const clampDetailWidth = useCallback((nextWidth: number) => {
     const layoutWidth = mailLayoutRef.current?.getBoundingClientRect().width;
-    const minDetailWidth = 500;
+    const minDetailWidth = 560;
     const maxDetailWidth = layoutWidth
-      ? Math.max(minDetailWidth, Math.min(920, layoutWidth - 520))
-      : 920;
+      ? Math.max(minDetailWidth, Math.min(1040, layoutWidth - 500))
+      : 1040;
 
     return Math.round(Math.min(Math.max(nextWidth, minDetailWidth), maxDetailWidth));
   }, []);
