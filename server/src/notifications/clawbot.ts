@@ -1,5 +1,5 @@
 import type { Mailbox, NotificationSettings, ProcessedEmail } from "../types";
-import { defaultWeclawApiUrl, resolveWeclawRecipientId } from "../weclaw/manager";
+import { defaultWeclawApiUrl, resolveWeclawRecipientId, sendWeclawDirectText } from "../weclaw/manager";
 
 function formatDateTime(value?: string) {
   if (!value) return "未知时间";
@@ -90,34 +90,21 @@ export async function sendClawbotText(
   timeoutMs = 15000,
   options: { requireEnabled?: boolean } = {}
 ) {
-  const { url, recipientId } = validateClawbotSettings(settings, options);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const { recipientId } = validateClawbotSettings(settings, options);
 
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        to: recipientId,
-        text
-      }),
-      signal: controller.signal
-    });
-    const responseText = await response.text().catch(() => "");
-    if (!response.ok) {
-      throw explainClawbotFailure(response.status, responseText);
-    }
-    return responseText;
+    return await sendWeclawDirectText(recipientId, text, timeoutMs);
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("ClawBot 通知超时，请确认 weclaw start 正在运行。");
+      throw new Error("ClawBot 通知超时，请确认微信通知桥接正在运行。");
+    }
+    if (error instanceof Error && error.message.includes("missing context_token")) {
+      throw explainClawbotFailure(409, "missing context_token");
+    }
+    if (error instanceof Error && error.message.includes("ret=-2")) {
+      throw explainClawbotFailure(500, error.message);
     }
     throw error;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

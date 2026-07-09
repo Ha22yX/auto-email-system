@@ -18,3 +18,7 @@ The bundled runtime now:
 - Returns HTTP `409` with an activation hint when no context token exists yet.
 
 After first login, open the ClawBot contact in WeChat and send any short message once. From then on, proactive email notifications can use the stored context.
+
+## Current Project Bridge
+
+The email system now sends notifications through its own Node iLink bridge instead of keeping the WeClaw agent bridge running. Incoming WeChat messages are only used to refresh `context_token`; they are not forwarded to Claude/Codex and do not receive automatic replies.

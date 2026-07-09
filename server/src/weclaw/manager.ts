@@ -1,10 +1,14 @@
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile } from "node:child_process";
+import { randomInt, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 type WeclawState = {
-  child?: ChildProcessWithoutNullStreams;
+  bridgeAbort?: AbortController;
+  loginAbort?: AbortController;
+  bridgeStartedAt?: string;
+  monitorAccountId?: string;
   lastExit?: {
     code: number | null;
     signal: NodeJS.Signals | null;
@@ -19,6 +23,10 @@ const toolDir = path.join(rootDir, "tools", "weclaw");
 const logDir = path.join(rootDir, "data");
 const logFile = path.join(logDir, "weclaw.log");
 export const defaultWeclawApiUrl = "http://127.0.0.1:18011/api/send";
+const ilinkBaseUrl = "https://ilinkai.weixin.qq.com";
+const qrCodeUrl = `${ilinkBaseUrl}/ilink/bot/get_bot_qrcode?bot_type=3`;
+const qrStatusUrl = `${ilinkBaseUrl}/ilink/bot/get_qrcode_status?qrcode=`;
+const sessionExpiredCode = -14;
 
 type WeclawCredential = {
   botToken?: string;
@@ -31,6 +39,15 @@ type WeclawCredential = {
 type WeclawContextTokenStore = {
   updated_at?: string;
   tokens?: Record<string, string>;
+};
+
+type WeclawCredentialRecord = {
+  botToken: string;
+  botId: string;
+  recipientId: string;
+  baseUrl: string;
+  path: string;
+  updatedAt: string;
 };
 
 export type WeclawAccount = {
@@ -65,6 +82,31 @@ function contextTokensPath() {
   return path.join(os.homedir(), ".weclaw", "context_tokens.json");
 }
 
+function normalizeAccountId(raw: string) {
+  return raw.replace(/[@.:]/g, "-");
+}
+
+function syncBufPath(botId: string) {
+  return path.join(credentialsDir(), `${normalizeAccountId(botId)}.sync.json`);
+}
+
+function readSyncBuf(botId: string) {
+  const filePath = syncBufPath(botId);
+  if (!fs.existsSync(filePath)) return "";
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as { get_updates_buf?: string };
+    return raw.get_updates_buf || "";
+  } catch {
+    return "";
+  }
+}
+
+function writeSyncBuf(botId: string, value: string) {
+  const filePath = syncBufPath(botId);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify({ get_updates_buf: value }, null, 2), "utf8");
+}
+
 function readWeclawContextTokens() {
   const filePath = contextTokensPath();
   if (!fs.existsSync(filePath)) {
@@ -91,21 +133,41 @@ function readWeclawContextTokens() {
   }
 }
 
-export function readWeclawAccounts(): WeclawAccount[] {
+function writeWeclawContextToken(userId: string, contextToken: string) {
+  if (!userId || !contextToken) return;
+  const current = readWeclawContextTokens();
+  const next: WeclawContextTokenStore = {
+    updated_at: new Date().toISOString(),
+    tokens: {
+      ...current.tokens,
+      [userId]: contextToken
+    }
+  };
+  fs.mkdirSync(path.dirname(current.path), { recursive: true });
+  fs.writeFileSync(current.path, JSON.stringify(next, null, 2), "utf8");
+}
+
+function readWeclawCredentialRecords(): WeclawCredentialRecord[] {
   const dir = credentialsDir();
   if (!fs.existsSync(dir)) return [];
 
   return fs
     .readdirSync(dir)
-    .filter((name) => name.endsWith(".json"))
+    .filter((name) => name.endsWith(".json") && !name.endsWith(".sync.json"))
     .map((name) => {
       const filePath = path.join(dir, name);
       try {
         const stat = fs.statSync(filePath);
         const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as WeclawCredential;
+        const botToken = raw.bot_token || raw.botToken || "";
+        const botId = raw.ilink_bot_id || "";
+        const recipientId = raw.ilink_user_id || "";
+        if (!botToken || !botId || !recipientId) return undefined;
         return {
-          botId: raw.ilink_bot_id || "",
-          recipientId: raw.ilink_user_id || "",
+          botToken,
+          botId,
+          recipientId,
+          baseUrl: raw.baseurl || ilinkBaseUrl,
           path: filePath,
           updatedAt: stat.mtime.toISOString()
         };
@@ -113,8 +175,28 @@ export function readWeclawAccounts(): WeclawAccount[] {
         return undefined;
       }
     })
-    .filter((account): account is WeclawAccount => Boolean(account?.botId && account.recipientId))
+    .filter((account): account is WeclawCredentialRecord => Boolean(account))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function saveWeclawCredentials(record: {
+  bot_token: string;
+  ilink_bot_id: string;
+  ilink_user_id: string;
+  baseurl?: string;
+}) {
+  fs.mkdirSync(credentialsDir(), { recursive: true });
+  const filePath = path.join(credentialsDir(), `${normalizeAccountId(record.ilink_bot_id)}.json`);
+  fs.writeFileSync(filePath, JSON.stringify(record, null, 2), "utf8");
+}
+
+export function readWeclawAccounts(): WeclawAccount[] {
+  return readWeclawCredentialRecords().map(({ botId, recipientId, path: filePath, updatedAt }) => ({
+    botId,
+    recipientId,
+    path: filePath,
+    updatedAt
+  }));
 }
 
 export function resolveWeclawRecipientId(fallback = "") {
@@ -217,6 +299,252 @@ function apiUrlToAddr(apiUrl: string) {
   return url.host;
 }
 
+function wechatUin() {
+  return Buffer.from(String(randomInt(0, 0xffffffff))).toString("base64");
+}
+
+async function fetchJson<T>(
+  url: string,
+  options: RequestInit & { timeoutMs?: number } = {}
+): Promise<T> {
+  const controller = new AbortController();
+  const externalSignal = options.signal;
+  const abortFromExternal = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", abortFromExternal, { once: true });
+  }
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 15000);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${text.slice(0, 240)}`);
+    }
+    return JSON.parse(text) as T;
+  } finally {
+    clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromExternal);
+  }
+}
+
+async function ilinkPost<T>(
+  account: WeclawCredentialRecord,
+  endpoint: string,
+  body: unknown,
+  timeoutMs = 15000
+) {
+  return fetchJson<T>(`${account.baseUrl || ilinkBaseUrl}${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      AuthorizationType: "ilink_bot_token",
+      Authorization: `Bearer ${account.botToken}`,
+      "X-WECHAT-UIN": wechatUin()
+    },
+    body: JSON.stringify(body),
+    timeoutMs
+  });
+}
+
+function latestAccountForRecipient(recipientId: string) {
+  const accounts = readWeclawCredentialRecords();
+  return accounts.find((account) => account.recipientId === recipientId) || accounts[0];
+}
+
+export async function sendWeclawDirectText(recipientId: string, text: string, timeoutMs = 15000) {
+  const account = latestAccountForRecipient(recipientId);
+  if (!account) {
+    throw new Error("未找到微信登录凭据，请先在管理设置里重新绑定微信。");
+  }
+
+  const contextToken = readWeclawContextTokens().tokens[recipientId];
+  if (!contextToken) {
+    throw new Error("missing context_token: 请先打开微信 ClawBot 聊天，发送任意一条消息用于激活通知会话。");
+  }
+
+  const response = await ilinkPost<{ ret?: number; errmsg?: string }>(
+    account,
+    "/ilink/bot/sendmessage",
+    {
+      msg: {
+        from_user_id: account.botId,
+        to_user_id: recipientId,
+        client_id: randomUUID(),
+        message_type: 2,
+        message_state: 2,
+        item_list: [
+          {
+            type: 1,
+            text_item: {
+              text
+            }
+          }
+        ],
+        context_token: contextToken
+      },
+      base_info: {}
+    },
+    timeoutMs
+  );
+
+  if (response.ret && response.ret !== 0) {
+    throw new Error(`send message failed: ret=${response.ret} errmsg=${response.errmsg || ""}`);
+  }
+
+  appendLog("system", `direct notification sent to ${recipientId}: ${text.slice(0, 80)}`);
+  return JSON.stringify({ status: "ok", mode: "direct" });
+}
+
+function textFromIlinkMessage(msg: any) {
+  const item = Array.isArray(msg?.item_list) ? msg.item_list.find((entry: any) => entry?.type === 1) : undefined;
+  return String(item?.text_item?.text || "");
+}
+
+function isUserFinishedMessage(msg: any) {
+  return msg?.message_type === 1 && msg?.message_state === 2;
+}
+
+async function monitorAccount(account: WeclawCredentialRecord, signal: AbortSignal) {
+  let getUpdatesBuf = readSyncBuf(account.botId);
+  appendLog("system", `notification bridge monitoring ${account.botId} without auto replies`);
+
+  while (!signal.aborted) {
+    try {
+      const response = await ilinkPost<any>(
+        account,
+        "/ilink/bot/getupdates",
+        {
+          get_updates_buf: getUpdatesBuf,
+          base_info: {
+            channel_version: "1.0.0"
+          }
+        },
+        40000
+      );
+
+      if (response?.errcode === sessionExpiredCode) {
+        if (getUpdatesBuf) {
+          appendLog("system", "notification bridge session expired, resetting sync cursor");
+          getUpdatesBuf = "";
+          writeSyncBuf(account.botId, getUpdatesBuf);
+        } else {
+          appendLog("system", "notification bridge session expired; please rebind WeChat");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        continue;
+      }
+
+      if (response?.ret !== 0 && response?.errcode !== 0) {
+        appendLog("system", `notification bridge server error ret=${response?.ret} errcode=${response?.errcode}`);
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        continue;
+      }
+
+      if (response?.get_updates_buf) {
+        getUpdatesBuf = response.get_updates_buf;
+        writeSyncBuf(account.botId, getUpdatesBuf);
+      }
+
+      const messages = Array.isArray(response?.msgs) ? response.msgs : [];
+      for (const msg of messages) {
+        if (!isUserFinishedMessage(msg)) continue;
+        if (msg.context_token && msg.from_user_id) {
+          writeWeclawContextToken(msg.from_user_id, msg.context_token);
+          appendLog(
+            "system",
+            `recorded WeChat context for ${msg.from_user_id}; incoming text ignored: ${textFromIlinkMessage(msg).slice(0, 60)}`
+          );
+        }
+      }
+    } catch (error) {
+      if (signal.aborted) break;
+      const message = error instanceof Error ? error.message : String(error);
+      appendLog("system", `notification bridge poll failed: ${message}`);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+
+  appendLog("system", `notification bridge stopped for ${account.botId}`);
+}
+
+function startNotificationBridge() {
+  if (managedRunning()) return;
+  const account = readWeclawCredentialRecords()[0];
+  if (!account) return;
+
+  const controller = new AbortController();
+  state.bridgeAbort = controller;
+  state.bridgeStartedAt = new Date().toISOString();
+  state.monitorAccountId = account.botId;
+  void monitorAccount(account, controller.signal).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    appendLog("system", `notification bridge crashed: ${message}`);
+  });
+}
+
+async function startQrLogin() {
+  if (state.loginAbort && !state.loginAbort.signal.aborted) return;
+  const controller = new AbortController();
+  state.loginAbort = controller;
+
+  void (async () => {
+    try {
+      appendLog("stdout", "Fetching QR code...");
+      const qr = await fetchJson<{ qrcode: string; qrcode_img_content: string }>(qrCodeUrl, {
+        timeoutMs: 15000,
+        signal: controller.signal
+      });
+      appendLog("stdout", "Scan this QR code with WeChat:");
+      appendLog("stdout", `QR URL: ${qr.qrcode_img_content}`);
+      appendLog("stdout", "Waiting for scan...");
+
+      while (!controller.signal.aborted) {
+        const status = await fetchJson<{
+          status: string;
+          bot_token?: string;
+          ilink_bot_id?: string;
+          baseurl?: string;
+          ilink_user_id?: string;
+        }>(`${qrStatusUrl}${encodeURIComponent(qr.qrcode)}`, {
+          timeoutMs: 45000,
+          signal: controller.signal
+        });
+
+        if (status.status === "confirmed" && status.bot_token && status.ilink_bot_id && status.ilink_user_id) {
+          appendLog("stdout", "Login confirmed!");
+          saveWeclawCredentials({
+            bot_token: status.bot_token,
+            ilink_bot_id: status.ilink_bot_id,
+            ilink_user_id: status.ilink_user_id,
+            baseurl: status.baseurl || ilinkBaseUrl
+          });
+          appendLog("stdout", `Login successful! Credentials saved to ${credentialsDir()}`);
+          appendLog("stdout", `Bot ID: ${status.ilink_bot_id}`);
+          state.loginAbort = undefined;
+          startNotificationBridge();
+          return;
+        }
+
+        if (status.status === "expired") {
+          appendLog("system", "QR code expired; click rebind WeChat to generate a new one");
+          state.loginAbort = undefined;
+          return;
+        }
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        const message = error instanceof Error ? error.message : String(error);
+        appendLog("system", `QR login failed: ${message}`);
+      }
+      state.loginAbort = undefined;
+    }
+  })();
+}
+
 async function isApiReachable(apiUrl: string, timeoutMs = 1500) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -234,28 +562,32 @@ async function isApiReachable(apiUrl: string, timeoutMs = 1500) {
 }
 
 function managedRunning() {
-  return Boolean(state.child && !state.child.killed && state.child.exitCode === null);
+  return Boolean(
+    (state.bridgeAbort && !state.bridgeAbort.signal.aborted) ||
+      (state.loginAbort && !state.loginAbort.signal.aborted)
+  );
 }
 
 export async function getWeclawStatus(apiUrl: string) {
   const exe = executablePath();
   const installed = fs.existsSync(exe);
-  const apiReachable = await isApiReachable(apiUrl);
+  const legacyApiReachable = await isApiReachable(apiUrl);
   const accounts = readWeclawAccounts();
   const activeAccount = accounts[0];
   const contextTokens = readWeclawContextTokens();
   const activeContextToken = activeAccount?.recipientId ? contextTokens.tokens[activeAccount.recipientId] : "";
   const logTail = readLogTail(220);
   const runtimeHealth = analyzeWeclawRuntime(logTail);
+  const bridgeReady = managedRunning();
   return {
     installed,
     executablePath: exe,
     apiUrl: apiUrl || defaultWeclawApiUrl,
     apiBaseUrl: apiUrlToBase(apiUrl),
-    apiReachable,
-    running: managedRunning() || apiReachable,
+    apiReachable: bridgeReady || legacyApiReachable,
+    running: bridgeReady || legacyApiReachable,
     managedRunning: managedRunning(),
-    managedPid: managedRunning() ? state.child?.pid : undefined,
+    managedPid: undefined,
     hasCredentials: accounts.length > 0,
     credentialCount: accounts.length,
     credentialsPath: credentialsDir(),
@@ -272,48 +604,27 @@ export async function getWeclawStatus(apiUrl: string) {
 
 export async function startWeclaw(apiUrl: string) {
   const status = await getWeclawStatus(apiUrl);
-  if (status.apiReachable) {
-    return {
-      ...status,
-      message: "WeClaw API 已在线。"
-    };
-  }
   if (status.managedRunning) {
     return {
       ...status,
-      message: "WeClaw 已由本项目启动。"
+      message: "微信通知桥接已由本项目启动。"
     };
-  }
-  if (!status.installed) {
-    throw new Error(`未找到项目内 WeClaw 运行文件：${status.executablePath}`);
   }
 
   fs.mkdirSync(logDir, { recursive: true });
-  appendLog("system", `starting ${status.executablePath} start -f`);
-  state.child = spawn(status.executablePath, ["start", "-f"], {
-    cwd: toolDir,
-    env: {
-      ...process.env,
-      WECLAW_API_ADDR: apiUrlToAddr(apiUrl)
-    },
-    windowsHide: true
-  });
+  appendLog("system", `starting project notification bridge (${apiUrlToAddr(apiUrl)})`);
+  await forceStopBundledWeclaw();
 
-  state.child.stdout.on("data", (chunk) => appendLog("stdout", chunk));
-  state.child.stderr.on("data", (chunk) => appendLog("stderr", chunk));
-  state.child.on("exit", (code, signal) => {
-    state.lastExit = {
-      code,
-      signal,
-      at: new Date().toISOString()
-    };
-    appendLog("system", `weclaw exited code=${code ?? ""} signal=${signal ?? ""}`);
-  });
+  if (readWeclawCredentialRecords().length > 0) {
+    startNotificationBridge();
+  } else {
+    await startQrLogin();
+  }
 
   await new Promise((resolve) => setTimeout(resolve, 1200));
   return {
     ...(await getWeclawStatus(apiUrl)),
-    message: "已从项目目录启动 WeClaw。首次运行请查看日志里的二维码并用手机微信扫码。"
+    message: "已启动微信通知桥接。首次运行请查看二维码并用手机微信扫码。"
   };
 }
 
@@ -330,14 +641,21 @@ export async function ensureWeclawStarted(apiUrl: string) {
 }
 
 export async function stopWeclaw(apiUrl: string) {
-  if (managedRunning() && state.child) {
-    appendLog("system", "stopping managed weclaw process");
-    state.child.kill();
-    await new Promise((resolve) => setTimeout(resolve, 800));
-  }
+  appendLog("system", "stopping managed notification bridge");
+  state.bridgeAbort?.abort();
+  state.loginAbort?.abort();
+  state.bridgeAbort = undefined;
+  state.loginAbort = undefined;
+  await forceStopBundledWeclaw();
+  state.lastExit = {
+    code: 0,
+    signal: null,
+    at: new Date().toISOString()
+  };
+  await new Promise((resolve) => setTimeout(resolve, 800));
   return {
     ...(await getWeclawStatus(apiUrl)),
-    message: "已请求停止本项目启动的 WeClaw。"
+    message: "已停止本项目的微信通知桥接。"
   };
 }
 
@@ -366,7 +684,6 @@ export function getWeclawLogTail(lines = 160) {
 }
 
 process.once("exit", () => {
-  if (managedRunning() && state.child) {
-    state.child.kill();
-  }
+  state.bridgeAbort?.abort();
+  state.loginAbort?.abort();
 });

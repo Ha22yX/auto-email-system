@@ -39,20 +39,16 @@ npm run dev
 
 ## 微信 WeClaw 通知
 
-项目已内置 WeClaw Windows 运行时，位置在 `tools/weclaw/bin/weclaw_windows_amd64.exe`。
-打开“管理设置”里的“微信通知 / ClawBot 推送”，可以直接启动、停止和查看 WeClaw 日志。
-首次启动时，请根据日志提示用手机微信扫码登录。通知接口默认使用：
-
-```text
-http://127.0.0.1:18011/api/send
-```
+项目保留 WeClaw 的账号目录和二维码登录协议，但通知发送由本项目内置的轻量桥接完成。
+打开“管理设置”里的“微信通知 / ClawBot 推送”，可以直接启动、停止和查看桥接日志。
+首次启动时，请根据日志提示用手机微信扫码登录。
 
 WeClaw 来源：https://github.com/fastclaw-ai/weclaw
 其许可证保存在 `tools/weclaw/LICENSE`。
 
-内置 Windows AMD64 运行时包含本项目补丁：主动推送会自动使用并持久化微信 iLink `context_token`。扫码登录后，接收人会自动绑定为扫码微信；首次发送通知前，请在微信里打开 ClawBot 联系人并发送任意一条消息，用于建立会话上下文。之后 token 会保存到 `~/.weclaw/context_tokens.json`，重启后继续可用。补丁说明见 `tools/weclaw/PATCHES.md`。
+扫码登录后，接收人会自动绑定为扫码微信；首次发送通知前，请在微信里打开 ClawBot 联系人并发送任意一条消息，用于建立会话上下文。桥接只记录 `context_token`，不会把你的微信消息转发给 Claude/Codex，也不会自动回复。之后 token 会保存到 `~/.weclaw/context_tokens.json`，重启后继续可用。
 
-服务启动时会自动尝试启动项目内 WeClaw。管理面板里的“重新绑定微信”会停止当前 WeClaw、清理 `~/.weclaw/accounts/*.json` 和 `~/.weclaw/context_tokens.json`，然后重新生成扫码二维码。
+服务启动时会自动启动项目内通知桥接。管理面板里的“重新绑定微信”会停止当前桥接、清理 `~/.weclaw/accounts/*.json` 和 `~/.weclaw/context_tokens.json`，然后重新生成扫码二维码。
 
 ## 配置步骤
 

@@ -1320,10 +1320,10 @@ function SettingsPanel({
   const weclawExternalRunning = Boolean(weclawStatus?.apiReachable && !weclawStatus.managedRunning);
   const weclawToggleDisabled = weclawBusy || !weclawStatus?.installed || weclawExternalRunning;
   const weclawToggleLabel = weclawExternalRunning
-    ? "外部 WeClaw 在线"
+    ? "外部桥接在线"
     : weclawStatus?.managedRunning
-      ? "停止 WeClaw"
-      : "启动 WeClaw";
+      ? "停止通知桥接"
+      : "启动通知桥接";
   const weclawAutoRecipient = weclawStatus?.recipientId || "";
   const weclawLoginSaved = Boolean(weclawStatus?.hasCredentials);
   const weclawContextReady = Boolean(weclawStatus?.contextReady);
@@ -1337,10 +1337,10 @@ function SettingsPanel({
     : weclawQrUrl
       ? "用手机微信扫描下方二维码完成登录。"
       : weclawStatus?.managedRunning
-        ? "正在等待 WeClaw 输出登录二维码。"
+        ? "正在等待通知桥接输出登录二维码。"
         : weclawLoginSaved
-          ? "已保存微信登录状态。重启程序后点击启动 WeClaw 即可恢复桥接，无需重新扫码。"
-          : "启动 WeClaw 后，这里会自动显示登录二维码。";
+          ? "已保存微信登录状态。重启程序后点击启动通知桥接即可恢复，无需重新扫码。"
+          : "启动通知桥接后，这里会自动显示登录二维码。";
   const weclawHeading = weclawSessionExpired
     ? "微信会话未激活"
     : weclawStatus?.running
@@ -1355,7 +1355,7 @@ function SettingsPanel({
         : weclawSessionExpired
           ? `微信侧会话过期${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
           : `需要会话激活${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
-      : "外部 WeClaw 在线"
+      : "外部桥接在线"
     : weclawLoginSaved
       ? "已绑定微信"
       : weclawStatus?.installed
@@ -1510,7 +1510,7 @@ function SettingsPanel({
                   </span>
                   <span className="notification-toggle-copy">
                     <strong>{notificationForm.enabled ? "微信通知已开启" : "开启微信通知"}</strong>
-                    <small>系统会用项目内 WeClaw 自动发送到扫码绑定的微信</small>
+                    <small>系统会用项目内通知桥接发送到扫码绑定的微信，不会自动回复你的聊天消息</small>
                   </span>
                   <em>{notificationForm.enabled ? "已开启" : "未开启"}</em>
                 </button>
@@ -1580,7 +1580,7 @@ function SettingsPanel({
               <div className="weclaw-console full-span">
                 <div className="weclaw-console-head">
                   <div>
-                    <p className="section-kicker">项目内 WeClaw</p>
+                    <p className="section-kicker">项目内通知桥接</p>
                     <h3>{weclawHeading}</h3>
                   </div>
                   <span className={weclawStatus?.apiReachable ? "weclaw-status online" : "weclaw-status"}>
@@ -1625,7 +1625,7 @@ function SettingsPanel({
                           ? "扫码后会话过期"
                           : "已连接到微信"
                         : weclawQrDataUrl
-                          ? "扫码登录 WeClaw"
+                          ? "扫码登录微信"
                           : weclawLoginSaved
                             ? "登录状态已保存"
                             : "等待二维码"}
