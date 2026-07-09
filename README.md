@@ -1,21 +1,98 @@
-# 自动邮件系统
+<p align="center">
+  <img src="public/favicon.svg" width="72" height="72" alt="Auto Email System logo" />
+</p>
 
-一个本地运行的自动邮件处理系统：后台读取 IMAP/POP3 邮箱，调用 AI 判断邮件重要程度，把系统处理过的邮件标记为已处理，并在网页面板中按「重要」「次重要」「不用管」三类展示。
+<h1 align="center">自动邮件系统</h1>
 
-## 已实现功能
+<p align="center">
+  一个会读邮件、判断轻重缓急、生成中文摘要，并把重要事项推送到微信的 AI Inbox Console。
+</p>
 
-- 多邮箱管理，支持 IMAP 与 POP3。
-- IMAP 读取未读邮件后会自动追加 `\Seen`，也就是服务端已读标记。
-- POP3 没有标准已读概念，系统会用 UIDL 在本地记录「已处理」，不会删除邮件。
-- 默认 AI 配置为智谱 GLM Coding Plan：
-  - Anthropic Message Base URL: `https://open.bigmodel.cn/api/anthropic`
-  - OpenAI Chat Completion Base URL: `https://open.bigmodel.cn/api/coding/paas/v4`
-  - Model: `glm-5.2`
-- 管理面板可修改 AI Base URL、模型、API Key、邮箱账号、轮询间隔。
-- 邮件列表展示中文概况，详情页展示中文概况、判断理由、建议动作和邮件原件。
-- 本地数据存储在 `data/app.db.json`，该目录已加入 `.gitignore`，不会提交邮箱密码和 API Key。
+<p align="center">
+  <a href="https://github.com/Ha22yX/auto-email-system"><img alt="GitHub repo" src="https://img.shields.io/badge/GitHub-auto--email--system-111?style=for-the-badge&logo=github" /></a>
+  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-24.x-205A4B?style=for-the-badge&logo=node.js&logoColor=white" />
+  <img alt="React" src="https://img.shields.io/badge/React-19-6B7FD7?style=for-the-badge&logo=react&logoColor=white" />
+  <img alt="IMAP POP3" src="https://img.shields.io/badge/IMAP%20%2F%20POP3-supported-5F7F73?style=for-the-badge" />
+</p>
 
-## 本地运行
+<p align="center">
+  <img src="docs/readme-hero.svg" alt="Auto Email System interface concept" />
+</p>
+
+## 这是什么
+
+自动邮件系统不是另一个收件箱客户端，而是一个面向“处理结果”的邮件控制台。它会定时读取多个邮箱里的未读邮件，用 AI 判断每封邮件是否值得你看，然后把邮件整理成三类：
+
+| 分类 | 适合放什么 | 默认处理方式 |
+| --- | --- | --- |
+| 重要 | 老师、学校事务、账号安全、付款异常、合同、截止日期、需要回复的邮件 | 留在处理台，系统内默认未读，可微信通知 |
+| 次重要 | 付款回执、订单确认、账单记录、一般通知、之后可以看的资料 | 点击即系统内已读，可按需微信通知 |
+| 不用管 | 推广、招生广告、新闻简报、订阅营销、社交提醒、低价值通知 | 自动归档为系统已读 |
+
+每封邮件都会有中文摘要、判断理由、建议动作和原件预览。你不需要在一堆英文邮件里猜重点，系统会把该看的东西递到你面前。
+
+## 项目亮点
+
+| 能力 | 说明 |
+| --- | --- |
+| 多邮箱处理 | 支持 IMAP 和 POP3，可分别查看每个邮箱，也可汇总全部邮箱。 |
+| AI 分类摘要 | 默认面向智谱 GLM Coding Plan，可在管理面板修改 Base URL、模型、API Key 和 temperature。 |
+| 多模态识别 | 邮件内嵌图片、图片附件和 PDF 可交给 GLM-5V-Turbo 分析，避免重要内容藏在图片或附件里被漏掉。 |
+| 实时入库 | 处理完一封就入库一封，确认入库后才标记邮箱已读，避免中断任务造成漏处理。 |
+| 邮件原件安全预览 | 原件在 sandbox iframe 中渲染，脚本、表单、插件被禁用，远程图片通过本地安全代理加载。 |
+| 系统内已读/未读 | 重要邮件停留 2 秒后才标记系统已读，次重要邮件点击即已读，也支持右键改状态。 |
+| 微信通知 | 集成项目内 WeClaw/ClawBot 桥接，重要邮件可自动推送到扫码绑定的微信。 |
+| 管理面板 | 配置 AI、邮箱、轮询策略、自动加载图片、微信通知、登录密码等。 |
+| 自托管部署 | 单个 Node 服务即可运行，适合本地、VPS、宝塔 Node 项目或其他 Node 托管环境。 |
+
+## 工作流
+
+```mermaid
+flowchart LR
+  A["IMAP / POP3 邮箱"] --> B["读取未读邮件"]
+  B --> C["解析正文、HTML、附件、内嵌图片"]
+  C --> D["AI / 多模态分析"]
+  D --> E{"重要程度"}
+  E -->|重要| F["处理台：重要"]
+  E -->|次重要| G["处理台：次重要"]
+  E -->|不用管| H["自动归档"]
+  F --> I["微信通知"]
+  G --> J["可选通知"]
+  F --> K["确认入库后标记邮箱已读"]
+  G --> K
+  H --> K
+```
+
+## 界面结构
+
+```text
+自动邮件系统
+├─ 处理台
+│  ├─ 全部邮箱
+│  ├─ 单个邮箱视图
+│  ├─ 重要 / 次重要 / 不用管
+│  ├─ 邮件中文摘要列表
+│  └─ 邮件详情：中文概况、判断理由、建议动作、原件渲染
+└─ 管理设置
+   ├─ AI API 与多模态模型
+   ├─ 轮询策略
+   ├─ 多邮箱配置
+   ├─ 微信 ClawBot 推送
+   └─ 登录密码
+```
+
+## 技术栈
+
+| 层 | 技术 |
+| --- | --- |
+| 前端 | React 19, Vite, TypeScript, Phosphor Icons |
+| 后端 | Express 5, TypeScript, tsx |
+| 邮件 | imapflow, mailparser, 自定义 POP3 读取 |
+| AI | 智谱 GLM Coding Plan / Anthropic-compatible API, GLM-5V-Turbo 多模态 |
+| 存储 | 本地 JSON 数据库：`data/app.db.json` |
+| 通知 | 项目内 WeClaw/ClawBot 桥接 |
+
+## 快速开始
 
 ```bash
 npm install
@@ -35,38 +112,109 @@ http://127.0.0.1:8787
 npm run dev
 ```
 
-前端默认在 `http://127.0.0.1:5173`，后端 API 默认在 `http://127.0.0.1:8787`。
+前端默认运行在 `http://127.0.0.1:5173`，后端 API 默认运行在 `http://127.0.0.1:8787`。
 
-## 微信 WeClaw 通知
+## 首次配置
 
-项目保留 WeClaw 的账号目录和二维码登录协议，但通知发送由本项目内置的轻量桥接完成。
-打开“管理设置”里的“微信通知 / ClawBot 推送”，可以直接启动、停止和查看桥接日志。
-首次启动时，请根据日志提示用手机微信扫码登录。
+1. 登录管理面板。
+2. 修改默认登录密码。默认密码是 `Admin12345`，公开部署前必须修改。
+3. 在 AI API 中填入模型服务配置。
+4. 在多邮箱配置中添加 IMAP/POP3 邮箱。
+5. 点击测试连接，确认邮箱授权码、主机、端口无误。
+6. 回到处理台，点击“立即处理”，或开启自动轮询。
 
-WeClaw 来源：https://github.com/fastclaw-ai/weclaw
-其许可证保存在 `tools/weclaw/LICENSE`。
+常用邮箱端口：
 
-扫码登录后，接收人会自动绑定为扫码微信；首次发送通知前，请在微信里打开 ClawBot 联系人并发送任意一条消息，用于建立会话上下文。桥接只记录 `context_token`，不会把你的微信消息转发给 Claude/Codex，也不会自动回复。之后 token 会保存到 `~/.weclaw/context_tokens.json`，重启后继续可用。
+| 协议 | SSL/TLS | 非加密 |
+| --- | ---: | ---: |
+| IMAP | `993` | `143` |
+| POP3 | `995` | `110` |
 
-服务启动时会自动启动项目内通知桥接。管理面板里的“重新绑定微信”会停止当前桥接、清理 `~/.weclaw/accounts/*.json` 和 `~/.weclaw/context_tokens.json`，然后重新生成扫码二维码。
+多数邮箱需要在邮箱后台开启 IMAP/POP3，并使用“授权码”而不是网页登录密码。
 
-## 配置步骤
+## AI 配置
 
-1. 打开「管理设置」。
-2. 在 AI API 中填入智谱 API Key。留空时系统会使用规则兜底分类，方便先测试界面。
-3. 在「添加邮箱」里填写邮箱服务器信息。
-4. 保存邮箱后可点击插头按钮测试连接。
-5. 回到「处理台」点击「立即处理」，或开启自动处理后等待轮询。
+默认面向智谱 GLM Coding Plan：
 
-## 常见邮箱端口
+| 项 | 默认值 |
+| --- | --- |
+| Anthropic-compatible Base URL | `https://open.bigmodel.cn/api/anthropic` |
+| Chat Completions Base URL | `https://open.bigmodel.cn/api/coding/paas/v4` |
+| 文本模型 | `glm-5.2` |
+| 多模态模型 | `glm-5v-turbo` |
 
-- IMAP SSL/TLS: `993`
-- POP3 SSL/TLS: `995`
-- IMAP 非加密: `143`
-- POP3 非加密: `110`
+系统提示词会强约束分类逻辑：
 
-多数邮箱需要在邮箱后台开启 IMAP/POP3，并使用「授权码」而不是登录密码。
+- 需要你处理、查看、确认、回复、保存的重要信息进入“重要/次重要”。
+- 推广、招生广告、新闻、订阅营销进入“不用管”。
+- 付款回执、扣款确认、订单确认、账单记录进入“次重要”，不直接归为不用管。
+- 老师、学校工作人员、课程、作业、截止时间、账号安全等进入“重要”。
 
-## 注意
+## 微信通知
 
-本项目是本地自托管系统。`data/` 内保存了邮箱授权码和 AI Key，请不要手动提交该目录，也不要把运行目录共享给不可信用户。
+管理面板内置 ClawBot 推送配置。开启后，系统可以在重要邮件入库后推送到微信。
+
+特性：
+
+- 项目启动时可自动启动通知桥接。
+- 扫码绑定后会保存会话状态，重启后继续使用。
+- 可分别控制重要、次重要、不用管是否通知。
+- 只发送系统整理后的邮件信息，不会把你的微信聊天内容交给 AI。
+
+WeClaw 来源：<https://github.com/fastclaw-ai/weclaw>  
+相关许可文件保存在 `tools/weclaw/LICENSE`。
+
+## 安全设计
+
+这个项目会接触邮箱授权码、AI Key 和邮件原文，因此安全设计不是装饰项。
+
+| 防护 | 说明 |
+| --- | --- |
+| 登录保护 | 管理面板需要密码登录，会话默认保存 7 天。 |
+| 密码存储 | 管理密码使用 PBKDF2 + salt 哈希存储。 |
+| 防爆破 | 登录失败过多会临时限制来源 IP。 |
+| CSRF 防护 | 非可信来源的修改请求会被拦截。 |
+| 安全响应头 | 启用 CSP、X-Frame-Options、nosniff、Referrer-Policy 等。 |
+| 邮件原件沙箱 | 邮件 HTML 在 sandbox iframe 中显示，禁用脚本、表单和插件。 |
+| 图片代理 | 远程图片经过后端代理，阻止内网地址、认证 URL、异常端口和超大文件。 |
+| 搜索引擎屏蔽 | 内置 `robots.txt` 与 `X-Robots-Tag`，避免被搜索引擎索引。 |
+
+重要提醒：`data/` 会保存邮箱授权码、AI Key、处理后的邮件数据和运行状态，已经在 `.gitignore` 中排除。不要把 `data/`、`.env`、服务器密码或宝塔 API Key 提交到仓库。
+
+## 部署建议
+
+推荐部署方式：
+
+- 本地长期运行
+- VPS + Node.js
+- 宝塔面板 Node 项目
+- systemd / PM2 / Docker 自行封装
+
+生产环境建议：
+
+- 使用 HTTPS 域名访问。
+- 修改默认登录密码。
+- 限制服务器 SSH 登录方式。
+- 定期备份 `data/app.db.json`。
+- 不要把应用直接暴露给不可信用户共同使用。
+
+## 数据与版本管理
+
+```text
+data/app.db.json      本地数据库，保存配置、邮箱、邮件、运行记录
+public/robots.txt     搜索引擎屏蔽规则
+server/src/           Express API、邮件处理、AI、通知、安全逻辑
+src/                  React 管理面板
+tools/weclaw/         WeClaw/ClawBot 相关运行文件
+```
+
+## 适合谁
+
+- 邮件很多，但真正需要处理的很少。
+- 经常收到学校、老师、账单、安全、订单、付款回执等混杂邮件。
+- 希望 AI 先帮你读一遍，再只把重点推给你。
+- 想自托管，不想把邮箱长期交给第三方邮件客户端。
+
+## License
+
+当前仓库未声明统一开源许可证。若要用于公开二次分发，请先补充项目 License，并遵守 `tools/weclaw/LICENSE` 中 WeClaw 相关许可要求。
