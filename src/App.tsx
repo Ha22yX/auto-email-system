@@ -1498,8 +1498,8 @@ function SettingsPanel({
             <Plugs size={22} />
           </div>
           {notificationForm && (
-            <div className="form-grid notification-form">
-              <div className="notification-controls full-span">
+            <div className="notification-form">
+              <div className="notification-hero">
                 <button
                   type="button"
                   className={`notification-primary-toggle${notificationForm.enabled ? " active" : ""}`}
@@ -1510,157 +1510,167 @@ function SettingsPanel({
                   </span>
                   <span className="notification-toggle-copy">
                     <strong>{notificationForm.enabled ? "微信通知已开启" : "开启微信通知"}</strong>
-                    <small>系统会用项目内通知桥接发送到扫码绑定的微信，不会自动回复你的聊天消息</small>
+                    <small>重要邮件入库后，会通过项目内桥接发送到扫码绑定的微信</small>
                   </span>
                   <em>{notificationForm.enabled ? "已开启" : "未开启"}</em>
                 </button>
-
-                <button
-                  type="button"
-                  className={`notification-category-trigger${notificationCategoryOpen ? " open" : ""}`}
-                  onClick={() => setNotificationCategoryOpen((value) => !value)}
-                  aria-expanded={notificationCategoryOpen}
-                >
-                  <span>
-                    <SlidersHorizontal size={18} />
-                    通知分类
-                  </span>
-                  <strong>{notificationSummary}</strong>
-                  <CaretDown size={16} />
-                </button>
-
-                {notificationCategoryOpen && (
-                  <div className="notification-category-grid">
-                    {notificationCategoryOrder.map((category) => {
-                      const Icon = categoryMeta[category].icon;
-                      const enabled = notificationCategories[category];
-                      return (
-                        <button
-                          key={category}
-                          type="button"
-                          className={`notification-category-card ${category}${enabled ? " active" : ""}`}
-                          onClick={() => updateNotificationCategory(category, !enabled)}
-                        >
-                          <span className="category-card-icon">
-                            <Icon size={18} />
-                          </span>
-                          <span>
-                            <strong>{categoryMeta[category].label}</strong>
-                            <small>{enabled ? "会推送到微信" : "不推送"}</small>
-                          </span>
-                          <em>{enabled ? "开" : "关"}</em>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <div className="notification-auto-binding">
-                  <span>自动接收人</span>
-                  <strong>{weclawAutoRecipient || "扫码登录后自动绑定"}</strong>
-                  <small>
-                    {weclawContextReady
-                      ? "扫码用户已绑定，会话上下文已保存"
-                      : weclawSessionExpired
-                        ? "已识别扫码用户，但微信侧没有成功创建 ClawBot 会话"
-                      : "扫码后自动绑定接收人；首次通知前需给 ClawBot 发一条消息"}
-                  </small>
+                <div className="notification-hero-actions">
+                  <button className="ghost-button" disabled={saving} onClick={testNotification}>
+                    <Plugs size={18} />
+                    测试通知
+                  </button>
+                  <button className="secondary-button" disabled={saving} onClick={saveNotification}>
+                    <FloppyDisk size={18} />
+                    保存设置
+                  </button>
                 </div>
               </div>
-              <div className="form-actions full-span">
-                <button className="ghost-button" disabled={saving} onClick={testNotification}>
-                  <Plugs size={18} />
-                  测试通知
-                </button>
-                <button className="secondary-button" disabled={saving} onClick={saveNotification}>
-                  <FloppyDisk size={18} />
-                  保存通知设置
-                </button>
-              </div>
-              <div className="weclaw-console full-span">
-                <div className="weclaw-console-head">
-                  <div>
-                    <p className="section-kicker">项目内通知桥接</p>
-                    <h3>{weclawHeading}</h3>
-                  </div>
-                  <span className={weclawStatus?.apiReachable ? "weclaw-status online" : "weclaw-status"}>
-                    {weclawStatusLabel}
-                  </span>
-                </div>
-                <div className="weclaw-console-actions">
+
+              <div className="notification-workspace">
+                <section className="notification-control-card">
                   <button
-                    className={weclawStatus?.managedRunning ? "ghost-button" : "secondary-button"}
-                    disabled={weclawToggleDisabled}
-                    onClick={toggleManagedWeclaw}
+                    type="button"
+                    className={`notification-category-trigger${notificationCategoryOpen ? " open" : ""}`}
+                    onClick={() => setNotificationCategoryOpen((value) => !value)}
+                    aria-expanded={notificationCategoryOpen}
                   >
-                    {weclawStatus?.managedRunning ? <X size={18} /> : <Play size={18} />}
-                    {weclawBusy ? "处理中..." : weclawToggleLabel}
-                  </button>
-                  <button
-                    className="ghost-button"
-                    disabled={weclawBusy || !weclawStatus?.installed}
-                    onClick={rebindManagedWeclaw}
-                  >
-                    <ClockCounterClockwise size={18} />
-                    重新绑定微信
-                  </button>
-                  <span className="weclaw-refresh-note">
-                    <ClockCounterClockwise size={15} />
-                    日志自动刷新
-                  </span>
-                </div>
-                <div
-                  className={`weclaw-qr-card${weclawQrDataUrl ? " ready" : ""}${
-                    weclawStatus?.apiReachable ? " connected" : ""
-                  }${weclawSessionExpired ? " expired" : ""}`}
-                >
-                  <div className="weclaw-qr-copy">
                     <span>
-                      <QrCode size={16} />
-                      微信登录二维码
+                      <SlidersHorizontal size={18} />
+                      通知分类
                     </span>
-                    <strong>
-                      {weclawStatus?.apiReachable
-                        ? weclawSessionExpired
-                          ? "扫码后会话过期"
-                          : "已连接到微信"
-                        : weclawQrDataUrl
-                          ? "扫码登录微信"
-                          : weclawLoginSaved
-                            ? "登录状态已保存"
-                            : "等待二维码"}
+                    <strong>{notificationSummary}</strong>
+                    <CaretDown size={16} />
+                  </button>
+
+                  {notificationCategoryOpen && (
+                    <div className="notification-category-grid">
+                      {notificationCategoryOrder.map((category) => {
+                        const Icon = categoryMeta[category].icon;
+                        const enabled = notificationCategories[category];
+                        return (
+                          <button
+                            key={category}
+                            type="button"
+                            className={`notification-category-card ${category}${enabled ? " active" : ""}`}
+                            onClick={() => updateNotificationCategory(category, !enabled)}
+                          >
+                            <span className="category-card-icon">
+                              <Icon size={18} />
+                            </span>
+                            <span>
+                              <strong>{categoryMeta[category].label}</strong>
+                              <small>{enabled ? "发送到微信" : "不发送"}</small>
+                            </span>
+                            <em>{enabled ? "开" : "关"}</em>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="notification-auto-binding">
+                    <span>自动接收人</span>
+                    <strong>{weclawAutoRecipient || "扫码登录后自动绑定"}</strong>
+                    <small>
+                      {weclawContextReady
+                        ? "扫码用户已绑定，会话上下文已保存"
+                        : weclawSessionExpired
+                          ? "已识别扫码用户，但微信侧没有成功创建 ClawBot 会话"
+                        : "扫码后自动绑定接收人；首次通知前需给 ClawBot 发一条消息"}
+                    </small>
+                  </div>
+                </section>
+
+                <section className="weclaw-console">
+                  <div className="weclaw-console-head">
+                    <div>
+                      <p className="section-kicker">项目内桥接</p>
+                      <h3>{weclawHeading}</h3>
+                    </div>
+                    <span className={weclawStatus?.apiReachable ? "weclaw-status online" : "weclaw-status"}>
+                      {weclawStatusLabel}
+                    </span>
+                  </div>
+                  <div className="weclaw-console-actions">
+                    <button
+                      className={weclawStatus?.managedRunning ? "ghost-button" : "secondary-button"}
+                      disabled={weclawToggleDisabled}
+                      onClick={toggleManagedWeclaw}
+                    >
+                      {weclawStatus?.managedRunning ? <X size={18} /> : <Play size={18} />}
+                      {weclawBusy ? "处理中..." : weclawToggleLabel}
+                    </button>
+                    <button
+                      className="ghost-button"
+                      disabled={weclawBusy || !weclawStatus?.installed}
+                      onClick={rebindManagedWeclaw}
+                    >
+                      <ClockCounterClockwise size={18} />
+                      重新绑定
+                    </button>
+                  </div>
+                  <div
+                    className={`weclaw-qr-card${weclawQrDataUrl ? " ready" : ""}${
+                      weclawStatus?.apiReachable ? " connected" : ""
+                    }${weclawSessionExpired ? " expired" : ""}`}
+                  >
+                    <div className="weclaw-qr-copy">
+                      <span>
+                        <QrCode size={16} />
+                        微信连接
+                      </span>
+                      <strong>
+                        {weclawStatus?.apiReachable
+                          ? weclawSessionExpired
+                            ? "扫码后会话过期"
+                            : "已连接到微信"
+                          : weclawQrDataUrl
+                            ? "扫码登录微信"
+                            : weclawLoginSaved
+                              ? "登录状态已保存"
+                              : "等待二维码"}
+                      </strong>
+                      <small>{weclawQrHint}</small>
+                    </div>
+                    <div className="weclaw-qr-frame">
+                      {weclawQrDataUrl ? (
+                        <img src={weclawQrDataUrl} alt="WeClaw 微信登录二维码" />
+                      ) : (
+                        <QrCode size={44} weight="duotone" />
+                      )}
+                    </div>
+                  </div>
+                  {weclawSessionExpired && (
+                    <div className="weclaw-diagnosis">
+                      <strong>没有出现联系人，是微信侧没有完成 ClawBot 聊天创建。</strong>
+                      <span>
+                        本机已经拿到 Bot ID {weclawStatus?.botId || "未知"}，但消息轮询立即返回 session expired。
+                        {"请在手机微信确认版本为 8.0.70 或更新，并检查“我 > 设置 > 插件 > 微信 ClawBot”是否可用；如果没有这个插件入口，这个微信账号暂时不能通过当前 WeClaw 入口接收推送。"}
+                      </span>
+                    </div>
+                  )}
+                  <div className="weclaw-runtime">
+                    <span>{weclawLoginSaved ? "凭据位置" : "运行文件"}</span>
+                    <strong title={weclawLoginSaved ? weclawStatus?.credentialsPath : weclawStatus?.executablePath}>
+                      {weclawLoginSaved
+                        ? `${weclawStatus?.credentialsPath || "检测中"} · ${weclawStatus?.credentialCount ?? 0} 个账号`
+                        : weclawStatus?.executablePath || "检测中"}
                     </strong>
-                    <small>{weclawQrHint}</small>
                   </div>
-                  <div className="weclaw-qr-frame">
-                    {weclawQrDataUrl ? (
-                      <img src={weclawQrDataUrl} alt="WeClaw 微信登录二维码" />
-                    ) : (
-                      <QrCode size={54} weight="duotone" />
-                    )}
-                  </div>
-                </div>
-                {weclawSessionExpired && (
-                  <div className="weclaw-diagnosis">
-                    <strong>没有出现联系人，是微信侧没有完成 ClawBot 聊天创建。</strong>
-                    <span>
-                      本机已经拿到 Bot ID {weclawStatus?.botId || "未知"}，但消息轮询立即返回 session expired。
-                      {"请在手机微信确认版本为 8.0.70 或更新，并检查“我 > 设置 > 插件 > 微信 ClawBot”是否可用；如果没有这个插件入口，这个微信账号暂时不能通过当前 WeClaw 入口接收推送。"}
-                    </span>
-                  </div>
-                )}
-                <div className="weclaw-runtime">
-                  <span>{weclawLoginSaved ? "凭据位置" : "运行文件"}</span>
-                  <strong title={weclawLoginSaved ? weclawStatus?.credentialsPath : weclawStatus?.executablePath}>
-                    {weclawLoginSaved
-                      ? `${weclawStatus?.credentialsPath || "检测中"} · ${weclawStatus?.credentialCount ?? 0} 个账号`
-                      : weclawStatus?.executablePath || "检测中"}
-                  </strong>
-                </div>
-                <pre className="weclaw-log">
-                  {weclawStatus?.logTail ||
-                    "启动后这里会显示 WeClaw 日志。首次运行时请根据日志提示用手机微信扫码登录。"}
-                </pre>
+                  <details className="weclaw-log-panel">
+                    <summary>
+                      <span>运行日志</span>
+                      <small>
+                        <ClockCounterClockwise size={14} />
+                        自动刷新
+                      </small>
+                    </summary>
+                    <pre className="weclaw-log">
+                      {weclawStatus?.logTail ||
+                        "启动后这里会显示 WeClaw 日志。首次运行时请根据日志提示用手机微信扫码登录。"}
+                    </pre>
+                  </details>
+                </section>
               </div>
             </div>
           )}
