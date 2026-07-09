@@ -1327,10 +1327,13 @@ function SettingsPanel({
   const weclawAutoRecipient = weclawStatus?.recipientId || "";
   const weclawLoginSaved = Boolean(weclawStatus?.hasCredentials);
   const weclawContextReady = Boolean(weclawStatus?.contextReady);
+  const weclawSessionExpired = Boolean(weclawStatus?.sessionExpired);
   const weclawQrHint = weclawStatus?.apiReachable
     ? weclawContextReady
       ? `微信桥接已经在线，通知会自动发送给扫码绑定的微信。`
-      : "微信已登录并自动绑定扫码用户。首次通知前，请在微信里搜索并打开 ClawBot，对它发送任意一条消息来激活会话；如果找不到联系人，请重新绑定微信。"
+      : weclawSessionExpired
+        ? "扫码确认已经完成，但微信侧随后返回 session expired，说明 ClawBot 聊天没有在微信里真正建立。请先确认微信已更新，并且“设置 > 插件”里能看到微信 ClawBot。"
+        : "微信已登录并自动绑定扫码用户。首次通知前，请在微信里搜索并打开 ClawBot，对它发送任意一条消息来激活会话；如果找不到联系人，请重新绑定微信。"
     : weclawQrUrl
       ? "用手机微信扫描下方二维码完成登录。"
       : weclawStatus?.managedRunning
@@ -1338,7 +1341,9 @@ function SettingsPanel({
         : weclawLoginSaved
           ? "已保存微信登录状态。重启程序后点击启动 WeClaw 即可恢复桥接，无需重新扫码。"
           : "启动 WeClaw 后，这里会自动显示登录二维码。";
-  const weclawHeading = weclawStatus?.running
+  const weclawHeading = weclawSessionExpired
+    ? "微信会话未激活"
+    : weclawStatus?.running
     ? "微信桥接已在线"
     : weclawLoginSaved
       ? "微信登录已保存"
@@ -1347,7 +1352,9 @@ function SettingsPanel({
     ? weclawStatus.managedRunning
       ? weclawContextReady
         ? `会话已激活${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
-        : `需要会话激活${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
+        : weclawSessionExpired
+          ? `微信侧会话过期${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
+          : `需要会话激活${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
       : "外部 WeClaw 在线"
     : weclawLoginSaved
       ? "已绑定微信"
@@ -1554,6 +1561,8 @@ function SettingsPanel({
                   <small>
                     {weclawContextReady
                       ? "扫码用户已绑定，会话上下文已保存"
+                      : weclawSessionExpired
+                        ? "已识别扫码用户，但微信侧没有成功创建 ClawBot 会话"
                       : "扫码后自动绑定接收人；首次通知前需给 ClawBot 发一条消息"}
                   </small>
                 </div>
@@ -1603,7 +1612,7 @@ function SettingsPanel({
                 <div
                   className={`weclaw-qr-card${weclawQrDataUrl ? " ready" : ""}${
                     weclawStatus?.apiReachable ? " connected" : ""
-                  }`}
+                  }${weclawSessionExpired ? " expired" : ""}`}
                 >
                   <div className="weclaw-qr-copy">
                     <span>
@@ -1612,7 +1621,9 @@ function SettingsPanel({
                     </span>
                     <strong>
                       {weclawStatus?.apiReachable
-                        ? "已连接到微信"
+                        ? weclawSessionExpired
+                          ? "扫码后会话过期"
+                          : "已连接到微信"
                         : weclawQrDataUrl
                           ? "扫码登录 WeClaw"
                           : weclawLoginSaved
@@ -1629,6 +1640,15 @@ function SettingsPanel({
                     )}
                   </div>
                 </div>
+                {weclawSessionExpired && (
+                  <div className="weclaw-diagnosis">
+                    <strong>没有出现联系人，是微信侧没有完成 ClawBot 聊天创建。</strong>
+                    <span>
+                      本机已经拿到 Bot ID {weclawStatus?.botId || "未知"}，但消息轮询立即返回 session expired。
+                      {"请在手机微信确认版本为 8.0.70 或更新，并检查“我 > 设置 > 插件 > 微信 ClawBot”是否可用；如果没有这个插件入口，这个微信账号暂时不能通过当前 WeClaw 入口接收推送。"}
+                    </span>
+                  </div>
+                )}
                 <div className="weclaw-runtime">
                   <span>{weclawLoginSaved ? "凭据位置" : "运行文件"}</span>
                   <strong title={weclawLoginSaved ? weclawStatus?.credentialsPath : weclawStatus?.executablePath}>

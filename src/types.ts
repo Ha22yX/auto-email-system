@@ -134,6 +134,10 @@ export type WeclawStatus = {
   contextTokenPath?: string;
   contextReady?: boolean;
   contextUpdatedAt?: string;
+  sessionExpired?: boolean;
+  sessionExpiredAt?: string;
+  missingContext?: boolean;
+  missingContextAt?: string;
   lastExit?: {
     code: number | null;
     signal: string | null;

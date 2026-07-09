@@ -149,6 +149,37 @@ function readLogTail(lines = 120) {
   return content.split(/\r\n|\n|\r/).slice(-lines).join("\n").trim();
 }
 
+function logLineTime(line?: string) {
+  const match = line?.match(/^\[([^\]]+)\]/);
+  return match?.[1] || "";
+}
+
+function analyzeWeclawRuntime(logTail: string) {
+  const lines = logTail.split(/\r\n|\n|\r/);
+  let lastStart = -1;
+  let lastLogin = -1;
+  let lastSessionExpired = -1;
+  let lastMissingContext = -1;
+
+  lines.forEach((line, index) => {
+    if (line.includes("starting ") || line.includes("Starting message bridge")) lastStart = index;
+    if (line.includes("Login confirmed!") || line.includes("Login successful!")) lastLogin = index;
+    if (line.includes("session expired")) lastSessionExpired = index;
+    if (line.includes("missing context_token")) lastMissingContext = index;
+  });
+
+  const currentRunStart = Math.max(lastStart, lastLogin);
+  const sessionExpired = lastSessionExpired > currentRunStart;
+  const missingContext = !sessionExpired && lastMissingContext > currentRunStart;
+
+  return {
+    sessionExpired,
+    sessionExpiredAt: sessionExpired ? logLineTime(lines[lastSessionExpired]) : "",
+    missingContext,
+    missingContextAt: missingContext ? logLineTime(lines[lastMissingContext]) : ""
+  };
+}
+
 function execFileQuiet(file: string, args: string[]) {
   return new Promise<void>((resolve) => {
     execFile(file, args, { windowsHide: true }, () => resolve());
@@ -214,6 +245,8 @@ export async function getWeclawStatus(apiUrl: string) {
   const activeAccount = accounts[0];
   const contextTokens = readWeclawContextTokens();
   const activeContextToken = activeAccount?.recipientId ? contextTokens.tokens[activeAccount.recipientId] : "";
+  const logTail = readLogTail(220);
+  const runtimeHealth = analyzeWeclawRuntime(logTail);
   return {
     installed,
     executablePath: exe,
@@ -231,8 +264,9 @@ export async function getWeclawStatus(apiUrl: string) {
     contextTokenPath: contextTokens.path,
     contextReady: Boolean(activeContextToken),
     contextUpdatedAt: contextTokens.updatedAt,
+    ...runtimeHealth,
     lastExit: state.lastExit,
-    logTail: readLogTail()
+    logTail
   };
 }
 
