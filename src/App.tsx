@@ -93,6 +93,9 @@ const defaultNotificationCategories: Record<MailCategory, boolean> = {
   ignore: false
 };
 const notificationCategoryOrder: MailCategory[] = ["important", "secondary", "ignore"];
+const EMAIL_PAGE_SIZE = 40;
+const EMAIL_WINDOW_LIMIT = 160;
+const EMAIL_SCROLL_THRESHOLD = 420;
 
 function normalizeNotifyCategories(categories?: Partial<Record<MailCategory, boolean>>) {
   return {
@@ -341,6 +344,9 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const [activeCategory, setActiveCategory] = useState<MailCategory>("important");
   const [selectedMailbox, setSelectedMailbox] = useState("all");
   const [emails, setEmails] = useState<EmailListItem[]>([]);
+  const [emailOffset, setEmailOffset] = useState(0);
+  const [emailTotal, setEmailTotal] = useState(0);
+  const [emailWindowLoading, setEmailWindowLoading] = useState<"newer" | "older" | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string>("");
   const [detail, setDetail] = useState<ProcessedEmail | null>(null);
   const [query, setQuery] = useState("");
@@ -351,6 +357,12 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const [contextMenu, setContextMenu] = useState<EmailContextMenu | null>(null);
   const [autoReadSuppressedId, setAutoReadSuppressedId] = useState<string | null>(null);
   const mailLayoutRef = useRef<HTMLElement | null>(null);
+  const emailListRef = useRef<HTMLDivElement | null>(null);
+  const emailsRef = useRef<EmailListItem[]>([]);
+  const emailOffsetRef = useRef(0);
+  const emailTotalRef = useRef(0);
+  const emailRequestSeqRef = useRef(0);
+  const emailWindowLoadingRef = useRef<"newer" | "older" | null>(null);
 
   const clampDetailWidth = useCallback((nextWidth: number) => {
     const layoutWidth = mailLayoutRef.current?.getBoundingClientRect().width;
@@ -400,6 +412,22 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     [detailWidth]
   );
 
+  useEffect(() => {
+    emailsRef.current = emails;
+  }, [emails]);
+
+  useEffect(() => {
+    emailOffsetRef.current = emailOffset;
+  }, [emailOffset]);
+
+  useEffect(() => {
+    emailTotalRef.current = emailTotal;
+  }, [emailTotal]);
+
+  useEffect(() => {
+    emailWindowLoadingRef.current = emailWindowLoading;
+  }, [emailWindowLoading]);
+
   const mailboxMap = useMemo(() => {
     const map = new Map<string, Mailbox>();
     dashboard?.mailboxes.forEach((mailbox) => map.set(mailbox.id, mailbox));
@@ -411,19 +439,126 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     setDashboard(next);
   }, [selectedMailbox]);
 
+  const captureEmailScrollAnchor = useCallback(() => {
+    const node = emailListRef.current;
+    if (!node) return null;
+
+    const rows = Array.from(node.querySelectorAll<HTMLElement>("[data-email-id]"));
+    const anchor = rows.find((row) => row.offsetTop + row.offsetHeight >= node.scrollTop + 8) ?? rows[0];
+    if (!anchor) return null;
+
+    return {
+      id: anchor.dataset.emailId || "",
+      top: anchor.getBoundingClientRect().top
+    };
+  }, []);
+
+  const restoreEmailScrollAnchor = useCallback((anchor: { id: string; top: number } | null) => {
+    if (!anchor?.id) return;
+    window.requestAnimationFrame(() => {
+      const node = emailListRef.current;
+      const nextAnchor = node?.querySelector<HTMLElement>(`[data-email-id="${CSS.escape(anchor.id)}"]`);
+      if (!node || !nextAnchor) return;
+      node.scrollTop += nextAnchor.getBoundingClientRect().top - anchor.top;
+    });
+  }, []);
+
   const loadEmails = useCallback(async (silent = false) => {
+    const requestSeq = ++emailRequestSeqRef.current;
     if (!silent) setLoading(true);
     try {
-      const list = await api.emails(activeCategory, selectedMailbox, query);
-      setEmails(list);
+      const page = await api.emails(activeCategory, selectedMailbox, query, 0, EMAIL_PAGE_SIZE);
+      if (requestSeq !== emailRequestSeqRef.current) return;
+      setEmails(page.items);
+      setEmailOffset(page.offset);
+      setEmailTotal(page.total);
       setSelectedEmailId((current) => {
-        if (current && list.some((item) => item.id === current)) return current;
-        return list[0]?.id ?? "";
+        if (current && page.items.some((item) => item.id === current)) return current;
+        return page.items[0]?.id ?? "";
       });
+      if (!silent) {
+        window.requestAnimationFrame(() => {
+          if (emailListRef.current) emailListRef.current.scrollTop = 0;
+        });
+      }
     } finally {
       if (!silent) setLoading(false);
     }
   }, [activeCategory, selectedMailbox, query]);
+
+  const loadEmailWindow = useCallback(
+    async (direction: "newer" | "older") => {
+      if (loading || emailWindowLoadingRef.current) return;
+
+      const currentItems = emailsRef.current;
+      const currentOffset = emailOffsetRef.current;
+      const currentTotal = emailTotalRef.current;
+      if (direction === "newer" && currentOffset <= 0) return;
+      if (direction === "older" && currentOffset + currentItems.length >= currentTotal) return;
+
+      const requestSeq = emailRequestSeqRef.current;
+      const nextOffset =
+        direction === "newer"
+          ? Math.max(0, currentOffset - EMAIL_PAGE_SIZE)
+          : currentOffset + currentItems.length;
+      const anchor = captureEmailScrollAnchor();
+
+      emailWindowLoadingRef.current = direction;
+      setEmailWindowLoading(direction);
+
+      try {
+        const page = await api.emails(activeCategory, selectedMailbox, query, nextOffset, EMAIL_PAGE_SIZE);
+        if (requestSeq !== emailRequestSeqRef.current) return;
+
+        const currentById = new Set(emailsRef.current.map((email) => email.id));
+        const pageItems = page.items.filter((email) => !currentById.has(email.id));
+        let merged =
+          direction === "newer" ? [...pageItems, ...emailsRef.current] : [...emailsRef.current, ...pageItems];
+        let mergedOffset = direction === "newer" ? page.offset : emailOffsetRef.current;
+
+        if (merged.length > EMAIL_WINDOW_LIMIT) {
+          const trimCount = merged.length - EMAIL_WINDOW_LIMIT;
+          if (direction === "older") {
+            merged = merged.slice(trimCount);
+            mergedOffset += trimCount;
+          } else {
+            merged = merged.slice(0, EMAIL_WINDOW_LIMIT);
+          }
+        }
+
+        setEmails(merged);
+        setEmailOffset(mergedOffset);
+        setEmailTotal(page.total);
+        restoreEmailScrollAnchor(anchor);
+      } catch (error) {
+        setToast(error instanceof Error ? error.message : String(error));
+      } finally {
+        emailWindowLoadingRef.current = null;
+        setEmailWindowLoading(null);
+      }
+    },
+    [activeCategory, captureEmailScrollAnchor, loading, query, restoreEmailScrollAnchor, selectedMailbox]
+  );
+
+  const handleEmailListScroll = useCallback(() => {
+    const node = emailListRef.current;
+    if (!node || loading || emailWindowLoadingRef.current) return;
+
+    const currentItems = emailsRef.current;
+    const currentOffset = emailOffsetRef.current;
+    const currentTotal = emailTotalRef.current;
+    const nearTop = node.scrollTop < EMAIL_SCROLL_THRESHOLD;
+    const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < EMAIL_SCROLL_THRESHOLD;
+
+    if (nearTop && currentOffset > 0) {
+      void loadEmailWindow("newer");
+      return;
+    }
+
+    if (nearBottom && currentOffset + currentItems.length < currentTotal) {
+      void loadEmailWindow("older");
+    }
+  }, [loadEmailWindow, loading]);
 
   const applyEmailReadState = useCallback((updated: ProcessedEmail) => {
     setEmails((current) =>
@@ -538,7 +673,9 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     if (!dashboard?.processorRunning) return;
     const timer = window.setInterval(() => {
       void loadDashboard().catch(() => undefined);
-      if (view === "mail") {
+      const nearLatest =
+        emailOffsetRef.current === 0 && (!emailListRef.current || emailListRef.current.scrollTop < EMAIL_SCROLL_THRESHOLD);
+      if (view === "mail" && nearLatest) {
         void loadEmails(true).catch(() => undefined);
       }
     }, 3000);
@@ -567,6 +704,10 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     ? dashboard.currentRun?.currentStage || "正在处理"
     : "空闲";
   const mailNavExpanded = view === "mail";
+  const loadedEmailStart = emailTotal ? emailOffset + 1 : 0;
+  const loadedEmailEnd = emailOffset + emails.length;
+  const unloadedNewerCount = emailOffset;
+  const unloadedOlderCount = Math.max(0, emailTotal - loadedEmailEnd);
 
   return (
     <div className="app-shell">
@@ -708,7 +849,20 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                 </label>
               </div>
 
-              <div className={loading ? "email-list loading" : "email-list ready"}>
+              {!loading && emailTotal > 0 && (
+                <div className="email-window-status">
+                  <span>
+                    已加载 {loadedEmailStart}-{loadedEmailEnd} / {emailTotal}
+                  </span>
+                  <em>滚动时按需换入历史记录</em>
+                </div>
+              )}
+
+              <div
+                ref={emailListRef}
+                className={loading ? "email-list loading" : "email-list ready"}
+                onScroll={handleEmailListScroll}
+              >
                 {loading ? (
                   Array.from({ length: 5 }).map((_, index) => (
                     <div
@@ -718,7 +872,15 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                     />
                   ))
                 ) : emails.length ? (
-                  emails.map((email, index) => {
+                  <>
+                    {(unloadedNewerCount > 0 || emailWindowLoading === "newer") && (
+                      <div className="email-window-edge">
+                        {emailWindowLoading === "newer"
+                          ? "正在换入最新邮件..."
+                          : `向上滚动可换入 ${unloadedNewerCount} 封更新邮件`}
+                      </div>
+                    )}
+                    {emails.map((email, index) => {
                     const rowClassName = [
                       "email-row",
                       selectedEmailId === email.id ? "active" : "",
@@ -730,6 +892,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                     return (
                       <button
                         key={email.id}
+                        data-email-id={email.id}
                         className={rowClassName}
                         style={{ "--row-index": String(Math.min(index, 12)) } as CSSProperties}
                         onClick={() => selectEmail(email)}
@@ -762,7 +925,15 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                         </div>
                       </button>
                     );
-                  })
+                  })}
+                    {(unloadedOlderCount > 0 || emailWindowLoading === "older") && (
+                      <div className="email-window-edge">
+                        {emailWindowLoading === "older"
+                          ? "正在加载更早邮件..."
+                          : `向下滚动可加载 ${unloadedOlderCount} 封历史邮件`}
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="empty-state">
                     <ShieldCheck size={34} />

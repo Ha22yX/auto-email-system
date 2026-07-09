@@ -75,6 +75,15 @@ export type EmailListItem = {
   notificationError?: string;
 };
 
+export type EmailListPage = {
+  items: EmailListItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMoreBefore: boolean;
+  hasMoreAfter: boolean;
+};
+
 export type ProcessedEmail = EmailListItem & {
   messageId?: string;
   toText?: string;

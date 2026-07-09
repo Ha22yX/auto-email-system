@@ -2,7 +2,7 @@ import type {
   AiSettings,
   AuthSettings,
   Dashboard,
-  EmailListItem,
+  EmailListPage,
   MailCategory,
   Mailbox,
   NotificationSettings,
@@ -60,9 +60,15 @@ export const api = {
   dashboard(mailboxId = "all") {
     return request<Dashboard>(`/api/dashboard?mailboxId=${encodeURIComponent(mailboxId)}`);
   },
-  emails(category: MailCategory, mailboxId: string, q: string) {
-    const params = new URLSearchParams({ category, mailboxId, q });
-    return request<EmailListItem[]>(`/api/emails?${params.toString()}`);
+  emails(category: MailCategory, mailboxId: string, q: string, offset = 0, limit = 40) {
+    const params = new URLSearchParams({
+      category,
+      mailboxId,
+      q,
+      offset: String(offset),
+      limit: String(limit)
+    });
+    return request<EmailListPage>(`/api/emails?${params.toString()}`);
   },
   email(id: string) {
     return request<ProcessedEmail>(`/api/emails/${id}`);

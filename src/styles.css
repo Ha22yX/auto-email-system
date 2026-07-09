@@ -957,6 +957,38 @@ body.resizing-detail iframe {
   color: var(--ink);
 }
 
+.email-window-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+  margin: -2px 3px 8px 0;
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.email-window-status span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.email-window-status em,
+.email-window-edge {
+  color: var(--soft);
+  font-style: normal;
+}
+
+.email-window-edge {
+  display: grid;
+  place-items: center;
+  min-height: 36px;
+  border: 1px dashed rgb(32 90 75 / 0.18);
+  border-radius: 8px;
+  background: rgb(250 251 247 / 0.72);
+  font-size: 12px;
+}
+
 .email-list {
   display: grid;
   grid-auto-rows: max-content;

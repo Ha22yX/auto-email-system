@@ -550,6 +550,8 @@ router.get(
     const category = String(req.query.category ?? "");
     const mailboxId = String(req.query.mailboxId ?? "all");
     const q = String(req.query.q ?? "").trim().toLowerCase();
+    const offset = Math.max(0, Math.floor(Number(req.query.offset ?? 0) || 0));
+    const limit = Math.min(100, Math.max(20, Math.floor(Number(req.query.limit ?? 40) || 40)));
     const allowedCategories = new Set(["important", "secondary", "ignore"]);
 
     const emails = readState().emails.filter((email) => {
@@ -559,7 +561,15 @@ router.get(
       return `${email.subject}\n${email.fromName}\n${email.fromAddress}\n${email.summaryZh}`.toLowerCase().includes(q);
     });
 
-    res.json(emails.map(emailListItem));
+    const items = emails.slice(offset, offset + limit).map(emailListItem);
+    res.json({
+      items,
+      total: emails.length,
+      offset,
+      limit,
+      hasMoreBefore: offset > 0,
+      hasMoreAfter: offset + items.length < emails.length
+    });
   })
 );
 
