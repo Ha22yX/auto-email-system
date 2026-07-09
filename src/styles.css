@@ -127,15 +127,67 @@ button:disabled {
   padding-right: 2px;
 }
 
+.nav-stack,
+.email-list,
+.detail-panel,
+.settings-layout {
+  scrollbar-color: rgb(32 90 75 / 0.28) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.nav-stack::-webkit-scrollbar,
+.email-list::-webkit-scrollbar,
+.detail-panel::-webkit-scrollbar,
+.settings-layout::-webkit-scrollbar {
+  width: 10px;
+}
+
+.nav-stack::-webkit-scrollbar-track,
+.email-list::-webkit-scrollbar-track,
+.detail-panel::-webkit-scrollbar-track,
+.settings-layout::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.nav-stack::-webkit-scrollbar-thumb,
+.email-list::-webkit-scrollbar-thumb,
+.detail-panel::-webkit-scrollbar-thumb,
+.settings-layout::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: rgb(32 90 75 / 0.26);
+}
+
 .nav-group.active {
   gap: 10px;
 }
 
 .mailbox-submenu {
   margin-left: 15px;
+  max-height: min(70dvh, 720px);
   max-width: calc(100% - 15px);
   padding-left: 12px;
+  overflow: hidden;
   border-left: 1px solid rgb(32 90 75 / 0.18);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    max-height 420ms var(--ease),
+    margin 420ms var(--ease),
+    opacity 260ms var(--ease),
+    transform 420ms var(--ease),
+    border-color 420ms var(--ease);
+}
+
+.mailbox-submenu.collapsed {
+  max-height: 0;
+  margin-top: -8px;
+  border-color: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
 }
 
 .submenu-label {
@@ -148,6 +200,7 @@ button:disabled {
 
 .nav-item,
 .mailbox-chip {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -162,6 +215,7 @@ button:disabled {
   transition:
     transform 360ms var(--ease),
     background 360ms var(--ease),
+    box-shadow 360ms var(--ease),
     color 360ms var(--ease);
 }
 
@@ -176,6 +230,7 @@ button:disabled {
 .mailbox-chip.active {
   background: var(--ink);
   color: white;
+  box-shadow: inset 3px 0 0 rgb(47 140 100 / 0.9);
 }
 
 .mailbox-chip {
@@ -356,6 +411,7 @@ button:disabled {
   min-height: 0;
   overflow: hidden;
   align-items: stretch;
+  animation: surfaceIn 420ms var(--ease) both;
 }
 
 .mail-main {
@@ -418,6 +474,7 @@ body.resizing-detail iframe {
 }
 
 .metric-card {
+  position: relative;
   display: grid;
   grid-template-columns: auto 1fr;
   grid-template-rows: auto auto auto;
@@ -430,10 +487,26 @@ body.resizing-detail iframe {
   color: var(--ink);
   text-align: left;
   box-shadow: 0 1px 0 rgb(255 255 255 / 0.8) inset;
+  isolation: isolate;
+  overflow: hidden;
   transition:
     transform 360ms var(--ease),
     border-color 360ms var(--ease),
+    background 360ms var(--ease),
     box-shadow 360ms var(--ease);
+}
+
+.metric-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(135deg, rgb(32 90 75 / 0.09), transparent 52%);
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 360ms var(--ease),
+    transform 360ms var(--ease);
 }
 
 .metric-card:hover,
@@ -441,6 +514,17 @@ body.resizing-detail iframe {
   transform: translateY(-2px);
   border-color: rgb(32 90 75 / 0.35);
   box-shadow: var(--shadow);
+}
+
+.metric-card:hover::after,
+.metric-card.active::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.metric-card:hover .metric-icon,
+.metric-card.active .metric-icon {
+  transform: scale(1.04);
 }
 
 .metric-card.important.active {
@@ -464,6 +548,10 @@ body.resizing-detail iframe {
   border-radius: 8px;
   background: rgb(32 90 75 / 0.1);
   color: var(--accent);
+  transition:
+    background 320ms var(--ease),
+    color 320ms var(--ease),
+    transform 320ms var(--ease);
 }
 
 .metric-card.important .metric-icon {
@@ -740,9 +828,11 @@ body.resizing-detail iframe {
   gap: 10px;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: scroll;
   padding: 2px 3px 10px 0;
   overscroll-behavior: contain;
+  scroll-behavior: smooth;
 }
 
 .email-row,
@@ -763,11 +853,17 @@ body.resizing-detail iframe {
   padding: 15px;
   color: var(--ink);
   text-align: left;
+  will-change: transform, opacity;
   transition:
     transform 300ms var(--ease),
     border-color 300ms var(--ease),
     background 300ms var(--ease),
     box-shadow 300ms var(--ease);
+}
+
+.email-list.ready .email-row {
+  animation: emailRowEnter 420ms var(--ease) backwards;
+  animation-delay: calc(var(--row-index, 0) * 28ms);
 }
 
 .email-row:hover,
@@ -938,7 +1034,12 @@ body.resizing-detail iframe {
     linear-gradient(90deg, transparent, rgb(255 255 255 / 0.72), transparent),
     #f4f4ef;
   background-size: 220px 100%, 100% 100%;
-  animation: shimmer 1.7s var(--ease) infinite;
+  animation:
+    skeletonEnter 360ms var(--ease) both,
+    shimmer 1.7s var(--ease) infinite;
+  animation-delay:
+    calc(var(--row-index, 0) * 42ms),
+    0ms;
 }
 
 .empty-state {
@@ -948,6 +1049,7 @@ body.resizing-detail iframe {
   padding: 28px;
   text-align: center;
   color: var(--muted);
+  animation: surfaceIn 420ms var(--ease) both;
 }
 
 .empty-state.compact {
@@ -976,6 +1078,7 @@ body.resizing-detail iframe {
   padding: 20px;
   overscroll-behavior: contain;
   box-shadow: var(--shadow);
+  animation: detailIn 440ms var(--ease) both;
 }
 
 .detail-panel.empty {
@@ -1207,6 +1310,7 @@ body.resizing-detail iframe {
   overflow: auto;
   padding-right: 3px;
   align-items: start;
+  animation: surfaceIn 420ms var(--ease) both;
 }
 
 .settings-column {
@@ -1409,6 +1513,50 @@ body.resizing-detail iframe {
   }
   to {
     background-position: calc(100% + 220px) 0, 0 0;
+  }
+}
+
+@keyframes surfaceIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes detailIn {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes emailRowEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes skeletonEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

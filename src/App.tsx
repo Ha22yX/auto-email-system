@@ -503,6 +503,7 @@ function App() {
   const runStatusText = dashboard?.processorRunning
     ? dashboard.currentRun?.currentStage || "正在处理"
     : "空闲";
+  const mailNavExpanded = view === "mail";
 
   return (
     <div className="app-shell">
@@ -518,37 +519,41 @@ function App() {
         </div>
 
         <nav className="nav-stack">
-          <div className={view === "mail" ? "nav-group active" : "nav-group"}>
-            <button className={view === "mail" ? "nav-item active" : "nav-item"} onClick={() => setView("mail")}>
+          <div className={mailNavExpanded ? "nav-group active" : "nav-group"}>
+            <button className={mailNavExpanded ? "nav-item active" : "nav-item"} onClick={() => setView("mail")}>
               <SealCheck size={18} />
               处理台
             </button>
-            {view === "mail" && (
-              <div className="mailbox-submenu" aria-label="处理台邮箱视图">
-                <p className="submenu-label">邮箱视图</p>
+            <div
+              className={mailNavExpanded ? "mailbox-submenu expanded" : "mailbox-submenu collapsed"}
+              aria-hidden={!mailNavExpanded}
+              aria-label="处理台邮箱视图"
+            >
+              <p className="submenu-label">邮箱视图</p>
+              <button
+                className={selectedMailbox === "all" ? "mailbox-chip active" : "mailbox-chip"}
+                onClick={() => setSelectedMailbox("all")}
+                tabIndex={mailNavExpanded ? 0 : -1}
+                title="全部邮箱"
+              >
+                <MailboxIcon size={17} />
+                <span className="mailbox-chip-label">全部邮箱</span>
+                <em>{dashboard?.allTotal ?? dashboard?.total ?? 0}</em>
+              </button>
+              {dashboard?.mailboxes.map((mailbox) => (
                 <button
-                  className={selectedMailbox === "all" ? "mailbox-chip active" : "mailbox-chip"}
-                  onClick={() => setSelectedMailbox("all")}
-                  title="全部邮箱"
+                  key={mailbox.id}
+                  className={selectedMailbox === mailbox.id ? "mailbox-chip active" : "mailbox-chip"}
+                  onClick={() => setSelectedMailbox(mailbox.id)}
+                  tabIndex={mailNavExpanded ? 0 : -1}
+                  title={`${mailbox.name} · ${mailbox.email}`}
                 >
-                  <MailboxIcon size={17} />
-                  <span className="mailbox-chip-label">全部邮箱</span>
-                  <em>{dashboard?.allTotal ?? dashboard?.total ?? 0}</em>
+                  <span className={mailbox.enabled ? "status-dot online" : "status-dot"} />
+                  <span className="mailbox-chip-label">{mailbox.name}</span>
+                  <em>{mailbox.protocol.toUpperCase()}</em>
                 </button>
-                {dashboard?.mailboxes.map((mailbox) => (
-                  <button
-                    key={mailbox.id}
-                    className={selectedMailbox === mailbox.id ? "mailbox-chip active" : "mailbox-chip"}
-                    onClick={() => setSelectedMailbox(mailbox.id)}
-                    title={`${mailbox.name} · ${mailbox.email}`}
-                  >
-                    <span className={mailbox.enabled ? "status-dot online" : "status-dot"} />
-                    <span className="mailbox-chip-label">{mailbox.name}</span>
-                    <em>{mailbox.protocol.toUpperCase()}</em>
-                  </button>
-                ))}
-              </div>
-            )}
+              ))}
+            </div>
           </div>
           <button
             className={view === "settings" ? "nav-item active" : "nav-item"}
@@ -637,11 +642,17 @@ function App() {
                 </label>
               </div>
 
-              <div className="email-list">
+              <div className={loading ? "email-list loading" : "email-list ready"}>
                 {loading ? (
-                  Array.from({ length: 5 }).map((_, index) => <div className="email-skeleton" key={index} />)
+                  Array.from({ length: 5 }).map((_, index) => (
+                    <div
+                      className="email-skeleton"
+                      key={index}
+                      style={{ "--row-index": String(index) } as CSSProperties}
+                    />
+                  ))
                 ) : emails.length ? (
-                  emails.map((email) => {
+                  emails.map((email, index) => {
                     const rowClassName = [
                       "email-row",
                       selectedEmailId === email.id ? "active" : "",
@@ -654,6 +665,7 @@ function App() {
                       <button
                         key={email.id}
                         className={rowClassName}
+                        style={{ "--row-index": String(Math.min(index, 12)) } as CSSProperties}
                         onClick={() => selectEmail(email)}
                         onContextMenu={(event) => openEmailContextMenu(event, email)}
                       >
