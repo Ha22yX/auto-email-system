@@ -37,6 +37,19 @@ npm run dev
 
 前端默认在 `http://127.0.0.1:5173`，后端 API 默认在 `http://127.0.0.1:8787`。
 
+## 微信 WeClaw 通知
+
+项目已内置 WeClaw Windows 运行时，位置在 `tools/weclaw/bin/weclaw_windows_amd64.exe`。
+打开“管理设置”里的“微信通知 / ClawBot 推送”，可以直接启动、停止和查看 WeClaw 日志。
+首次启动时，请根据日志提示用手机微信扫码登录。通知接口默认使用：
+
+```text
+http://127.0.0.1:18011/api/send
+```
+
+WeClaw 来源：https://github.com/fastclaw-ai/weclaw
+其许可证保存在 `tools/weclaw/LICENSE`。
+
 ## 配置步骤
 
 1. 打开「管理设置」。

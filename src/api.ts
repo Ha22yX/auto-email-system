@@ -7,7 +7,8 @@ import type {
   NotificationSettings,
   ProcessedEmail,
   ProcessingRun,
-  SystemSettings
+  SystemSettings,
+  WeclawStatus
 } from "./types";
 
 const API_BASE =
@@ -77,6 +78,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(settings)
     });
+  },
+  weclawStatus() {
+    return request<WeclawStatus>("/api/weclaw/status");
+  },
+  startWeclaw() {
+    return request<WeclawStatus>("/api/weclaw/start", { method: "POST" });
+  },
+  stopWeclaw() {
+    return request<WeclawStatus>("/api/weclaw/stop", { method: "POST" });
+  },
+  weclawLogs(lines = 160) {
+    return request<{ logTail: string; logFile: string }>(`/api/weclaw/logs?lines=${encodeURIComponent(String(lines))}`);
   },
   saveMailbox(mailbox: Partial<Mailbox>) {
     return request<Mailbox[]>(mailbox.id ? `/api/mailboxes/${mailbox.id}` : "/api/mailboxes", {

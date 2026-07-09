@@ -17,6 +17,7 @@ import {
   upsertMailbox
 } from "./store";
 import { sendClawbotTestNotification } from "./notifications/clawbot";
+import { getWeclawLogTail, getWeclawStatus, startWeclaw, stopWeclaw } from "./weclaw/manager";
 import type { MailCategory } from "./types";
 
 const router = express.Router();
@@ -247,6 +248,38 @@ router.post(
       ok: true,
       message: "微信 ClawBot 测试通知已发送。"
     });
+  })
+);
+
+function notificationApiUrl() {
+  return readState().settings.notification.clawbotApiUrl || "http://127.0.0.1:18011/api/send";
+}
+
+router.get(
+  "/weclaw/status",
+  asyncRoute(async (_req, res) => {
+    res.json(await getWeclawStatus(notificationApiUrl()));
+  })
+);
+
+router.post(
+  "/weclaw/start",
+  asyncRoute(async (_req, res) => {
+    res.status(202).json(await startWeclaw(notificationApiUrl()));
+  })
+);
+
+router.post(
+  "/weclaw/stop",
+  asyncRoute(async (_req, res) => {
+    res.json(await stopWeclaw(notificationApiUrl()));
+  })
+);
+
+router.get(
+  "/weclaw/logs",
+  asyncRoute((req, res) => {
+    res.json(getWeclawLogTail(Number(req.query.lines ?? 160)));
   })
 );
 

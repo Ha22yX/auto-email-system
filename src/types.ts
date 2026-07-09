@@ -115,3 +115,21 @@ export type Dashboard = {
   processorRunning: boolean;
   currentRun?: ProcessingRun | null;
 };
+
+export type WeclawStatus = {
+  installed: boolean;
+  executablePath: string;
+  apiUrl: string;
+  apiBaseUrl: string;
+  apiReachable: boolean;
+  running: boolean;
+  managedRunning: boolean;
+  managedPid?: number;
+  lastExit?: {
+    code: number | null;
+    signal: string | null;
+    at: string;
+  };
+  logTail: string;
+  message?: string;
+};
