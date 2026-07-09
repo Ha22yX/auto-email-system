@@ -1,4 +1,4 @@
-import { ImapFlow } from "imapflow";
+import { ImapFlow, type ImapFlowOptions } from "imapflow";
 import type { IncomingEmail, Mailbox } from "../types";
 import { parseIncomingEmail } from "./parse";
 
@@ -7,7 +7,7 @@ export type FetchedEmail = {
   markRead: () => Promise<{ marked: boolean; note?: string }>;
 };
 
-function createImapClient(mailbox: Mailbox) {
+export function createImapClient(mailbox: Mailbox, overrides: Partial<ImapFlowOptions> = {}) {
   return new ImapFlow({
     host: mailbox.host,
     port: mailbox.port,
@@ -19,7 +19,8 @@ function createImapClient(mailbox: Mailbox) {
     connectionTimeout: 20000,
     greetingTimeout: 15000,
     socketTimeout: 60000,
-    logger: false
+    logger: false,
+    ...overrides
   });
 }
 

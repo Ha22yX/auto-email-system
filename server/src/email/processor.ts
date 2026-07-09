@@ -23,6 +23,9 @@ import { countUnreadImap, fetchInterruptedImapRecovery, fetchUnreadImap, type Fe
 import { countUnreadPop3, fetchUnreadPop3 } from "./pop3";
 
 let running = false;
+const queuedMailboxIds = new Set<string>();
+let queueDrainTimer: ReturnType<typeof setTimeout> | undefined;
+let queueDraining = false;
 
 function incrementRun(run: ProcessingRun, category: "important" | "secondary" | "ignore") {
   run.processedCount += 1;
@@ -434,6 +437,46 @@ export async function processMailboxes(options: {
 
 export function isProcessorRunning() {
   return running;
+}
+
+function scheduleQueueDrain(delayMs = 1000) {
+  if (queueDrainTimer) return;
+  queueDrainTimer = setTimeout(() => {
+    queueDrainTimer = undefined;
+    void drainProcessingQueue();
+  }, delayMs);
+}
+
+async function drainProcessingQueue() {
+  if (queueDraining) return;
+  if (running) {
+    scheduleQueueDrain(10000);
+    return;
+  }
+
+  const mailboxId = queuedMailboxIds.values().next().value as string | undefined;
+  if (!mailboxId) return;
+
+  queuedMailboxIds.delete(mailboxId);
+  queueDraining = true;
+  try {
+    await processMailboxes({ mailboxId });
+  } catch {
+    queuedMailboxIds.add(mailboxId);
+    scheduleQueueDrain(10000);
+  } finally {
+    queueDraining = false;
+  }
+
+  if (queuedMailboxIds.size) {
+    scheduleQueueDrain(1000);
+  }
+}
+
+export function requestMailboxProcessing(mailboxId: string, delayMs = 5000) {
+  if (!mailboxId) return;
+  queuedMailboxIds.add(mailboxId);
+  scheduleQueueDrain(delayMs);
 }
 
 export function startProcessingWorker(options: { recoverInterruptedOnFirstRun?: boolean } = {}) {
