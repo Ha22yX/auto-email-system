@@ -1134,8 +1134,8 @@ function SettingsPanel({
 
   return (
     <section className="settings-layout">
-      <div className="settings-column">
-        <div className="settings-panel">
+      <div className="settings-column control-column">
+        <div className="settings-panel ai-settings-panel">
           <div className="panel-heading">
             <div>
               <p className="section-kicker">AI API</p>
@@ -1197,7 +1197,7 @@ function SettingsPanel({
           )}
         </div>
 
-        <div className="settings-panel">
+        <div className="settings-panel system-settings-panel">
           <div className="panel-heading">
             <div>
               <p className="section-kicker">自动处理</p>
@@ -1260,8 +1260,8 @@ function SettingsPanel({
         </div>
       </div>
 
-      <div className="settings-column wide">
-        <div className="settings-panel">
+      <div className="settings-column mailbox-column wide">
+        <div className="settings-panel mailbox-settings-panel">
           <div className="panel-heading">
             <div>
               <p className="section-kicker">多邮箱</p>
@@ -1377,6 +1377,14 @@ function SettingsPanel({
               )}
             </div>
           </div>
+        </div>
+
+        <div className="mailbox-list-header">
+          <div>
+            <p className="section-kicker">已保存邮箱</p>
+            <h3>{dashboard?.mailboxes.length ?? 0} 个邮箱</h3>
+          </div>
+          <span>IMAP / POP3</span>
         </div>
 
         <div className="mailbox-table">
