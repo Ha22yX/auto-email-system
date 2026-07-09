@@ -50,6 +50,8 @@ http://127.0.0.1:18011/api/send
 WeClaw 来源：https://github.com/fastclaw-ai/weclaw
 其许可证保存在 `tools/weclaw/LICENSE`。
 
+内置 Windows AMD64 运行时包含本项目补丁：主动推送会自动使用并持久化微信 iLink `context_token`。扫码登录后，接收人会自动绑定为扫码微信；首次发送通知前，请在微信里打开 ClawBot 联系人并发送任意一条消息，用于建立会话上下文。之后 token 会保存到 `~/.weclaw/context_tokens.json`，重启后继续可用。补丁说明见 `tools/weclaw/PATCHES.md`。
+
 ## 配置步骤
 
 1. 打开「管理设置」。

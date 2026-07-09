@@ -1313,8 +1313,11 @@ function SettingsPanel({
       : "启动 WeClaw";
   const weclawAutoRecipient = weclawStatus?.recipientId || "";
   const weclawLoginSaved = Boolean(weclawStatus?.hasCredentials);
+  const weclawContextReady = Boolean(weclawStatus?.contextReady);
   const weclawQrHint = weclawStatus?.apiReachable
-    ? `微信桥接已经在线，通知会自动发送给 ${weclawAutoRecipient || "已绑定微信"}。`
+    ? weclawContextReady
+      ? `微信桥接已经在线，通知会自动发送给扫码绑定的微信。`
+      : "微信已登录并自动绑定扫码用户。首次通知前，请在微信里给 ClawBot 发任意一条消息来激活会话。"
     : weclawQrUrl
       ? "用手机微信扫描下方二维码完成登录。"
       : weclawStatus?.managedRunning
@@ -1329,7 +1332,9 @@ function SettingsPanel({
       : "微信桥接未在线";
   const weclawStatusLabel = weclawStatus?.apiReachable
     ? weclawStatus.managedRunning
-      ? `本项目运行中${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
+      ? weclawContextReady
+        ? `会话已激活${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
+        : `需要会话激活${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
       : "外部 WeClaw 在线"
     : weclawLoginSaved
       ? "已绑定微信"
@@ -1533,7 +1538,11 @@ function SettingsPanel({
                 <div className="notification-auto-binding">
                   <span>自动接收人</span>
                   <strong>{weclawAutoRecipient || "扫码登录后自动绑定"}</strong>
-                  <small>API 地址固定使用本机 WeClaw：127.0.0.1:18011</small>
+                  <small>
+                    {weclawContextReady
+                      ? "扫码用户已绑定，会话上下文已保存"
+                      : "扫码后自动绑定接收人；首次通知前需给 ClawBot 发一条消息"}
+                  </small>
                 </div>
               </div>
               <div className="form-actions full-span">

@@ -28,6 +28,11 @@ type WeclawCredential = {
   baseurl?: string;
 };
 
+type WeclawContextTokenStore = {
+  updated_at?: string;
+  tokens?: Record<string, string>;
+};
+
 export type WeclawAccount = {
   botId: string;
   recipientId: string;
@@ -54,6 +59,36 @@ function executablePath() {
 
 function credentialsDir() {
   return path.join(os.homedir(), ".weclaw", "accounts");
+}
+
+function contextTokensPath() {
+  return path.join(os.homedir(), ".weclaw", "context_tokens.json");
+}
+
+function readWeclawContextTokens() {
+  const filePath = contextTokensPath();
+  if (!fs.existsSync(filePath)) {
+    return {
+      path: filePath,
+      updatedAt: "",
+      tokens: {} as Record<string, string>
+    };
+  }
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as WeclawContextTokenStore;
+    return {
+      path: filePath,
+      updatedAt: raw.updated_at || "",
+      tokens: raw.tokens || {}
+    };
+  } catch {
+    return {
+      path: filePath,
+      updatedAt: "",
+      tokens: {} as Record<string, string>
+    };
+  }
 }
 
 export function readWeclawAccounts(): WeclawAccount[] {
@@ -150,6 +185,8 @@ export async function getWeclawStatus(apiUrl: string) {
   const apiReachable = await isApiReachable(apiUrl);
   const accounts = readWeclawAccounts();
   const activeAccount = accounts[0];
+  const contextTokens = readWeclawContextTokens();
+  const activeContextToken = activeAccount?.recipientId ? contextTokens.tokens[activeAccount.recipientId] : "";
   return {
     installed,
     executablePath: exe,
@@ -164,6 +201,9 @@ export async function getWeclawStatus(apiUrl: string) {
     credentialsPath: credentialsDir(),
     recipientId: activeAccount?.recipientId,
     botId: activeAccount?.botId,
+    contextTokenPath: contextTokens.path,
+    contextReady: Boolean(activeContextToken),
+    contextUpdatedAt: contextTokens.updatedAt,
     lastExit: state.lastExit,
     logTail: readLogTail()
   };

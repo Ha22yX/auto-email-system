@@ -58,6 +58,32 @@ export function buildImportantEmailMessage(email: ProcessedEmail, mailbox?: Mail
   ].join("\n");
 }
 
+class ClawbotSendError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number
+  ) {
+    super(message);
+  }
+}
+
+function explainClawbotFailure(status: number, responseText: string) {
+  const body = responseText.trim();
+  if (status === 409 && body.includes("missing context_token")) {
+    return new ClawbotSendError([
+      "微信接收人已经按扫码账号自动绑定，但还没有可用于主动推送的微信会话上下文。",
+      "请在手机微信里打开 ClawBot 联系人，先发送任意一条消息给它，等系统记录到会话后再测试通知。之后会自动保存，重启不用重新扫码。"
+    ].join(""), 409);
+  }
+  if (body.includes("ret=-2")) {
+    return new ClawbotSendError([
+      "微信 iLink 拒绝发送：参数错误 ret=-2。",
+      "通常是缺少该扫码用户的 context_token。请先在微信里给 ClawBot 发任意一条消息以激活会话，然后再测试通知。"
+    ].join(""), 409);
+  }
+  return new ClawbotSendError(`ClawBot 返回 ${status}${body ? `：${body.slice(0, 180)}` : ""}`, 502);
+}
+
 export async function sendClawbotText(
   settings: NotificationSettings,
   text: string,
@@ -82,7 +108,7 @@ export async function sendClawbotText(
     });
     const responseText = await response.text().catch(() => "");
     if (!response.ok) {
-      throw new Error(`ClawBot 返回 ${response.status}${responseText ? `：${responseText.slice(0, 180)}` : ""}`);
+      throw explainClawbotFailure(response.status, responseText);
     }
     return responseText;
   } catch (error) {

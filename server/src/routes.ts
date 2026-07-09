@@ -463,7 +463,10 @@ router.use((error: unknown, _req: express.Request, res: express.Response, _next:
   }
 
   const message = error instanceof Error ? error.message : String(error);
-  res.status(500).json({ error: message });
+  const statusCode = typeof (error as { statusCode?: unknown })?.statusCode === "number"
+    ? Number((error as { statusCode: number }).statusCode)
+    : 500;
+  res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({ error: message });
 });
 
 export default router;

@@ -131,6 +131,9 @@ export type WeclawStatus = {
   credentialsPath: string;
   recipientId?: string;
   botId?: string;
+  contextTokenPath?: string;
+  contextReady?: boolean;
+  contextUpdatedAt?: string;
   lastExit?: {
     code: number | null;
     signal: string | null;
