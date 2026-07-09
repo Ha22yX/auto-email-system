@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   Archive,
+  BellRinging,
+  CaretDown,
   CheckCircle,
   ClockCounterClockwise,
   EnvelopeSimple,
@@ -16,6 +18,7 @@ import {
   QrCode,
   SealCheck,
   ShieldCheck,
+  SlidersHorizontal,
   Star,
   Trash,
   Warning,
@@ -75,6 +78,26 @@ const categoryMeta: Record<
 
 function shouldAutoMarkPanelRead(category: MailCategory) {
   return category === "important";
+}
+
+const defaultNotificationCategories: Record<MailCategory, boolean> = {
+  important: true,
+  secondary: false,
+  ignore: false
+};
+const notificationCategoryOrder: MailCategory[] = ["important", "secondary", "ignore"];
+
+function normalizeNotifyCategories(categories?: Partial<Record<MailCategory, boolean>>) {
+  return {
+    ...defaultNotificationCategories,
+    ...categories
+  };
+}
+
+function notificationCategorySummary(categories: Record<MailCategory, boolean>) {
+  const active = notificationCategoryOrder.filter((category) => categories[category]);
+  if (!active.length) return "未选择分类";
+  return active.map((category) => categoryMeta[category].label).join("、");
 }
 
 function extractWeclawQrUrl(logTail: string) {
@@ -1058,6 +1081,7 @@ function SettingsPanel({
   const [aiForm, setAiForm] = useState<AiSettings | null>(null);
   const [systemForm, setSystemForm] = useState<SystemSettings | null>(null);
   const [notificationForm, setNotificationForm] = useState<NotificationSettings | null>(null);
+  const [notificationCategoryOpen, setNotificationCategoryOpen] = useState(true);
   const [weclawStatus, setWeclawStatus] = useState<WeclawStatus | null>(null);
   const [weclawQrDataUrl, setWeclawQrDataUrl] = useState("");
   const [weclawBusy, setWeclawBusy] = useState(false);
@@ -1075,7 +1099,10 @@ function SettingsPanel({
     setNotificationForm({
       ...dashboard.settings.notification,
       enabled: Boolean(dashboard.settings.notification.enabled),
-      importantOnly: Boolean(dashboard.settings.notification.importantOnly)
+      clawbotApiUrl: "http://127.0.0.1:18011/api/send",
+      clawbotRecipientId: "",
+      importantOnly: Boolean(dashboard.settings.notification.importantOnly),
+      notifyCategories: normalizeNotifyCategories(dashboard.settings.notification.notifyCategories)
     });
   }, [dashboard]);
 
@@ -1262,6 +1289,21 @@ function SettingsPanel({
     }
   }
 
+  function updateNotificationCategory(category: MailCategory, enabled: boolean) {
+    if (!notificationForm) return;
+    const notifyCategories = {
+      ...normalizeNotifyCategories(notificationForm.notifyCategories),
+      [category]: enabled
+    };
+    setNotificationForm({
+      ...notificationForm,
+      notifyCategories,
+      importantOnly: notifyCategories.important && !notifyCategories.secondary && !notifyCategories.ignore
+    });
+  }
+
+  const notificationCategories = normalizeNotifyCategories(notificationForm?.notifyCategories);
+  const notificationSummary = notificationCategorySummary(notificationCategories);
   const weclawExternalRunning = Boolean(weclawStatus?.apiReachable && !weclawStatus.managedRunning);
   const weclawToggleDisabled = weclawBusy || !weclawStatus?.installed || weclawExternalRunning;
   const weclawToggleLabel = weclawExternalRunning
@@ -1269,13 +1311,31 @@ function SettingsPanel({
     : weclawStatus?.managedRunning
       ? "停止 WeClaw"
       : "启动 WeClaw";
+  const weclawAutoRecipient = weclawStatus?.recipientId || "";
+  const weclawLoginSaved = Boolean(weclawStatus?.hasCredentials);
   const weclawQrHint = weclawStatus?.apiReachable
-    ? "微信桥接已经在线，不需要扫码。"
+    ? `微信桥接已经在线，通知会自动发送给 ${weclawAutoRecipient || "已绑定微信"}。`
     : weclawQrUrl
       ? "用手机微信扫描下方二维码完成登录。"
       : weclawStatus?.managedRunning
         ? "正在等待 WeClaw 输出登录二维码。"
-        : "启动 WeClaw 后，这里会自动显示登录二维码。";
+        : weclawLoginSaved
+          ? "已保存微信登录状态。重启程序后点击启动 WeClaw 即可恢复桥接，无需重新扫码。"
+          : "启动 WeClaw 后，这里会自动显示登录二维码。";
+  const weclawHeading = weclawStatus?.running
+    ? "微信桥接已在线"
+    : weclawLoginSaved
+      ? "微信登录已保存"
+      : "微信桥接未在线";
+  const weclawStatusLabel = weclawStatus?.apiReachable
+    ? weclawStatus.managedRunning
+      ? `本项目运行中${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
+      : "外部 WeClaw 在线"
+    : weclawLoginSaved
+      ? "已绑定微信"
+      : weclawStatus?.installed
+        ? "可启动"
+        : "未安装";
 
   return (
     <section className="settings-layout">
@@ -1414,46 +1474,68 @@ function SettingsPanel({
           </div>
           {notificationForm && (
             <div className="form-grid notification-form">
-              <label className="switch-row full-span">
-                <span>
-                  <strong>收到重要邮件时通知我</strong>
-                  <small>邮件确认入库后，通过 WeClaw 本地 API 主动推送到微信</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={notificationForm.enabled}
-                  onChange={(event) => setNotificationForm({ ...notificationForm, enabled: event.target.checked })}
-                />
-              </label>
-              <label className="full-span">
-                ClawBot API 地址
-                <input
-                  value={notificationForm.clawbotApiUrl}
-                  placeholder="http://127.0.0.1:18011/api/send"
-                  onChange={(event) => setNotificationForm({ ...notificationForm, clawbotApiUrl: event.target.value })}
-                />
-              </label>
-              <label className="full-span">
-                微信接收人 ID
-                <input
-                  value={notificationForm.clawbotRecipientId}
-                  placeholder="user_id@im.wechat"
-                  onChange={(event) =>
-                    setNotificationForm({ ...notificationForm, clawbotRecipientId: event.target.value })
-                  }
-                />
-              </label>
-              <label className="switch-row full-span">
-                <span>
-                  <strong>只通知重要邮件</strong>
-                  <small>保持开启可避免次重要和不用管邮件打扰你</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={notificationForm.importantOnly}
-                  onChange={(event) => setNotificationForm({ ...notificationForm, importantOnly: event.target.checked })}
-                />
-              </label>
+              <div className="notification-controls full-span">
+                <button
+                  type="button"
+                  className={`notification-primary-toggle${notificationForm.enabled ? " active" : ""}`}
+                  onClick={() => setNotificationForm({ ...notificationForm, enabled: !notificationForm.enabled })}
+                >
+                  <span className="notification-toggle-icon">
+                    <BellRinging size={22} weight={notificationForm.enabled ? "fill" : "regular"} />
+                  </span>
+                  <span className="notification-toggle-copy">
+                    <strong>{notificationForm.enabled ? "微信通知已开启" : "开启微信通知"}</strong>
+                    <small>系统会用项目内 WeClaw 自动发送到扫码绑定的微信</small>
+                  </span>
+                  <em>{notificationForm.enabled ? "已开启" : "未开启"}</em>
+                </button>
+
+                <button
+                  type="button"
+                  className={`notification-category-trigger${notificationCategoryOpen ? " open" : ""}`}
+                  onClick={() => setNotificationCategoryOpen((value) => !value)}
+                  aria-expanded={notificationCategoryOpen}
+                >
+                  <span>
+                    <SlidersHorizontal size={18} />
+                    通知分类
+                  </span>
+                  <strong>{notificationSummary}</strong>
+                  <CaretDown size={16} />
+                </button>
+
+                {notificationCategoryOpen && (
+                  <div className="notification-category-grid">
+                    {notificationCategoryOrder.map((category) => {
+                      const Icon = categoryMeta[category].icon;
+                      const enabled = notificationCategories[category];
+                      return (
+                        <button
+                          key={category}
+                          type="button"
+                          className={`notification-category-card ${category}${enabled ? " active" : ""}`}
+                          onClick={() => updateNotificationCategory(category, !enabled)}
+                        >
+                          <span className="category-card-icon">
+                            <Icon size={18} />
+                          </span>
+                          <span>
+                            <strong>{categoryMeta[category].label}</strong>
+                            <small>{enabled ? "会推送到微信" : "不推送"}</small>
+                          </span>
+                          <em>{enabled ? "开" : "关"}</em>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="notification-auto-binding">
+                  <span>自动接收人</span>
+                  <strong>{weclawAutoRecipient || "扫码登录后自动绑定"}</strong>
+                  <small>API 地址固定使用本机 WeClaw：127.0.0.1:18011</small>
+                </div>
+              </div>
               <div className="form-actions full-span">
                 <button className="ghost-button" disabled={saving} onClick={testNotification}>
                   <Plugs size={18} />
@@ -1468,16 +1550,10 @@ function SettingsPanel({
                 <div className="weclaw-console-head">
                   <div>
                     <p className="section-kicker">项目内 WeClaw</p>
-                    <h3>{weclawStatus?.running ? "微信桥接已在线" : "微信桥接未在线"}</h3>
+                    <h3>{weclawHeading}</h3>
                   </div>
                   <span className={weclawStatus?.apiReachable ? "weclaw-status online" : "weclaw-status"}>
-                    {weclawStatus?.apiReachable
-                      ? weclawStatus.managedRunning
-                        ? `本项目运行中${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
-                        : "外部 WeClaw 在线"
-                      : weclawStatus?.installed
-                        ? "可启动"
-                        : "未安装"}
+                    {weclawStatusLabel}
                   </span>
                 </div>
                 <div className="weclaw-console-actions">
@@ -1505,7 +1581,13 @@ function SettingsPanel({
                       微信登录二维码
                     </span>
                     <strong>
-                      {weclawStatus?.apiReachable ? "已连接到微信" : weclawQrDataUrl ? "扫码登录 WeClaw" : "等待二维码"}
+                      {weclawStatus?.apiReachable
+                        ? "已连接到微信"
+                        : weclawQrDataUrl
+                          ? "扫码登录 WeClaw"
+                          : weclawLoginSaved
+                            ? "登录状态已保存"
+                            : "等待二维码"}
                     </strong>
                     <small>{weclawQrHint}</small>
                   </div>
@@ -1518,8 +1600,12 @@ function SettingsPanel({
                   </div>
                 </div>
                 <div className="weclaw-runtime">
-                  <span>运行文件</span>
-                  <strong title={weclawStatus?.executablePath}>{weclawStatus?.executablePath || "检测中"}</strong>
+                  <span>{weclawLoginSaved ? "凭据位置" : "运行文件"}</span>
+                  <strong title={weclawLoginSaved ? weclawStatus?.credentialsPath : weclawStatus?.executablePath}>
+                    {weclawLoginSaved
+                      ? `${weclawStatus?.credentialsPath || "检测中"} · ${weclawStatus?.credentialCount ?? 0} 个账号`
+                      : weclawStatus?.executablePath || "检测中"}
+                  </strong>
                 </div>
                 <pre className="weclaw-log">
                   {weclawStatus?.logTail ||

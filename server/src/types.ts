@@ -22,6 +22,7 @@ export type NotificationSettings = {
   clawbotApiUrl: string;
   clawbotRecipientId: string;
   importantOnly: boolean;
+  notifyCategories: Record<MailCategory, boolean>;
 };
 
 export type Mailbox = {

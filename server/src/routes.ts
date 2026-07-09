@@ -17,7 +17,7 @@ import {
   upsertMailbox
 } from "./store";
 import { sendClawbotTestNotification } from "./notifications/clawbot";
-import { getWeclawLogTail, getWeclawStatus, startWeclaw, stopWeclaw } from "./weclaw/manager";
+import { defaultWeclawApiUrl, getWeclawLogTail, getWeclawStatus, startWeclaw, stopWeclaw } from "./weclaw/manager";
 import type { MailCategory } from "./types";
 
 const router = express.Router();
@@ -53,9 +53,20 @@ const systemSchema = z.object({
 
 const notificationSchema = z.object({
   enabled: z.coerce.boolean(),
-  clawbotApiUrl: z.string().url(),
   clawbotRecipientId: z.string().optional().default(""),
-  importantOnly: z.coerce.boolean().optional().default(true)
+  clawbotApiUrl: z.string().optional().default(defaultWeclawApiUrl),
+  importantOnly: z.coerce.boolean().optional().default(true),
+  notifyCategories: z
+    .object({
+      important: z.coerce.boolean().default(true),
+      secondary: z.coerce.boolean().default(false),
+      ignore: z.coerce.boolean().default(false)
+    })
+    .default({
+      important: true,
+      secondary: false,
+      ignore: false
+    })
 });
 
 const panelReadSchema = z.object({
@@ -252,7 +263,7 @@ router.post(
 );
 
 function notificationApiUrl() {
-  return readState().settings.notification.clawbotApiUrl || "http://127.0.0.1:18011/api/send";
+  return defaultWeclawApiUrl;
 }
 
 router.get(

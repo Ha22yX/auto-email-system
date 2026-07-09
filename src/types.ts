@@ -23,6 +23,7 @@ export type NotificationSettings = {
   clawbotApiUrl: string;
   clawbotRecipientId: string;
   importantOnly: boolean;
+  notifyCategories: Record<MailCategory, boolean>;
 };
 
 export type Mailbox = {
@@ -125,6 +126,11 @@ export type WeclawStatus = {
   running: boolean;
   managedRunning: boolean;
   managedPid?: number;
+  hasCredentials: boolean;
+  credentialCount: number;
+  credentialsPath: string;
+  recipientId?: string;
+  botId?: string;
   lastExit?: {
     code: number | null;
     signal: string | null;

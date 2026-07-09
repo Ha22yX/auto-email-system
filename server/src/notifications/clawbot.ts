@@ -1,4 +1,5 @@
 import type { Mailbox, NotificationSettings, ProcessedEmail } from "../types";
+import { defaultWeclawApiUrl, resolveWeclawRecipientId } from "../weclaw/manager";
 
 function formatDateTime(value?: string) {
   if (!value) return "未知时间";
@@ -21,21 +22,20 @@ function senderName(email: ProcessedEmail) {
 
 function validateClawbotSettings(settings: NotificationSettings, options: { requireEnabled?: boolean } = {}) {
   if (options.requireEnabled !== false && !settings.enabled) throw new Error("微信通知未开启。");
-  if (!settings.clawbotApiUrl.trim()) throw new Error("请填写 ClawBot API 地址。");
-  if (!settings.clawbotRecipientId.trim()) throw new Error("请填写微信接收人 ID。");
 
-  const url = new URL(settings.clawbotApiUrl);
+  const url = new URL(defaultWeclawApiUrl);
   if (!["http:", "https:"].includes(url.protocol)) {
     throw new Error("ClawBot API 地址只支持 HTTP/HTTPS。");
   }
-  return url;
+  const recipientId = resolveWeclawRecipientId(settings.clawbotRecipientId);
+  if (!recipientId) throw new Error("未找到已绑定的微信接收人，请先启动 WeClaw 并扫码登录。");
+  return { url, recipientId };
 }
 
 export function shouldNotifyEmail(settings: NotificationSettings, email: ProcessedEmail) {
   if (!settings.enabled) return false;
   if (email.notifiedAt) return false;
-  if (settings.importantOnly && email.category !== "important") return false;
-  return email.category === "important" || email.category === "secondary";
+  return Boolean(settings.notifyCategories?.[email.category]);
 }
 
 export function buildImportantEmailMessage(email: ProcessedEmail, mailbox?: Mailbox) {
@@ -64,7 +64,7 @@ export async function sendClawbotText(
   timeoutMs = 15000,
   options: { requireEnabled?: boolean } = {}
 ) {
-  const url = validateClawbotSettings(settings, options);
+  const { url, recipientId } = validateClawbotSettings(settings, options);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -75,7 +75,7 @@ export async function sendClawbotText(
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        to: settings.clawbotRecipientId,
+        to: recipientId,
         text
       }),
       signal: controller.signal

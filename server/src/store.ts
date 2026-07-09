@@ -14,6 +14,11 @@ import type {
 const DATA_DIR = path.resolve(process.env.DATA_DIR ?? "data");
 const DATA_FILE = path.join(DATA_DIR, "app.db.json");
 const schoolPriorityReason = "系统规则更新：学校官方、老师或课程事务相关邮件需要优先查看，归为重要。";
+const defaultNotifyCategories: Record<"important" | "secondary" | "ignore", boolean> = {
+  important: true,
+  secondary: false,
+  ignore: false
+};
 
 const defaultState: AppState = {
   settings: {
@@ -34,7 +39,8 @@ const defaultState: AppState = {
       enabled: false,
       clawbotApiUrl: "http://127.0.0.1:18011/api/send",
       clawbotRecipientId: "",
-      importantOnly: true
+      importantOnly: true,
+      notifyCategories: defaultNotifyCategories
     }
   },
   mailboxes: [],
@@ -61,11 +67,26 @@ function loadState(): AppState {
 
   const raw = fs.readFileSync(DATA_FILE, "utf8");
   const parsed = JSON.parse(raw) as Partial<AppState>;
+  const parsedNotification = parsed.settings?.notification as Partial<NotificationSettings> | undefined;
+  const migratedNotifyCategories = parsedNotification?.notifyCategories ?? {
+    important: true,
+    secondary: parsedNotification?.importantOnly === false,
+    ignore: false
+  };
   stateCache = {
     settings: {
       ai: { ...defaultState.settings.ai, ...parsed.settings?.ai },
       system: { ...defaultState.settings.system, ...parsed.settings?.system },
-      notification: { ...defaultState.settings.notification, ...parsed.settings?.notification }
+      notification: {
+        ...defaultState.settings.notification,
+        ...parsed.settings?.notification,
+        notifyCategories: {
+          ...defaultNotifyCategories,
+          ...migratedNotifyCategories
+        },
+        clawbotApiUrl: "http://127.0.0.1:18011/api/send",
+        clawbotRecipientId: ""
+      }
     },
     mailboxes: parsed.mailboxes ?? [],
     emails: parsed.emails ?? [],
@@ -442,9 +463,18 @@ export function updateSystemSettings(input: Partial<SystemSettings>) {
 
 export function updateNotificationSettings(input: Partial<NotificationSettings>) {
   return updateState((draft) => {
+    const notifyCategories = {
+      ...defaultNotifyCategories,
+      ...draft.settings.notification.notifyCategories,
+      ...input.notifyCategories
+    };
     draft.settings.notification = {
       ...draft.settings.notification,
-      ...input
+      ...input,
+      clawbotApiUrl: "http://127.0.0.1:18011/api/send",
+      clawbotRecipientId: "",
+      notifyCategories,
+      importantOnly: notifyCategories.important && !notifyCategories.secondary && !notifyCategories.ignore
     };
   }).settings.notification;
 }

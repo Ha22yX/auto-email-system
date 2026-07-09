@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 type WeclawState = {
@@ -17,6 +18,22 @@ const rootDir = path.resolve(process.cwd());
 const toolDir = path.join(rootDir, "tools", "weclaw");
 const logDir = path.join(rootDir, "data");
 const logFile = path.join(logDir, "weclaw.log");
+export const defaultWeclawApiUrl = "http://127.0.0.1:18011/api/send";
+
+type WeclawCredential = {
+  botToken?: string;
+  bot_token?: string;
+  ilink_bot_id?: string;
+  ilink_user_id?: string;
+  baseurl?: string;
+};
+
+export type WeclawAccount = {
+  botId: string;
+  recipientId: string;
+  path: string;
+  updatedAt: string;
+};
 
 function executableName() {
   if (process.platform === "win32") {
@@ -33,6 +50,40 @@ function executableName() {
 
 function executablePath() {
   return process.env.WECLAW_BIN || path.join(toolDir, "bin", executableName());
+}
+
+function credentialsDir() {
+  return path.join(os.homedir(), ".weclaw", "accounts");
+}
+
+export function readWeclawAccounts(): WeclawAccount[] {
+  const dir = credentialsDir();
+  if (!fs.existsSync(dir)) return [];
+
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => {
+      const filePath = path.join(dir, name);
+      try {
+        const stat = fs.statSync(filePath);
+        const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as WeclawCredential;
+        return {
+          botId: raw.ilink_bot_id || "",
+          recipientId: raw.ilink_user_id || "",
+          path: filePath,
+          updatedAt: stat.mtime.toISOString()
+        };
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((account): account is WeclawAccount => Boolean(account?.botId && account.recipientId))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+export function resolveWeclawRecipientId(fallback = "") {
+  return fallback.trim() || readWeclawAccounts()[0]?.recipientId || "";
 }
 
 function appendLog(source: string, chunk: Buffer | string) {
@@ -64,12 +115,12 @@ function readLogTail(lines = 120) {
 }
 
 function apiUrlToBase(apiUrl: string) {
-  const url = new URL(apiUrl || "http://127.0.0.1:18011/api/send");
+  const url = new URL(apiUrl || defaultWeclawApiUrl);
   return `${url.protocol}//${url.host}`;
 }
 
 function apiUrlToAddr(apiUrl: string) {
-  const url = new URL(apiUrl || "http://127.0.0.1:18011/api/send");
+  const url = new URL(apiUrl || defaultWeclawApiUrl);
   return url.host;
 }
 
@@ -97,15 +148,22 @@ export async function getWeclawStatus(apiUrl: string) {
   const exe = executablePath();
   const installed = fs.existsSync(exe);
   const apiReachable = await isApiReachable(apiUrl);
+  const accounts = readWeclawAccounts();
+  const activeAccount = accounts[0];
   return {
     installed,
     executablePath: exe,
-    apiUrl,
+    apiUrl: apiUrl || defaultWeclawApiUrl,
     apiBaseUrl: apiUrlToBase(apiUrl),
     apiReachable,
     running: managedRunning() || apiReachable,
     managedRunning: managedRunning(),
     managedPid: managedRunning() ? state.child?.pid : undefined,
+    hasCredentials: accounts.length > 0,
+    credentialCount: accounts.length,
+    credentialsPath: credentialsDir(),
+    recipientId: activeAccount?.recipientId,
+    botId: activeAccount?.botId,
     lastExit: state.lastExit,
     logTail: readLogTail()
   };
