@@ -28,12 +28,7 @@ function isSecureRequest(req: express.Request) {
 }
 
 function cookieBase(req: express.Request) {
-  return [
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    isSecureRequest(req) ? "Secure" : ""
-  ]
+  return ["Path=/", "HttpOnly", "SameSite=Lax", isSecureRequest(req) ? "Secure" : ""]
     .filter(Boolean)
     .join("; ");
 }
