@@ -18,6 +18,7 @@ type WeclawState = {
 
 const state: WeclawState = {};
 let qrLogMode = false;
+let contextReadyHandler: ((userId: string) => void | Promise<void>) | undefined;
 const rootDir = path.resolve(process.cwd());
 const toolDir = path.join(rootDir, "tools", "weclaw");
 const logDir = path.join(rootDir, "data");
@@ -57,6 +58,10 @@ export type WeclawAccount = {
   path: string;
   updatedAt: string;
 };
+
+export function setWeclawContextReadyHandler(handler: (userId: string) => void | Promise<void>) {
+  contextReadyHandler = handler;
+}
 
 function executableName() {
   if (process.platform === "win32") {
@@ -134,9 +139,18 @@ function readWeclawContextTokens() {
   }
 }
 
+function notifyWeclawContextReady(userId: string) {
+  if (!contextReadyHandler) return;
+  Promise.resolve(contextReadyHandler(userId)).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    appendLog("system", `context ready handler failed: ${message}`);
+  });
+}
+
 function writeWeclawContextToken(userId: string, contextToken: string) {
-  if (!userId || !contextToken) return;
+  if (!userId || !contextToken) return false;
   const current = readWeclawContextTokens();
+  const previous = current.tokens[userId];
   const next: WeclawContextTokenStore = {
     updated_at: new Date().toISOString(),
     tokens: {
@@ -146,6 +160,7 @@ function writeWeclawContextToken(userId: string, contextToken: string) {
   };
   fs.mkdirSync(path.dirname(current.path), { recursive: true });
   fs.writeFileSync(current.path, JSON.stringify(next, null, 2), "utf8");
+  return previous !== contextToken;
 }
 
 function readWeclawCredentialRecords(): WeclawCredentialRecord[] {
@@ -461,6 +476,7 @@ async function monitorAccount(account: WeclawCredentialRecord, signal: AbortSign
             "system",
             `recorded WeChat context for ${msg.from_user_id}; incoming text ignored: ${textFromIlinkMessage(msg).slice(0, 60)}`
           );
+          notifyWeclawContextReady(msg.from_user_id);
         }
       }
     } catch (error) {

@@ -5,7 +5,8 @@ import express from "express";
 import router from "./routes";
 import { startProcessingWorker } from "./email/processor";
 import { startImapIdleWatchers } from "./email/imap-idle";
-import { defaultWeclawApiUrl, ensureWeclawStarted } from "./weclaw/manager";
+import { schedulePendingEmailNotificationRetry } from "./notifications/pending";
+import { defaultWeclawApiUrl, ensureWeclawStarted, setWeclawContextReadyHandler } from "./weclaw/manager";
 import { apiRateLimit, corsOrigin, csrfProtection, securityHeaders } from "./security";
 import {
   hasInterruptedRecoveryRetry,
@@ -19,6 +20,8 @@ const distDir = path.join(rootDir, "dist");
 const port = Number(process.env.PORT ?? 8787);
 
 const app = express();
+
+setWeclawContextReadyHandler(() => schedulePendingEmailNotificationRetry(500));
 
 app.set("trust proxy", true);
 app.disable("x-powered-by");
@@ -48,6 +51,6 @@ app.listen(port, () => {
   const interruptedCount = markInterruptedRuns();
   startProcessingWorker({ recoverInterruptedOnFirstRun: interruptedCount > 0 || retryInterruptedRecovery });
   startImapIdleWatchers();
-  void ensureWeclawStarted(defaultWeclawApiUrl);
+  void ensureWeclawStarted(defaultWeclawApiUrl).finally(() => schedulePendingEmailNotificationRetry(3000));
   console.log(`自动邮件系统已启动: http://127.0.0.1:${port}`);
 });

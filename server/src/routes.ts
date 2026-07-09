@@ -23,6 +23,7 @@ import {
   verifyAdminPassword
 } from "./store";
 import { sendClawbotTestNotification } from "./notifications/clawbot";
+import { schedulePendingEmailNotificationRetry } from "./notifications/pending";
 import {
   defaultWeclawApiUrl,
   getWeclawLogTail,
@@ -78,12 +79,12 @@ const notificationSchema = z.object({
   notifyCategories: z
     .object({
       important: z.coerce.boolean().default(true),
-      secondary: z.coerce.boolean().default(false),
+      secondary: z.coerce.boolean().default(true),
       ignore: z.coerce.boolean().default(false)
     })
     .default({
       important: true,
-      secondary: false,
+      secondary: true,
       ignore: false
     })
 });
@@ -439,6 +440,7 @@ router.post(
   asyncRoute(async (req, res) => {
     const parsed = notificationSchema.parse(req.body);
     await sendClawbotTestNotification(parsed);
+    schedulePendingEmailNotificationRetry(500);
     res.json({
       ok: true,
       message: "微信 ClawBot 测试通知已发送。"

@@ -89,7 +89,7 @@ function shouldAutoMarkPanelRead(category: MailCategory) {
 
 const defaultNotificationCategories: Record<MailCategory, boolean> = {
   important: true,
-  secondary: false,
+  secondary: true,
   ignore: false
 };
 const notificationCategoryOrder: MailCategory[] = ["important", "secondary", "ignore"];

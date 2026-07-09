@@ -18,7 +18,7 @@ const DATA_DIR = path.resolve(process.env.DATA_DIR ?? "data");
 const DATA_FILE = path.join(DATA_DIR, "app.db.json");
 const defaultNotifyCategories: Record<"important" | "secondary" | "ignore", boolean> = {
   important: true,
-  secondary: false,
+  secondary: true,
   ignore: false
 };
 
@@ -77,11 +77,15 @@ function loadState(): AppState {
   const parsed = JSON.parse(raw) as Partial<AppState>;
   const parsedNotification = parsed.settings?.notification as Partial<NotificationSettings> | undefined;
   const parsedAuth = parsed.settings?.auth as Partial<AuthSettings> | undefined;
-  const migratedNotifyCategories = parsedNotification?.notifyCategories ?? {
-    important: true,
-    secondary: parsedNotification?.importantOnly === false,
-    ignore: false
-  };
+  const migratedNotifyCategories =
+    parsedNotification?.notifyCategories ??
+    (parsedNotification
+      ? {
+          important: true,
+          secondary: parsedNotification.importantOnly === false,
+          ignore: false
+        }
+      : defaultNotifyCategories);
   const auth =
     parsedAuth?.passwordHash && parsedAuth.passwordSalt
       ? {
