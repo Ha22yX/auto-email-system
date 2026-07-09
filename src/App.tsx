@@ -349,6 +349,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const [emailWindowLoading, setEmailWindowLoading] = useState<"newer" | "older" | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string>("");
   const [detail, setDetail] = useState<ProcessedEmail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -363,6 +364,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const emailTotalRef = useRef(0);
   const emailRequestSeqRef = useRef(0);
   const emailWindowLoadingRef = useRef<"newer" | "older" | null>(null);
+  const detailRequestSeqRef = useRef(0);
 
   const clampDetailWidth = useCallback((nextWidth: number) => {
     const layoutWidth = mailLayoutRef.current?.getBoundingClientRect().width;
@@ -626,14 +628,25 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     if (!selectedEmailId) {
+      detailRequestSeqRef.current += 1;
       setDetail(null);
+      setDetailLoading(false);
       return;
     }
 
+    const requestSeq = ++detailRequestSeqRef.current;
+    setDetailLoading(true);
     void api
       .email(selectedEmailId)
-      .then(setDetail)
-      .catch((error) => setToast(error.message));
+      .then((nextDetail) => {
+        if (requestSeq === detailRequestSeqRef.current) setDetail(nextDetail);
+      })
+      .catch((error) => {
+        if (requestSeq === detailRequestSeqRef.current) setToast(error.message);
+      })
+      .finally(() => {
+        if (requestSeq === detailRequestSeqRef.current) setDetailLoading(false);
+      });
   }, [selectedEmailId]);
 
   useEffect(() => {
@@ -967,6 +980,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
             <EmailDetail
               detail={detail}
+              loading={detailLoading}
               mailbox={detail ? mailboxMap.get(detail.mailboxId) : undefined}
               autoLoadRemoteImages={Boolean(dashboard?.settings.system.autoLoadRemoteImages)}
             />
@@ -1252,20 +1266,33 @@ function ProcessingProgress({ run, running }: { run?: ProcessingRun | null; runn
 
 function EmailDetail({
   detail,
+  loading,
   mailbox,
   autoLoadRemoteImages
 }: {
   detail: ProcessedEmail | null;
+  loading: boolean;
   mailbox?: Mailbox;
   autoLoadRemoteImages: boolean;
 }) {
   const [originalMode, setOriginalMode] = useState<"rendered" | "source">("rendered");
   const [loadImages, setLoadImages] = useState(autoLoadRemoteImages);
+  const panelRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setOriginalMode("rendered");
     setLoadImages(autoLoadRemoteImages);
   }, [detail?.id, autoLoadRemoteImages]);
+
+  useEffect(() => {
+    if (!detail) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    panel.scrollTo({
+      top: 0,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"
+    });
+  }, [detail?.id]);
 
   const originalSource = useMemo(() => {
     if (!detail) return "无可展示原文。";
@@ -1287,7 +1314,8 @@ function EmailDetail({
 
   if (!detail) {
     return (
-      <aside className="detail-panel empty">
+      <aside className={loading ? "detail-panel empty is-loading-next" : "detail-panel empty"} ref={panelRef}>
+        {loading && <span className="detail-switch-indicator" aria-hidden="true" />}
         <div>
           <EnvelopeSimple size={38} />
           <h2>选择一封邮件</h2>
@@ -1298,94 +1326,97 @@ function EmailDetail({
   }
 
   return (
-    <aside className="detail-panel">
-      <div className="detail-header">
-        <div className="detail-pills">
-          <span className={`category-pill ${detail.category}`}>{categoryMeta[detail.category].label}</span>
-          <span className={detail.panelRead ? "panel-state read" : "panel-state unread"}>
-            {detail.panelRead ? <CheckCircle size={15} /> : <EnvelopeSimple size={15} />}
-            {detail.panelRead ? "系统已读" : "系统未读"}
-          </span>
-        </div>
-        <time>{formatTime(detail.receivedAt || detail.processedAt)}</time>
-      </div>
-      <h2>{detail.subject}</h2>
-      <div className="detail-meta">
-        <span>发件人：{senderName(detail)}</span>
-        <span>邮箱：{mailbox?.name || "未知邮箱"}</span>
-        {detail.toText && <span>收件人：{detail.toText}</span>}
-      </div>
-
-      <section className="summary-block">
-        <p className="section-kicker">中文概况</p>
-        <p>{detail.summaryZh}</p>
-      </section>
-
-      <section className="summary-block">
-        <p className="section-kicker">判断理由</p>
-        <p>{detail.reasonZh}</p>
-      </section>
-
-      {detail.actionItemsZh.length > 0 && (
-        <section className="summary-block">
-          <p className="section-kicker">建议动作</p>
-          <ul className="action-list">
-            {detail.actionItemsZh.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <section className="original-block">
-        <div className="original-heading">
-          <div>
-            <p className="section-kicker">邮件原件</p>
-            <span className="security-note">
-              <ShieldCheck size={14} />
-              {loadImages
-                ? "安全沙箱预览，图片通过本地代理加载，脚本、表单和插件仍禁用"
-                : "安全沙箱预览，已禁用脚本、表单、插件和远程图片"}
+    <aside className={loading ? "detail-panel is-loading-next" : "detail-panel"} ref={panelRef}>
+      {loading && <span className="detail-switch-indicator" aria-hidden="true" />}
+      <div className="detail-content-switch" key={detail.id}>
+        <div className="detail-header">
+          <div className="detail-pills">
+            <span className={`category-pill ${detail.category}`}>{categoryMeta[detail.category].label}</span>
+            <span className={detail.panelRead ? "panel-state read" : "panel-state unread"}>
+              {detail.panelRead ? <CheckCircle size={15} /> : <EnvelopeSimple size={15} />}
+              {detail.panelRead ? "系统已读" : "系统未读"}
             </span>
           </div>
-          <div className="original-actions">
-            <button
-              className={loadImages ? "image-load-button active" : "image-load-button"}
-              type="button"
-              onClick={() => setLoadImages((current) => !current)}
-            >
-              {loadImages ? "隐藏图片" : "加载图片"}
-            </button>
-            <div className="view-toggle" role="tablist" aria-label="邮件原件视图">
+          <time>{formatTime(detail.receivedAt || detail.processedAt)}</time>
+        </div>
+        <h2>{detail.subject}</h2>
+        <div className="detail-meta">
+          <span>发件人：{senderName(detail)}</span>
+          <span>邮箱：{mailbox?.name || "未知邮箱"}</span>
+          {detail.toText && <span>收件人：{detail.toText}</span>}
+        </div>
+
+        <section className="summary-block">
+          <p className="section-kicker">中文概况</p>
+          <p>{detail.summaryZh}</p>
+        </section>
+
+        <section className="summary-block">
+          <p className="section-kicker">判断理由</p>
+          <p>{detail.reasonZh}</p>
+        </section>
+
+        {detail.actionItemsZh.length > 0 && (
+          <section className="summary-block">
+            <p className="section-kicker">建议动作</p>
+            <ul className="action-list">
+              {detail.actionItemsZh.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        <section className="original-block">
+          <div className="original-heading">
+            <div>
+              <p className="section-kicker">邮件原件</p>
+              <span className="security-note">
+                <ShieldCheck size={14} />
+                {loadImages
+                  ? "安全沙箱预览，图片通过本地代理加载，脚本、表单和插件仍禁用"
+                  : "安全沙箱预览，已禁用脚本、表单、插件和远程图片"}
+              </span>
+            </div>
+            <div className="original-actions">
               <button
-                className={originalMode === "rendered" ? "active" : ""}
+                className={loadImages ? "image-load-button active" : "image-load-button"}
                 type="button"
-                onClick={() => setOriginalMode("rendered")}
+                onClick={() => setLoadImages((current) => !current)}
               >
-                渲染
+                {loadImages ? "隐藏图片" : "加载图片"}
               </button>
-              <button
-                className={originalMode === "source" ? "active" : ""}
-                type="button"
-                onClick={() => setOriginalMode("source")}
-              >
-                源码
-              </button>
+              <div className="view-toggle" role="tablist" aria-label="邮件原件视图">
+                <button
+                  className={originalMode === "rendered" ? "active" : ""}
+                  type="button"
+                  onClick={() => setOriginalMode("rendered")}
+                >
+                  渲染
+                </button>
+                <button
+                  className={originalMode === "source" ? "active" : ""}
+                  type="button"
+                  onClick={() => setOriginalMode("source")}
+                >
+                  源码
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-        {originalMode === "rendered" ? (
-          <iframe
-            className="email-html-frame"
-            title="邮件原件安全预览"
-            sandbox=""
-            referrerPolicy="no-referrer"
-            srcDoc={originalPreview}
-          />
-        ) : (
-          <pre className="raw-source">{originalSource}</pre>
-        )}
-      </section>
+          {originalMode === "rendered" ? (
+            <iframe
+              className="email-html-frame"
+              title="邮件原件安全预览"
+              sandbox=""
+              referrerPolicy="no-referrer"
+              srcDoc={originalPreview}
+            />
+          ) : (
+            <pre className="raw-source">{originalSource}</pre>
+          )}
+        </section>
+      </div>
     </aside>
   );
 }

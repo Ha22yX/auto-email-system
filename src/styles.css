@@ -1248,7 +1248,7 @@ body.resizing-detail iframe {
 }
 
 .detail-panel {
-  position: static;
+  position: relative;
   align-self: stretch;
   min-width: 0;
   min-height: 0;
@@ -1261,12 +1261,60 @@ body.resizing-detail iframe {
   animation: detailIn 440ms var(--ease) both;
 }
 
+.detail-content-switch {
+  min-height: 100%;
+  transform-origin: 82% 0;
+  animation: detailContentIn 360ms var(--ease) both;
+  transition:
+    opacity 180ms var(--ease),
+    transform 220ms var(--ease),
+    filter 220ms var(--ease);
+  will-change: opacity, transform, filter;
+}
+
+.detail-panel.is-loading-next .detail-content-switch {
+  opacity: 0.56;
+  filter: blur(0.35px);
+  transform: translateX(-5px) scale(0.998);
+}
+
+.detail-switch-indicator {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: block;
+  width: 72px;
+  height: 3px;
+  margin: -6px 0 10px auto;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(32 90 75 / 0.1);
+  pointer-events: none;
+}
+
+.detail-switch-indicator::after {
+  content: "";
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: detailSwitchScan 920ms var(--ease) infinite;
+}
+
 .detail-panel.empty {
   display: grid;
   min-height: 0;
   place-items: center;
   color: var(--muted);
   text-align: center;
+}
+
+.detail-panel.empty .detail-switch-indicator {
+  position: absolute;
+  top: 14px;
+  right: 20px;
+  margin: 0;
 }
 
 .detail-header {
@@ -2441,6 +2489,32 @@ body.resizing-detail iframe {
   to {
     opacity: 1;
     transform: translateX(0);
+  }
+}
+
+@keyframes detailContentIn {
+  from {
+    opacity: 0;
+    filter: blur(1.2px);
+    transform: translateX(12px) scale(0.996);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes detailSwitchScan {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(260%);
   }
 }
 
