@@ -6,12 +6,8 @@ import router from "./routes";
 import { startProcessingWorker } from "./email/processor";
 import { defaultWeclawApiUrl, ensureWeclawStarted } from "./weclaw/manager";
 import {
-  demotePromotionalAndNewsEmails,
   hasInterruptedRecoveryRetry,
-  markInterruptedRuns,
-  promoteFinancialRecordEmails,
-  promoteSchoolPriorityEmails,
-  repairSchoolPriorityPromotions
+  markInterruptedRuns
 } from "./store";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -42,10 +38,6 @@ app.get(/.*/, (_req, res) => {
 });
 
 app.listen(port, () => {
-  promoteFinancialRecordEmails();
-  repairSchoolPriorityPromotions();
-  demotePromotionalAndNewsEmails();
-  promoteSchoolPriorityEmails();
   const retryInterruptedRecovery = hasInterruptedRecoveryRetry();
   const interruptedCount = markInterruptedRuns();
   startProcessingWorker({ recoverInterruptedOnFirstRun: interruptedCount > 0 || retryInterruptedRecovery });

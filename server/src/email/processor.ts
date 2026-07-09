@@ -172,13 +172,14 @@ export async function processMailboxes(options: {
         classification = await classifyEmail(item.email, state.settings.ai, { timeoutMs: 45000 });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        run.errors.push(`${mailbox.name}: AI 分类失败，已使用规则兜底。${message}`);
-        classification = await classifyEmail(
-          item.email,
-          { ...state.settings.ai, apiKey: "" },
-          { timeoutMs: 1000 }
-        );
-        classification.reasonZh = `${classification.reasonZh} AI 接口本次不可用或返回格式异常，系统已使用本地规则兜底。`;
+        run.errors.push(`${mailbox.name}: AI 分类失败，邮件保持未读，稍后可重新处理。${message}`);
+        persistRun(run, {
+          currentStage: "AI 分类失败，邮件保持未读",
+          currentEmailStep: "等待重试",
+          currentEmailStepIndex: 2,
+          currentEmailStepTotal: 4
+        });
+        return;
       }
 
       const processedEmail = {

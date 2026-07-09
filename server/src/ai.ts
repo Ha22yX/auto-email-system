@@ -3,7 +3,16 @@ import type { AiSettings, ClassificationResult, IncomingEmail, MailCategory } fr
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
 
 const systemPrompt =
-  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同、老师/学校联系、课程作业、成绩、考勤、会议或明确截止时间。只有真正来自老师、advisor、counselor、faculty、principal、dean、教务等，并且和用户本人学校事务有关的邮件，才归为 important。任何推广邮件、招生广告、教育机构推广、私校广告、college search、open house、gift card、visit campus、newsletter、news、digest、新闻摘要、品牌宣传、活动宣传、促销折扣都必须归为 ignore，不要因为包含 school、college、education 或截止时间就标 important。secondary 表示值得阅读但无需立刻行动，付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等财务记录至少必须归为 secondary，不能归为 ignore。";
+  [
+    "你是一个可靠的中文邮件助理。请只根据邮件内容和以下分类准则判断重要程度，并输出严格 JSON。",
+    "分类只能是 important、secondary、ignore。",
+    "important：需要用户处理、回复、付款、确认、安全风险、合同、老师/学校直接联系、课程作业、成绩、考勤、会议或明确截止时间。",
+    "只有真正来自老师、advisor、counselor、faculty、principal、dean、教务等，并且和用户本人学校事务有关的邮件，才归为 important。",
+    "secondary：值得留档或稍后阅读但无需立刻行动，例如付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等真实财务/账户记录。",
+    "ignore：任何推广邮件、招生广告、教育机构推广、私校广告、college search、open house、gift card、visit campus、newsletter、news、digest、新闻摘要、品牌宣传、活动宣传、促销折扣、sale、discount、coupon、% off、flash sale 都必须归为 ignore。",
+    "不要因为促销邮件里出现 limited time、today、tomorrow、order、subscription、confirmation、shop、campus 等普通营销词就归为 secondary 或 important。",
+    "不要输出规则命中、关键词命中或系统后处理的说法；你自己给出最终分类理由。"
+  ].join(" ");
 
 function compactEmail(email: IncomingEmail) {
   const body = email.originalText || email.rawSource || "";
@@ -25,6 +34,8 @@ function userPrompt(email: IncomingEmail) {
     "注意：老师、advisor、counselor、faculty、principal、dean、教务等发来的，并且涉及课程、作业、成绩、考勤、会议、提交、确认、回复等用户本人学校事务的邮件，必须标为 important。",
     "注意：任何推广、招生广告、教育机构广告、私校推广、college search、open house、gift card、visit campus、newsletter、news、digest、新闻摘要、品牌宣传、活动宣传、促销折扣，都必须标为 ignore，不要因为有截止时间或 school/college/education 字样就标为 important。",
     "注意：付款成功、扣款确认、AutoPay confirmation、收据、账单记录、订单确认等财务留档邮件，即使不需要操作，也必须标为 secondary，不能标为 ignore。",
+    "注意：促销折扣、sale、discount、coupon、% off、flash sale、品牌营销邮件必须归为 ignore；不要因为正文或页脚出现 order、subscription、confirmation、today、tomorrow、limited time 就升为 secondary。",
+    "最终分类由你根据提示词直接决定，后端不会再用关键词规则替你改分类，所以请谨慎区分促销邮件和真实付款/订单/账单记录。",
     "",
     compactEmail(email)
   ].join("\n");
@@ -59,387 +70,6 @@ function normalizeResult(value: unknown): ClassificationResult {
     summaryZh: typeof item.summaryZh === "string" ? item.summaryZh.slice(0, 800) : "未能生成中文概况。",
     reasonZh: typeof item.reasonZh === "string" ? item.reasonZh.slice(0, 500) : "AI 未返回明确理由。",
     actionItemsZh: actionItems
-  };
-}
-
-function includesAny(text: string, words: string[]) {
-  return words.some((word) => text.includes(word));
-}
-
-function emailText(email: IncomingEmail) {
-  return [
-    email.subject,
-    email.fromName,
-    email.fromAddress,
-    email.toText,
-    email.originalText,
-    email.rawSource
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .toLowerCase();
-}
-
-function financialRecordText(email: IncomingEmail) {
-  return [
-    email.subject,
-    email.fromName,
-    email.fromAddress,
-    email.toText,
-    email.originalText
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .toLowerCase();
-}
-
-function isFinancialRecordEmail(email: IncomingEmail) {
-  const text = financialRecordText(email);
-  const subject = (email.subject || "").toLowerCase();
-  const recordPhrases = [
-    "autopay confirmation",
-    "auto pay confirmation",
-    "autopay payment",
-    "payment confirmation",
-    "payment received",
-    "payment receipt",
-    "payment in the amount",
-    "thanks for your autopay payment",
-    "invoice",
-    "receipt",
-    "receipt number",
-    "billing statement",
-    "statement is ready",
-    "transaction receipt",
-    "transaction id",
-    "confirmation number",
-    "has been charged",
-    "was charged",
-    "charged your",
-    "charged to",
-    "card ending",
-    "credit card account ending",
-    "order confirmation",
-    "order confirmed",
-    "your order has been confirmed",
-    "order receipt",
-    "subscription renewed",
-    "renewal confirmation",
-    "transaction receipt",
-    "付款确认",
-    "付款回执",
-    "付款成功",
-    "已付款",
-    "已支付",
-    "已扣款",
-    "扣款成功",
-    "支付成功",
-    "成功扣除",
-    "账单",
-    "发票",
-    "收据",
-    "凭证",
-    "交易凭证",
-    "确认号",
-    "订单确认"
-  ];
-  const promotionalSubjectTerms = [
-    "% off",
-    "off ",
-    " sale",
-    "flash sale",
-    "discount",
-    "deal",
-    "coupon",
-    "offer",
-    "promo",
-    "promotion",
-    "折扣",
-    "优惠",
-    "促销",
-    "闪购"
-  ];
-  const hasRecordPhrase = includesAny(text, recordPhrases) || includesAny(subject, recordPhrases);
-  if (!hasRecordPhrase) return false;
-
-  if (!isPromotionalOrNewsEmail(email)) return true;
-  return !includesAny(subject, promotionalSubjectTerms) || includesAny(subject, [
-    "receipt",
-    "invoice",
-    "payment",
-    "autopay",
-    "order confirmation",
-    "收据",
-    "发票",
-    "付款",
-    "扣款",
-    "订单确认"
-  ]);
-}
-
-function isSchoolPriorityEmail(email: IncomingEmail) {
-  const text = emailText(email);
-  const from = `${email.fromName || ""} ${email.fromAddress || ""}`.toLowerCase();
-  const to = `${email.toText || ""}`.toLowerCase();
-  const senderIsKnownSchool = from.includes("@whschool.org") || from.includes("wardlaw-hartridge");
-  const messageIsForSchoolMailbox = to.includes("@whschool.org");
-  const directSchoolSenderTerms = [
-    "teacher",
-    "advisor",
-    "adviser",
-    "counselor",
-    "faculty",
-    "principal",
-    "dean",
-    "registrar",
-    "老师",
-    "班主任",
-    "辅导员",
-    "教务",
-    "校长"
-  ];
-  const schoolContextTerms = [
-    "class",
-    "course",
-    "assignment",
-    "homework",
-    "grade",
-    "attendance",
-    "absence",
-    "exam",
-    "quiz",
-    "schedule",
-    "conference",
-    "meeting",
-    "permission slip",
-    "field trip",
-    "老师",
-    "课程",
-    "班级",
-    "作业",
-    "成绩",
-    "考勤",
-    "缺勤",
-    "考试",
-    "测验",
-    "会议",
-    "家长会"
-  ];
-  const directActionTerms = [
-    "reply",
-    "respond",
-    "action required",
-    "deadline",
-    "due",
-    "tomorrow",
-    "today",
-    "confirm",
-    "sign",
-    "submit",
-    "register",
-    "please",
-    "schedule",
-    "meeting",
-    "conference",
-    "appointment",
-    "required",
-    "请回复",
-    "需要回复",
-    "需要处理",
-    "截止",
-    "今天",
-    "明天",
-    "确认",
-    "提交",
-    "报名",
-    "签字",
-    "安排",
-    "会议",
-    "必须"
-  ];
-
-  if (isPromotionalOrNewsEmail(email)) return false;
-  if (includesAny(from, directSchoolSenderTerms)) return true;
-  if (senderIsKnownSchool) return includesAny(text, schoolContextTerms) || includesAny(text, directActionTerms);
-  if (!messageIsForSchoolMailbox) return false;
-  return includesAny(text, schoolContextTerms) && includesAny(text, directActionTerms);
-}
-
-function isPromotionalOrNewsEmail(email: IncomingEmail) {
-  const text = emailText(email);
-  return includesAny(text, [
-    "promotion",
-    "promotional",
-    "marketing",
-    "advertisement",
-    "sponsored",
-    "sale",
-    "discount",
-    "deal",
-    "offer",
-    "coupon",
-    "limited time",
-    "unsubscribe",
-    "newsletter",
-    "news",
-    "digest",
-    "weekly update",
-    "daily update",
-    "headlines",
-    "latest stories",
-    "press release",
-    "admissions",
-    "admission",
-    "apply now",
-    "college search",
-    "open house",
-    "visit campus",
-    "campus visit",
-    "gift card",
-    "tuition",
-    "financial aid",
-    "private education",
-    "enroll",
-    "enrollment",
-    "prospective student",
-    "unsubscribe",
-    "newsletter",
-    "推广",
-    "营销",
-    "广告",
-    "促销",
-    "折扣",
-    "优惠",
-    "限时",
-    "退订",
-    "新闻",
-    "资讯",
-    "简报",
-    "周报",
-    "日报",
-    "摘要",
-    "头条",
-    "品牌宣传",
-    "活动宣传",
-    "招生",
-    "申请入学",
-    "校园参观",
-    "开放日",
-    "教育推广",
-    "教育广告",
-    "礼品卡"
-  ]);
-}
-
-function normalizeBusinessRules(email: IncomingEmail, result: ClassificationResult): ClassificationResult {
-  if (isPromotionalOrNewsEmail(email) && !isFinancialRecordEmail(email)) {
-    return {
-      ...result,
-      category: "ignore",
-      reasonZh: `${result.reasonZh} 这封邮件命中推广、招生、新闻简报或营销规则，系统要求归为不用管。`,
-      actionItemsZh: []
-    };
-  }
-
-  if (result.category !== "important" && isSchoolPriorityEmail(email)) {
-    return {
-      ...result,
-      category: "important",
-      reasonZh: `${result.reasonZh} 这封邮件命中学校/老师/课程事务规则，系统要求归为重要，方便优先查看和处理。`,
-      actionItemsZh: result.actionItemsZh.length
-        ? result.actionItemsZh
-        : ["优先打开原件确认是否需要回复、提交材料、参加会议或完成学校相关事项。"]
-    };
-  }
-
-  if (result.category === "ignore" && isFinancialRecordEmail(email)) {
-    return {
-      ...result,
-      category: "secondary",
-      reasonZh: `${result.reasonZh} 这封邮件属于付款、扣款、账单、收据或订单确认类财务留档邮件，系统规则要求至少归为次重要，不能归入不用管。`
-    };
-  }
-
-  return result;
-}
-
-function heuristicClassify(email: IncomingEmail): ClassificationResult {
-  const haystack = emailText(email);
-  const financialRecordHit = isFinancialRecordEmail(email);
-  const promotionalOrNewsHit = isPromotionalOrNewsEmail(email);
-  const schoolPriorityHit = isSchoolPriorityEmail(email);
-  const importantWords = [
-    "contract",
-    "urgent",
-    "security",
-    "verify",
-    "deadline",
-    "meeting",
-    "payment failed",
-    "past due",
-    "overdue",
-    "action required",
-    "合同",
-    "紧急",
-    "验证码",
-    "安全",
-    "会议",
-    "截止",
-    "付款失败",
-    "支付失败",
-    "逾期",
-    "需要操作"
-  ];
-  const ignoreWords = [
-    "unsubscribe",
-    "promotion",
-    "sale",
-    "discount",
-    "newsletter",
-    "admissions",
-    "admission",
-    "college search",
-    "open house",
-    "visit campus",
-    "gift card",
-    "private education",
-    "enroll",
-    "退订",
-    "促销",
-    "折扣",
-    "广告",
-    "招生"
-  ];
-
-  const importantHit = importantWords.some((word) => haystack.includes(word));
-  const ignoreHit = ignoreWords.some((word) => haystack.includes(word));
-  const category: MailCategory =
-    promotionalOrNewsHit && !financialRecordHit
-      ? "ignore"
-      : importantHit || schoolPriorityHit
-        ? "important"
-        : financialRecordHit
-          ? "secondary"
-          : ignoreHit
-            ? "ignore"
-            : "secondary";
-
-  return {
-    category,
-    summaryZh: `来自 ${email.fromName || email.fromAddress || "未知发件人"} 的邮件，主题为“${email.subject || "无主题"}”。当前未配置可用 AI Key，系统使用规则兜底完成分类。`,
-    reasonZh: promotionalOrNewsHit && !financialRecordHit
-      ? "邮件命中推广、招生广告、新闻简报或营销类信号，应归为不用管。"
-      : schoolPriorityHit
-      ? "邮件命中学校/老师/课程事务规则，属于需要优先查看的学校相关邮件。"
-      : importantHit
-      ? "邮件包含安全、会议、截止时间、失败付款或需要操作等高优先级信号。"
-      : financialRecordHit
-        ? "邮件属于付款、扣款、收据、账单或订单确认类财务留档邮件，应归为次重要。"
-        : ignoreHit
-          ? "邮件包含营销、订阅或退订等低优先级信号。"
-          : "邮件没有明显紧急信号，但仍可能包含需要稍后查看的信息。",
-    actionItemsZh:
-      importantHit || schoolPriorityHit ? ["尽快打开原件确认是否需要回复或处理。"] : []
   };
 }
 
@@ -555,7 +185,7 @@ export async function classifyEmail(
   options: { timeoutMs?: number } = {}
 ): Promise<ClassificationResult> {
   if (!settings.apiKey.trim()) {
-    return normalizeBusinessRules(email, heuristicClassify(email));
+    throw new Error("AI API Key 未配置，无法进行 AI 分类。");
   }
 
   const timeoutMs = options.timeoutMs ?? 90000;
@@ -568,5 +198,5 @@ export async function classifyEmail(
     throw new Error(`AI 返回内容不是 JSON: ${content.slice(0, 160) || "空响应"}`);
   }
 
-  return normalizeBusinessRules(email, normalizeResult(JSON.parse(jsonText)));
+  return normalizeResult(JSON.parse(jsonText));
 }
