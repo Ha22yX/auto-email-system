@@ -87,6 +87,7 @@ function buildDashboard(mailboxId?: string) {
   for (const email of emails) {
     counts[email.category] += 1;
   }
+  const currentRun = state.runs.find((run) => run.status === "running") ?? null;
 
   return {
     settings: {
@@ -98,7 +99,8 @@ function buildDashboard(mailboxId?: string) {
     total: emails.length,
     recentEmails: emails.slice(0, 8).map(emailListItem),
     runs: state.runs.slice(0, 10),
-    processorRunning: isProcessorRunning()
+    processorRunning: isProcessorRunning(),
+    currentRun
   };
 }
 

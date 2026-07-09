@@ -243,6 +243,7 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  max-width: min(360px, 42vw);
   height: 38px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -250,6 +251,9 @@ button:disabled {
   background: rgb(253 252 248 / 0.72);
   color: var(--muted);
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-state span {

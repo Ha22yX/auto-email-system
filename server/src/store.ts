@@ -164,12 +164,31 @@ export function hasProcessed(mailboxId: string, externalUid: string) {
   return state.emails.some((email) => email.mailboxId === mailboxId && email.externalUid === externalUid);
 }
 
+export function getProcessedEmail(mailboxId: string, externalUid: string) {
+  const state = loadState();
+  return clone(state.emails.find((email) => email.mailboxId === mailboxId && email.externalUid === externalUid));
+}
+
 export function addProcessedEmail(email: ProcessedEmail) {
   updateState((draft) => {
     if (draft.emails.some((item) => item.mailboxId === email.mailboxId && item.externalUid === email.externalUid)) {
       return;
     }
     draft.emails.unshift(email);
+  });
+}
+
+export function updateProcessedEmailReadMark(
+  mailboxId: string,
+  externalUid: string,
+  readMark: { marked: boolean; note?: string }
+) {
+  updateState((draft) => {
+    const email = draft.emails.find((item) => item.mailboxId === mailboxId && item.externalUid === externalUid);
+    if (email) {
+      email.readMarked = readMark.marked;
+      email.readMarkNote = readMark.note;
+    }
   });
 }
 
@@ -180,7 +199,31 @@ export function addRun(run: ProcessingRun) {
   });
 }
 
-export function updateMailboxSync(id: string, patch: Pick<Mailbox, "lastSyncAt"> | Pick<Mailbox, "lastError">) {
+export function updateRun(run: ProcessingRun) {
+  updateState((draft) => {
+    const existing = draft.runs.find((item) => item.id === run.id);
+    if (existing) Object.assign(existing, run);
+  });
+}
+
+export function markInterruptedRuns() {
+  let interruptedCount = 0;
+  updateState((draft) => {
+    const now = new Date().toISOString();
+    for (const run of draft.runs) {
+      if (run.status === "running") {
+        interruptedCount += 1;
+        run.status = "failed";
+        run.finishedAt = now;
+        run.currentStage = "服务重启后已中断";
+        run.errors.push("服务重启，上一轮处理任务已中断。");
+      }
+    }
+  });
+  return interruptedCount;
+}
+
+export function updateMailboxSync(id: string, patch: Partial<Pick<Mailbox, "lastSyncAt" | "lastError">>) {
   updateState((draft) => {
     const mailbox = draft.mailboxes.find((item) => item.id === id);
     if (mailbox) {

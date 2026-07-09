@@ -107,8 +107,8 @@ function App() {
     setDashboard(next);
   }, [selectedMailbox]);
 
-  const loadEmails = useCallback(async () => {
-    setLoading(true);
+  const loadEmails = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const list = await api.emails(activeCategory, selectedMailbox, query);
       setEmails(list);
@@ -117,7 +117,7 @@ function App() {
         return list[0]?.id ?? "";
       });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activeCategory, selectedMailbox, query]);
 
@@ -150,6 +150,17 @@ function App() {
     return () => window.clearInterval(timer);
   }, [loadDashboard]);
 
+  useEffect(() => {
+    if (!dashboard?.processorRunning) return;
+    const timer = window.setInterval(() => {
+      void loadDashboard().catch(() => undefined);
+      if (view === "mail") {
+        void loadEmails(true).catch(() => undefined);
+      }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [dashboard?.processorRunning, loadDashboard, loadEmails, view]);
+
   async function runProcessing() {
     setBusy(true);
     setToast("");
@@ -168,6 +179,9 @@ function App() {
   const activeMailboxName =
     selectedMailbox === "all" ? "全部邮箱" : mailboxMap.get(selectedMailbox)?.name || "当前邮箱";
   const pageEyebrow = view === "mail" ? activeMailboxName : "系统配置";
+  const runStatusText = dashboard?.processorRunning
+    ? dashboard.currentRun?.currentStage || "正在处理"
+    : "空闲";
 
   return (
     <div className="app-shell">
@@ -241,7 +255,7 @@ function App() {
           <div className="topbar-actions">
             <div className={dashboard?.processorRunning ? "run-state running" : "run-state"}>
               <span />
-              {dashboard?.processorRunning ? "正在处理" : "空闲"}
+              {runStatusText}
             </div>
             <button className="primary-button" disabled={busy} onClick={runProcessing}>
               <Play size={18} weight="fill" />

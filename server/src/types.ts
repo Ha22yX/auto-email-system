@@ -62,6 +62,9 @@ export type ProcessingRun = {
   finishedAt?: string;
   status: RunStatus;
   mailboxId?: string;
+  currentMailboxName?: string;
+  currentSubject?: string;
+  currentStage?: string;
   processedCount: number;
   importantCount: number;
   secondaryCount: number;

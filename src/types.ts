@@ -66,6 +66,9 @@ export type ProcessingRun = {
   finishedAt?: string;
   status: "running" | "success" | "failed";
   mailboxId?: string;
+  currentMailboxName?: string;
+  currentSubject?: string;
+  currentStage?: string;
   processedCount: number;
   importantCount: number;
   secondaryCount: number;
@@ -84,4 +87,5 @@ export type Dashboard = {
   recentEmails: EmailListItem[];
   runs: ProcessingRun[];
   processorRunning: boolean;
+  currentRun?: ProcessingRun | null;
 };
