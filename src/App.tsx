@@ -1224,6 +1224,7 @@ function ProcessingProgress({ run, running }: { run?: ProcessingRun | null; runn
           <div className="progress-track" aria-label={`当前邮箱进度 ${mailboxPercent}%`}>
             <span style={{ width: `${mailboxPercent}%` }} />
           </div>
+          <p>邮箱 {run?.currentMailboxIndex ?? 0}/{run?.totalMailboxCount ?? 0}</p>
         </div>
 
         <div className="progress-card current-email-card">

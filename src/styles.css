@@ -734,8 +734,9 @@ body.resizing-detail iframe {
 }
 
 .progress-panel {
+  flex: 0 0 auto;
   display: grid;
-  gap: 10px;
+  gap: 12px;
   max-height: 0;
   margin: 0;
   border: 1px solid var(--line);
@@ -761,9 +762,9 @@ body.resizing-detail iframe {
 .progress-panel.active {
   border-color: rgb(32 90 75 / 0.34);
   border-width: 1px;
-  max-height: 360px;
-  margin: 0 0 18px;
-  padding: 12px;
+  max-height: 420px;
+  margin: 0 0 20px;
+  padding: 14px 14px 16px;
   opacity: 1;
   pointer-events: auto;
   box-shadow: 0 14px 32px rgb(45 55 49 / 0.08);
@@ -811,7 +812,8 @@ body.resizing-detail iframe {
 .progress-grid {
   display: grid;
   grid-template-columns: minmax(160px, 0.9fr) minmax(180px, 1fr) minmax(220px, 1.15fr);
-  gap: 8px;
+  gap: 10px;
+  align-items: stretch;
 }
 
 @media (max-width: 1320px) {
@@ -826,11 +828,15 @@ body.resizing-detail iframe {
 
 .progress-card {
   display: grid;
-  gap: 7px;
+  grid-template-rows: 18px 6px 16px;
+  align-content: start;
+  gap: 8px;
+  min-height: 66px;
   min-width: 0;
   border-radius: 8px;
   background: rgb(255 255 255 / 0.74);
-  padding: 10px;
+  padding: 11px 12px 10px;
+  overflow: hidden;
 }
 
 .progress-card.wide {
@@ -846,6 +852,7 @@ body.resizing-detail iframe {
   overflow: hidden;
   color: var(--muted);
   font-size: 12px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -854,6 +861,7 @@ body.resizing-detail iframe {
   flex: 0 0 auto;
   color: var(--ink);
   font-size: 13px;
+  line-height: 18px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -878,6 +886,7 @@ body.resizing-detail iframe {
   overflow: hidden;
   color: #303835;
   font-size: 12px;
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -890,8 +899,10 @@ body.resizing-detail iframe {
 .step-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: center;
   gap: 5px;
   min-width: 0;
+  height: 6px;
 }
 
 .step-dot {
