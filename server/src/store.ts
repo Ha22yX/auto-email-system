@@ -464,6 +464,21 @@ export function updateProcessedEmailReadMark(
   });
 }
 
+export function updateProcessedEmailPanelRead(id: string, panelRead: boolean) {
+  const existing = loadState().emails.find((email) => email.id === id);
+  if (!existing) throw new Error("邮件不存在");
+
+  const now = new Date().toISOString();
+  const state = updateState((draft) => {
+    const email = draft.emails.find((item) => item.id === id);
+    if (!email) return;
+    email.panelRead = panelRead;
+    email.panelReadAt = panelRead ? now : undefined;
+  });
+
+  return state.emails.find((email) => email.id === id);
+}
+
 export function addRun(run: ProcessingRun) {
   updateState((draft) => {
     draft.runs.unshift(run);

@@ -651,6 +651,34 @@ body.resizing-detail iframe {
   box-shadow: 0 14px 28px rgb(45 55 49 / 0.09);
 }
 
+.email-row.panel-read {
+  border-color: rgb(146 154 147 / 0.28);
+  background: #f3f4f0;
+  color: #71786f;
+  box-shadow: none;
+}
+
+.email-row.panel-read:hover,
+.email-row.panel-read.active {
+  background: #eef0eb;
+  border-color: rgb(120 130 122 / 0.38);
+}
+
+.email-row.panel-read p,
+.email-row.panel-read .email-row-meta,
+.email-row.panel-read .email-row-top time {
+  color: #868d84;
+}
+
+.email-row.panel-read .email-row-title strong {
+  color: #626a61;
+  font-weight: 600;
+}
+
+.email-row.panel-unread {
+  border-color: rgb(32 90 75 / 0.2);
+}
+
 .email-row-top,
 .email-row-meta,
 .email-row-bottom,
@@ -667,12 +695,33 @@ body.resizing-detail iframe {
   gap: 12px;
 }
 
-.email-row-top strong {
+.email-row-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.email-row-title strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 15px;
+  font-weight: 720;
+}
+
+.read-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgb(126 136 128 / 0.38);
+}
+
+.read-dot.unread {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgb(32 90 75 / 0.12);
 }
 
 .email-row-top time,
@@ -711,12 +760,42 @@ body.resizing-detail iframe {
   gap: 10px;
 }
 
-.read-badge {
+.email-row-statuses {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.read-badge,
+.panel-state {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--accent);
+  min-height: 24px;
+  border-radius: 7px;
+  padding: 0 8px;
   font-size: 12px;
+}
+
+.read-badge {
+  background: rgb(126 136 128 / 0.1);
+  color: var(--muted);
+}
+
+.panel-state {
+  font-weight: 700;
+}
+
+.panel-state.unread {
+  background: rgb(32 90 75 / 0.11);
+  color: var(--accent);
+}
+
+.panel-state.read {
+  background: rgb(126 136 128 / 0.12);
+  color: #687067;
 }
 
 .email-row-bottom em {
@@ -783,6 +862,14 @@ body.resizing-detail iframe {
   margin-bottom: 12px;
 }
 
+.detail-pills {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .category-pill {
   display: inline-flex;
   align-items: center;
@@ -806,6 +893,41 @@ body.resizing-detail iframe {
 .category-pill.ignore {
   background: rgb(83 100 95 / 0.12);
   color: var(--ignore);
+}
+
+.context-menu-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+}
+
+.email-context-menu {
+  position: fixed;
+  z-index: 19;
+  min-width: 190px;
+  border: 1px solid rgb(118 128 120 / 0.24);
+  border-radius: 8px;
+  background: rgb(255 255 251 / 0.96);
+  padding: 6px;
+  box-shadow: 0 18px 44px rgb(45 55 49 / 0.16);
+  backdrop-filter: blur(18px);
+}
+
+.email-context-menu button {
+  display: flex;
+  width: 100%;
+  height: 36px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  color: var(--ink);
+  padding: 0 10px;
+  text-align: left;
+}
+
+.email-context-menu button:hover {
+  background: rgb(32 90 75 / 0.08);
+  color: var(--accent);
 }
 
 .detail-meta {

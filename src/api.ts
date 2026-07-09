@@ -41,6 +41,12 @@ export const api = {
   email(id: string) {
     return request<ProcessedEmail>(`/api/emails/${id}`);
   },
+  updateEmailReadState(id: string, panelRead: boolean) {
+    return request<ProcessedEmail>(`/api/emails/${id}/read-state`, {
+      method: "PATCH",
+      body: JSON.stringify({ panelRead })
+    });
+  },
   updateAi(settings: AiSettings) {
     return request<AiSettings>("/api/settings/ai", {
       method: "PUT",

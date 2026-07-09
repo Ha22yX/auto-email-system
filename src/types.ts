@@ -48,6 +48,8 @@ export type EmailListItem = {
   summaryZh: string;
   reasonZh: string;
   actionItemsZh: string[];
+  panelRead: boolean;
+  panelReadAt?: string;
   readMarked: boolean;
   readMarkNote?: string;
 };

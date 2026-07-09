@@ -52,6 +52,8 @@ export type ProcessedEmail = {
   originalText: string;
   originalHtml?: string;
   rawSource?: string;
+  panelRead?: boolean;
+  panelReadAt?: string;
   readMarked: boolean;
   readMarkNote?: string;
 };

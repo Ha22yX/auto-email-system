@@ -11,6 +11,7 @@ import {
   readState,
   removeMailbox,
   updateAiSettings,
+  updateProcessedEmailPanelRead,
   updateSystemSettings,
   upsertMailbox
 } from "./store";
@@ -46,6 +47,10 @@ const systemSchema = z.object({
   processLimitPerMailbox: z.coerce.number().int().min(1).max(500)
 });
 
+const panelReadSchema = z.object({
+  panelRead: z.coerce.boolean()
+});
+
 function asyncRoute(
   handler: (req: express.Request, res: express.Response) => Promise<unknown> | unknown
 ) {
@@ -71,8 +76,17 @@ function emailListItem(email: ReturnType<typeof readState>["emails"][number]) {
     summaryZh: email.summaryZh,
     reasonZh: email.reasonZh,
     actionItemsZh: email.actionItemsZh,
+    panelRead: email.panelRead ?? email.category === "ignore",
+    panelReadAt: email.panelReadAt,
     readMarked: email.readMarked,
     readMarkNote: email.readMarkNote
+  };
+}
+
+function emailDetailItem(email: ReturnType<typeof readState>["emails"][number]) {
+  return {
+    ...email,
+    panelRead: email.panelRead ?? email.category === "ignore"
   };
 }
 
@@ -320,7 +334,20 @@ router.get(
       res.status(404).json({ error: "邮件不存在" });
       return;
     }
-    res.json(email);
+    res.json(emailDetailItem(email));
+  })
+);
+
+router.patch(
+  "/emails/:id/read-state",
+  asyncRoute((req, res) => {
+    const parsed = panelReadSchema.parse(req.body);
+    const email = updateProcessedEmailPanelRead(String(req.params.id), parsed.panelRead);
+    if (!email) {
+      res.status(404).json({ error: "邮件不存在" });
+      return;
+    }
+    res.json(emailDetailItem(email));
   })
 );
 

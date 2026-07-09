@@ -189,6 +189,8 @@ export async function processMailboxes(options: {
           ? `这封邮件来自旧处理任务中断后的恢复扫描。${classification.reasonZh}`
           : classification.reasonZh,
         actionItemsZh: classification.actionItemsZh,
+        panelRead: classification.category === "ignore",
+        panelReadAt: classification.category === "ignore" ? new Date().toISOString() : undefined,
         readMarked: false,
         readMarkNote: "已写入数据库，正在标记已读。"
       });

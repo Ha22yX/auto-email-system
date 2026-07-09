@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   Archive,
   CheckCircle,
@@ -34,6 +34,12 @@ import type {
 } from "./types";
 
 type View = "mail" | "settings";
+type EmailContextMenu = {
+  x: number;
+  y: number;
+  emailId: string;
+  panelRead: boolean;
+};
 
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL ??
@@ -62,6 +68,10 @@ const categoryMeta: Record<
     icon: Archive
   }
 };
+
+function shouldAutoMarkPanelRead(category: MailCategory) {
+  return category === "important" || category === "secondary";
+}
 
 const emptyMailbox: Partial<Mailbox> = {
   name: "",
@@ -275,6 +285,8 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [detailWidth, setDetailWidth] = useState(560);
+  const [contextMenu, setContextMenu] = useState<EmailContextMenu | null>(null);
+  const [autoReadSuppressedId, setAutoReadSuppressedId] = useState<string | null>(null);
   const mailLayoutRef = useRef<HTMLElement | null>(null);
 
   const clampDetailWidth = useCallback((nextWidth: number) => {
@@ -350,6 +362,49 @@ function App() {
     }
   }, [activeCategory, selectedMailbox, query]);
 
+  const applyEmailReadState = useCallback((updated: ProcessedEmail) => {
+    setEmails((current) =>
+      current.map((email) =>
+        email.id === updated.id
+          ? { ...email, panelRead: updated.panelRead, panelReadAt: updated.panelReadAt }
+          : email
+      )
+    );
+    setDetail((current) =>
+      current?.id === updated.id
+        ? { ...current, panelRead: updated.panelRead, panelReadAt: updated.panelReadAt }
+        : current
+    );
+  }, []);
+
+  const updateEmailReadState = useCallback(
+    async (id: string, panelRead: boolean, options: { silent?: boolean; suppressAutoRead?: boolean } = {}) => {
+      const updated = await api.updateEmailReadState(id, panelRead);
+      applyEmailReadState(updated);
+      if (!panelRead && options.suppressAutoRead) {
+        setAutoReadSuppressedId(id);
+      }
+      if (panelRead) {
+        setAutoReadSuppressedId((current) => (current === id ? null : current));
+      }
+      if (!options.silent) {
+        setToast(panelRead ? "已标记为系统已读" : "已标记为系统未读");
+      }
+    },
+    [applyEmailReadState]
+  );
+
+  const openEmailContextMenu = useCallback((event: ReactMouseEvent<HTMLButtonElement>, email: EmailListItem) => {
+    event.preventDefault();
+    setSelectedEmailId(email.id);
+    setContextMenu({
+      x: Math.min(event.clientX, window.innerWidth - 210),
+      y: Math.min(event.clientY, window.innerHeight - 86),
+      emailId: email.id,
+      panelRead: email.panelRead
+    });
+  }, []);
+
   useEffect(() => {
     void loadDashboard().catch((error) => setToast(error.message));
   }, [loadDashboard]);
@@ -371,6 +426,32 @@ function App() {
       .then(setDetail)
       .catch((error) => setToast(error.message));
   }, [selectedEmailId]);
+
+  useEffect(() => {
+    setAutoReadSuppressedId(null);
+  }, [selectedEmailId]);
+
+  useEffect(() => {
+    if (!detail || detail.panelRead || !shouldAutoMarkPanelRead(detail.category)) return;
+    if (detail.id === autoReadSuppressedId) return;
+
+    const timer = window.setTimeout(() => {
+      void updateEmailReadState(detail.id, true, { silent: true }).catch((error) => setToast(error.message));
+    }, 2000);
+
+    return () => window.clearTimeout(timer);
+  }, [autoReadSuppressedId, detail?.id, detail?.panelRead, detail?.category, updateEmailReadState]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setContextMenu(null);
+    };
+
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [contextMenu]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -540,30 +621,50 @@ function App() {
                 {loading ? (
                   Array.from({ length: 5 }).map((_, index) => <div className="email-skeleton" key={index} />)
                 ) : emails.length ? (
-                  emails.map((email) => (
-                    <button
-                      key={email.id}
-                      className={selectedEmailId === email.id ? "email-row active" : "email-row"}
-                      onClick={() => setSelectedEmailId(email.id)}
-                    >
-                      <div className="email-row-top">
-                        <strong>{email.subject}</strong>
-                        <time>{formatTime(email.receivedAt || email.processedAt)}</time>
-                      </div>
-                      <div className="email-row-meta">
-                        <span>{senderName(email)}</span>
-                        <span>{mailboxMap.get(email.mailboxId)?.name || "邮箱"}</span>
-                      </div>
-                      <p>{email.summaryZh}</p>
-                      <div className="email-row-bottom">
-                        <span className="read-badge">
-                          <CheckCircle size={15} />
-                          {email.readMarked ? "已标记已读" : "已处理"}
-                        </span>
-                        {email.actionItemsZh.length > 0 && <em>{email.actionItemsZh.length} 个动作</em>}
-                      </div>
-                    </button>
-                  ))
+                  emails.map((email) => {
+                    const rowClassName = [
+                      "email-row",
+                      selectedEmailId === email.id ? "active" : "",
+                      email.panelRead ? "panel-read" : "panel-unread"
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+
+                    return (
+                      <button
+                        key={email.id}
+                        className={rowClassName}
+                        onClick={() => setSelectedEmailId(email.id)}
+                        onContextMenu={(event) => openEmailContextMenu(event, email)}
+                      >
+                        <div className="email-row-top">
+                          <div className="email-row-title">
+                            <span className={email.panelRead ? "read-dot" : "read-dot unread"} />
+                            <strong>{email.subject}</strong>
+                          </div>
+                          <time>{formatTime(email.receivedAt || email.processedAt)}</time>
+                        </div>
+                        <div className="email-row-meta">
+                          <span>{senderName(email)}</span>
+                          <span>{mailboxMap.get(email.mailboxId)?.name || "邮箱"}</span>
+                        </div>
+                        <p>{email.summaryZh}</p>
+                        <div className="email-row-bottom">
+                          <div className="email-row-statuses">
+                            <span className={email.panelRead ? "panel-state read" : "panel-state unread"}>
+                              {email.panelRead ? <CheckCircle size={15} /> : <EnvelopeSimple size={15} />}
+                              {email.panelRead ? "系统已读" : "系统未读"}
+                            </span>
+                            <span className="read-badge">
+                              <CheckCircle size={15} />
+                              {email.readMarked ? "邮箱已读" : "邮箱待确认"}
+                            </span>
+                          </div>
+                          {email.actionItemsZh.length > 0 && <em>{email.actionItemsZh.length} 个动作</em>}
+                        </div>
+                      </button>
+                    );
+                  })
                 ) : (
                   <div className="empty-state">
                     <ShieldCheck size={34} />
@@ -608,6 +709,42 @@ function App() {
           />
         )}
       </main>
+
+      {contextMenu && (
+        <>
+          <div
+            className="context-menu-shield"
+            onClick={() => setContextMenu(null)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setContextMenu(null);
+            }}
+          />
+          <div
+            className="email-context-menu"
+            role="menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const nextReadState = !contextMenu.panelRead;
+                const emailId = contextMenu.emailId;
+                setContextMenu(null);
+                void updateEmailReadState(emailId, nextReadState, { suppressAutoRead: !nextReadState }).catch((error) =>
+                  setToast(error.message)
+                );
+              }}
+            >
+              {contextMenu.panelRead ? <EnvelopeSimple size={16} /> : <CheckCircle size={16} />}
+              {contextMenu.panelRead ? "标记为系统未读" : "标记为系统已读"}
+            </button>
+          </div>
+        </>
+      )}
 
       {toast && (
         <div className="toast" role="status">
@@ -734,7 +871,13 @@ function EmailDetail({ detail, mailbox }: { detail: ProcessedEmail | null; mailb
   return (
     <aside className="detail-panel">
       <div className="detail-header">
-        <span className={`category-pill ${detail.category}`}>{categoryMeta[detail.category].label}</span>
+        <div className="detail-pills">
+          <span className={`category-pill ${detail.category}`}>{categoryMeta[detail.category].label}</span>
+          <span className={detail.panelRead ? "panel-state read" : "panel-state unread"}>
+            {detail.panelRead ? <CheckCircle size={15} /> : <EnvelopeSimple size={15} />}
+            {detail.panelRead ? "系统已读" : "系统未读"}
+          </span>
+        </div>
         <time>{formatTime(detail.receivedAt || detail.processedAt)}</time>
       </div>
       <h2>{detail.subject}</h2>
