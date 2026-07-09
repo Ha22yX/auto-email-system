@@ -741,7 +741,7 @@ body.resizing-detail iframe {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding-right: 3px;
+  padding: 2px 3px 10px 0;
   overscroll-behavior: contain;
 }
 
