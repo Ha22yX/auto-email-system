@@ -9,6 +9,7 @@ import {
 import {
   addProcessedEmail,
   addRun,
+  findProcessedEmailDuplicate,
   getProcessedEmail,
   readState,
   updateMailboxSync,
@@ -168,6 +169,28 @@ export async function processMailboxes(options: {
         return;
       }
 
+      const duplicate = findProcessedEmailDuplicate(item.email);
+      if (duplicate) {
+        try {
+          persistRun(run, {
+            currentStage: "邮件已按 Message-ID/内容指纹处理过，正在补标已读",
+            currentEmailStep: "重复邮件补标",
+            currentEmailStepIndex: currentStepTotal,
+            currentEmailStepTotal: currentStepTotal
+          });
+          const readMark = await withTimeout(item.markRead(), 30000, "标记已读超时");
+          updateProcessedEmailReadMark(duplicate.mailboxId, duplicate.externalUid, {
+            marked: duplicate.readMarked || readMark.marked,
+            note: duplicate.readMarkNote || `重复邮件 ${item.email.externalUid} 已补标已读`
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          run.errors.push(`${mailbox.name}: 重复邮件补标已读失败。${message}`);
+          persistRun(run);
+        }
+        return;
+      }
+
       let emailForClassification = item.email;
       let classification;
       try {
@@ -232,6 +255,22 @@ export async function processMailboxes(options: {
         readMarkNote: "已写入数据库，正在标记已读。"
       };
       const insertedEmail = addProcessedEmail(processedEmail);
+      if (!insertedEmail) {
+        try {
+          await withTimeout(item.markRead(), 30000, "标记已读超时");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          run.errors.push(`${mailbox.name}: 重复入库邮件补标已读失败。${message}`);
+        }
+        persistRun(run, {
+          currentStage: "邮件已由另一轮任务入库，正在跳过重复通知",
+          currentEmailStep: "跳过重复",
+          currentEmailStepIndex: currentStepTotal,
+          currentEmailStepTotal: currentStepTotal
+        });
+        return;
+      }
+
       incrementRun(run, classification.category);
       persistRun(run, {
         currentStage: "已写入数据库，正在标记已读",

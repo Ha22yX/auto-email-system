@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createAuthSettings, verifyPassword } from "./auth-crypto";
 import type {
   AiSettings,
@@ -8,6 +8,7 @@ import type {
   AuthSettings,
   Mailbox,
   NotificationSettings,
+  IncomingEmail,
   ProcessedEmail,
   ProcessingRun,
   SystemSettings
@@ -260,10 +261,55 @@ export function getProcessedEmail(mailboxId: string, externalUid: string) {
   return clone(state.emails.find((email) => email.mailboxId === mailboxId && email.externalUid === externalUid));
 }
 
+function normalizeFingerprintText(value?: string) {
+  return (value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function emailContentFingerprint(email: IncomingEmail | ProcessedEmail) {
+  const parts = [
+    email.mailboxId,
+    normalizeFingerprintText(email.subject),
+    normalizeFingerprintText(email.fromAddress),
+    normalizeFingerprintText(email.toText),
+    email.receivedAt || "",
+    normalizeFingerprintText(email.originalText).slice(0, 8000)
+  ];
+  return createHash("sha256").update(parts.join("\n")).digest("hex");
+}
+
+export function findProcessedEmailDuplicate(email: IncomingEmail | ProcessedEmail) {
+  const state = loadState();
+  const messageId = normalizeFingerprintText(email.messageId);
+  if (messageId) {
+    const byMessageId = state.emails.find(
+      (item) => item.mailboxId === email.mailboxId && normalizeFingerprintText(item.messageId) === messageId
+    );
+    if (byMessageId) return clone(byMessageId);
+  }
+
+  const fingerprint = emailContentFingerprint(email);
+  return clone(
+    state.emails.find(
+      (item) =>
+        item.mailboxId === email.mailboxId &&
+        item.externalUid !== email.externalUid &&
+        emailContentFingerprint(item) === fingerprint
+    )
+  );
+}
+
 export function addProcessedEmail(email: ProcessedEmail) {
   let inserted = false;
   updateState((draft) => {
-    if (draft.emails.some((item) => item.mailboxId === email.mailboxId && item.externalUid === email.externalUid)) {
+    const messageId = normalizeFingerprintText(email.messageId);
+    const fingerprint = emailContentFingerprint(email);
+    const exists = draft.emails.some((item) => {
+      if (item.mailboxId !== email.mailboxId) return false;
+      if (item.externalUid === email.externalUid) return true;
+      if (messageId && normalizeFingerprintText(item.messageId) === messageId) return true;
+      return emailContentFingerprint(item) === fingerprint;
+    });
+    if (exists) {
       return;
     }
     draft.emails.unshift(email);
