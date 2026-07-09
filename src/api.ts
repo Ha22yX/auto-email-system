@@ -4,6 +4,7 @@ import type {
   EmailListItem,
   MailCategory,
   Mailbox,
+  NotificationSettings,
   ProcessedEmail,
   ProcessingRun,
   SystemSettings
@@ -62,6 +63,18 @@ export const api = {
   updateSystem(settings: SystemSettings) {
     return request<SystemSettings>("/api/settings/system", {
       method: "PUT",
+      body: JSON.stringify(settings)
+    });
+  },
+  updateNotification(settings: NotificationSettings) {
+    return request<NotificationSettings>("/api/settings/notification", {
+      method: "PUT",
+      body: JSON.stringify(settings)
+    });
+  },
+  testNotification(settings: NotificationSettings) {
+    return request<{ ok: boolean; message: string }>("/api/settings/notification/test", {
+      method: "POST",
       body: JSON.stringify(settings)
     });
   },

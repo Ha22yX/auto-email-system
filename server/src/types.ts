@@ -17,6 +17,13 @@ export type SystemSettings = {
   processLimitPerMailbox: number;
 };
 
+export type NotificationSettings = {
+  enabled: boolean;
+  clawbotApiUrl: string;
+  clawbotRecipientId: string;
+  importantOnly: boolean;
+};
+
 export type Mailbox = {
   id: string;
   name: string;
@@ -57,6 +64,8 @@ export type ProcessedEmail = {
   panelReadAt?: string;
   readMarked: boolean;
   readMarkNote?: string;
+  notifiedAt?: string;
+  notificationError?: string;
 };
 
 export type ProcessingRun = {
@@ -90,6 +99,7 @@ export type AppState = {
   settings: {
     ai: AiSettings;
     system: SystemSettings;
+    notification: NotificationSettings;
   };
   mailboxes: Mailbox[];
   emails: ProcessedEmail[];

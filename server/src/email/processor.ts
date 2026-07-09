@@ -6,9 +6,11 @@ import {
   getProcessedEmail,
   readState,
   updateMailboxSync,
+  updateProcessedEmailNotification,
   updateProcessedEmailReadMark,
   updateRun
 } from "../store";
+import { sendEmailNotification, shouldNotifyEmail } from "../notifications/clawbot";
 import type { Mailbox, ProcessingRun } from "../types";
 import { countUnreadImap, fetchInterruptedImapRecovery, fetchUnreadImap, type FetchedEmail } from "./imap";
 import { countUnreadPop3, fetchUnreadPop3 } from "./pop3";
@@ -179,7 +181,7 @@ export async function processMailboxes(options: {
         classification.reasonZh = `${classification.reasonZh} AI 接口本次不可用或返回格式异常，系统已使用本地规则兜底。`;
       }
 
-      addProcessedEmail({
+      const processedEmail = {
         id: randomUUID(),
         ...item.email,
         processedAt: new Date().toISOString(),
@@ -193,7 +195,8 @@ export async function processMailboxes(options: {
         panelReadAt: classification.category === "ignore" ? new Date().toISOString() : undefined,
         readMarked: false,
         readMarkNote: "已写入数据库，正在标记已读。"
-      });
+      };
+      const insertedEmail = addProcessedEmail(processedEmail);
       incrementRun(run, classification.category);
       persistRun(run, {
         currentStage: "已写入数据库，正在标记已读",
@@ -201,6 +204,34 @@ export async function processMailboxes(options: {
         currentEmailStepIndex: 3,
         currentEmailStepTotal: 4
       });
+
+      if (insertedEmail && shouldNotifyEmail(state.settings.notification, insertedEmail)) {
+        try {
+          persistRun(run, {
+            currentStage: "重要邮件已入库，正在发送微信通知",
+            currentEmailStep: "微信通知",
+            currentEmailStepIndex: 3,
+            currentEmailStepTotal: 4
+          });
+          await withTimeout(
+            sendEmailNotification(state.settings.notification, insertedEmail, mailbox),
+            20000,
+            "微信 ClawBot 通知超时"
+          );
+          updateProcessedEmailNotification(insertedEmail.id, {
+            notifiedAt: new Date().toISOString(),
+            notificationError: ""
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          updateProcessedEmailNotification(insertedEmail.id, {
+            notifiedAt: undefined,
+            notificationError: message
+          });
+          run.errors.push(`${mailbox.name}: 重要邮件微信通知失败。${message}`);
+          persistRun(run);
+        }
+      }
 
       try {
         persistRun(run, {

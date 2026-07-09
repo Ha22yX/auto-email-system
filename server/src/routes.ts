@@ -11,10 +11,12 @@ import {
   readState,
   removeMailbox,
   updateAiSettings,
+  updateNotificationSettings,
   updateProcessedEmailPanelRead,
   updateSystemSettings,
   upsertMailbox
 } from "./store";
+import { sendClawbotTestNotification } from "./notifications/clawbot";
 import type { MailCategory } from "./types";
 
 const router = express.Router();
@@ -46,6 +48,13 @@ const systemSchema = z.object({
   autoLoadRemoteImages: z.coerce.boolean().optional().default(false),
   pollIntervalMinutes: z.coerce.number().int().min(1).max(1440),
   processLimitPerMailbox: z.coerce.number().int().min(1).max(500)
+});
+
+const notificationSchema = z.object({
+  enabled: z.coerce.boolean(),
+  clawbotApiUrl: z.string().url(),
+  clawbotRecipientId: z.string().optional().default(""),
+  importantOnly: z.coerce.boolean().optional().default(true)
 });
 
 const panelReadSchema = z.object({
@@ -116,7 +125,8 @@ function buildDashboard(mailboxId?: string) {
   return {
     settings: {
       ai: publicAiSettings(state.settings.ai),
-      system: state.settings.system
+      system: state.settings.system,
+      notification: state.settings.notification
     },
     mailboxes: state.mailboxes.map(publicMailbox),
     counts,
@@ -210,6 +220,33 @@ router.put(
   asyncRoute((req, res) => {
     const parsed = systemSchema.parse(req.body);
     res.json(updateSystemSettings(parsed));
+  })
+);
+
+router.get(
+  "/settings/notification",
+  asyncRoute((_req, res) => {
+    res.json(readState().settings.notification);
+  })
+);
+
+router.put(
+  "/settings/notification",
+  asyncRoute((req, res) => {
+    const parsed = notificationSchema.parse(req.body);
+    res.json(updateNotificationSettings(parsed));
+  })
+);
+
+router.post(
+  "/settings/notification/test",
+  asyncRoute(async (req, res) => {
+    const parsed = notificationSchema.parse(req.body);
+    await sendClawbotTestNotification(parsed);
+    res.json({
+      ok: true,
+      message: "微信 ClawBot 测试通知已发送。"
+    });
   })
 );
 

@@ -28,6 +28,7 @@ import type {
   EmailListItem,
   MailCategory,
   Mailbox,
+  NotificationSettings,
   ProcessedEmail,
   ProcessingRun,
   SystemSettings
@@ -1040,6 +1041,7 @@ function SettingsPanel({
 }) {
   const [aiForm, setAiForm] = useState<AiSettings | null>(null);
   const [systemForm, setSystemForm] = useState<SystemSettings | null>(null);
+  const [notificationForm, setNotificationForm] = useState<NotificationSettings | null>(null);
   const [mailboxForm, setMailboxForm] = useState<Partial<Mailbox>>(emptyMailbox);
   const [saving, setSaving] = useState(false);
 
@@ -1049,6 +1051,11 @@ function SettingsPanel({
     setSystemForm({
       ...dashboard.settings.system,
       autoLoadRemoteImages: Boolean(dashboard.settings.system.autoLoadRemoteImages)
+    });
+    setNotificationForm({
+      ...dashboard.settings.notification,
+      enabled: Boolean(dashboard.settings.notification.enabled),
+      importantOnly: Boolean(dashboard.settings.notification.importantOnly)
     });
   }, [dashboard]);
 
@@ -1086,6 +1093,33 @@ function SettingsPanel({
       await api.updateSystem(systemForm);
       await onReload();
       setToast("系统设置已保存。");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveNotification() {
+    if (!notificationForm) return;
+    setSaving(true);
+    try {
+      await api.updateNotification(notificationForm);
+      await onReload();
+      setToast("微信通知设置已保存。");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function testNotification() {
+    if (!notificationForm) return;
+    setSaving(true);
+    try {
+      const result = await api.testNotification(notificationForm);
+      setToast(result.message);
     } catch (error) {
       setToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1255,6 +1289,70 @@ function SettingsPanel({
                 <FloppyDisk size={18} />
                 保存系统设置
               </button>
+            </div>
+          )}
+        </div>
+
+        <div className="settings-panel notification-settings-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="section-kicker">微信通知</p>
+              <h2>ClawBot 推送</h2>
+            </div>
+            <Plugs size={22} />
+          </div>
+          {notificationForm && (
+            <div className="form-grid notification-form">
+              <label className="switch-row full-span">
+                <span>
+                  <strong>收到重要邮件时通知我</strong>
+                  <small>邮件确认入库后，通过 WeClaw 本地 API 主动推送到微信</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={notificationForm.enabled}
+                  onChange={(event) => setNotificationForm({ ...notificationForm, enabled: event.target.checked })}
+                />
+              </label>
+              <label className="full-span">
+                ClawBot API 地址
+                <input
+                  value={notificationForm.clawbotApiUrl}
+                  placeholder="http://127.0.0.1:18011/api/send"
+                  onChange={(event) => setNotificationForm({ ...notificationForm, clawbotApiUrl: event.target.value })}
+                />
+              </label>
+              <label className="full-span">
+                微信接收人 ID
+                <input
+                  value={notificationForm.clawbotRecipientId}
+                  placeholder="user_id@im.wechat"
+                  onChange={(event) =>
+                    setNotificationForm({ ...notificationForm, clawbotRecipientId: event.target.value })
+                  }
+                />
+              </label>
+              <label className="switch-row full-span">
+                <span>
+                  <strong>只通知重要邮件</strong>
+                  <small>保持开启可避免次重要和不用管邮件打扰你</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={notificationForm.importantOnly}
+                  onChange={(event) => setNotificationForm({ ...notificationForm, importantOnly: event.target.checked })}
+                />
+              </label>
+              <div className="form-actions full-span">
+                <button className="ghost-button" disabled={saving} onClick={testNotification}>
+                  <Plugs size={18} />
+                  测试通知
+                </button>
+                <button className="secondary-button" disabled={saving} onClick={saveNotification}>
+                  <FloppyDisk size={18} />
+                  保存通知设置
+                </button>
+              </div>
             </div>
           )}
         </div>

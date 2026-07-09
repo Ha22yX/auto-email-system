@@ -5,6 +5,7 @@ import type {
   AiSettings,
   AppState,
   Mailbox,
+  NotificationSettings,
   ProcessedEmail,
   ProcessingRun,
   SystemSettings
@@ -28,6 +29,12 @@ const defaultState: AppState = {
       autoLoadRemoteImages: false,
       pollIntervalMinutes: 10,
       processLimitPerMailbox: 30
+    },
+    notification: {
+      enabled: false,
+      clawbotApiUrl: "http://127.0.0.1:18011/api/send",
+      clawbotRecipientId: "",
+      importantOnly: true
     }
   },
   mailboxes: [],
@@ -57,7 +64,8 @@ function loadState(): AppState {
   stateCache = {
     settings: {
       ai: { ...defaultState.settings.ai, ...parsed.settings?.ai },
-      system: { ...defaultState.settings.system, ...parsed.settings?.system }
+      system: { ...defaultState.settings.system, ...parsed.settings?.system },
+      notification: { ...defaultState.settings.notification, ...parsed.settings?.notification }
     },
     mailboxes: parsed.mailboxes ?? [],
     emails: parsed.emails ?? [],
@@ -432,6 +440,15 @@ export function updateSystemSettings(input: Partial<SystemSettings>) {
   }).settings.system;
 }
 
+export function updateNotificationSettings(input: Partial<NotificationSettings>) {
+  return updateState((draft) => {
+    draft.settings.notification = {
+      ...draft.settings.notification,
+      ...input
+    };
+  }).settings.notification;
+}
+
 export function hasProcessed(mailboxId: string, externalUid: string) {
   const state = loadState();
   return state.emails.some((email) => email.mailboxId === mailboxId && email.externalUid === externalUid);
@@ -443,12 +460,15 @@ export function getProcessedEmail(mailboxId: string, externalUid: string) {
 }
 
 export function addProcessedEmail(email: ProcessedEmail) {
+  let inserted = false;
   updateState((draft) => {
     if (draft.emails.some((item) => item.mailboxId === email.mailboxId && item.externalUid === email.externalUid)) {
       return;
     }
     draft.emails.unshift(email);
+    inserted = true;
   });
+  return inserted ? clone(email) : undefined;
 }
 
 export function updateProcessedEmailReadMark(
@@ -462,6 +482,18 @@ export function updateProcessedEmailReadMark(
       email.readMarked = readMark.marked;
       email.readMarkNote = readMark.note;
     }
+  });
+}
+
+export function updateProcessedEmailNotification(
+  id: string,
+  patch: Pick<ProcessedEmail, "notifiedAt" | "notificationError">
+) {
+  updateState((draft) => {
+    const email = draft.emails.find((item) => item.id === id);
+    if (!email) return;
+    email.notifiedAt = patch.notifiedAt;
+    email.notificationError = patch.notificationError;
   });
 }
 

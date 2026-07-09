@@ -18,6 +18,13 @@ export type SystemSettings = {
   processLimitPerMailbox: number;
 };
 
+export type NotificationSettings = {
+  enabled: boolean;
+  clawbotApiUrl: string;
+  clawbotRecipientId: string;
+  importantOnly: boolean;
+};
+
 export type Mailbox = {
   id: string;
   name: string;
@@ -53,6 +60,8 @@ export type EmailListItem = {
   panelReadAt?: string;
   readMarked: boolean;
   readMarkNote?: string;
+  notifiedAt?: string;
+  notificationError?: string;
 };
 
 export type ProcessedEmail = EmailListItem & {
@@ -94,6 +103,7 @@ export type Dashboard = {
   settings: {
     ai: AiSettings;
     system: SystemSettings;
+    notification: NotificationSettings;
   };
   mailboxes: Mailbox[];
   counts: Record<MailCategory, number>;
