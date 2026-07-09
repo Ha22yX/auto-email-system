@@ -24,8 +24,19 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 app.use("/api", router);
-app.use(express.static(distDir));
+app.use(
+  express.static(distDir, {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith("index.html")) {
+        res.setHeader("Cache-Control", "no-store");
+        return;
+      }
+      res.setHeader("Cache-Control", "public, max-age=0, must-revalidate");
+    }
+  })
+);
 app.get(/.*/, (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
   res.sendFile(path.join(distDir, "index.html"));
 });
 

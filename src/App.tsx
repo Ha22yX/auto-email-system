@@ -763,22 +763,34 @@ function progressPercent(done = 0, total = 0) {
   return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
 }
 
+function getRunProgress(run?: ProcessingRun | null) {
+  const totalUnread = run?.totalUnreadCount ?? 0;
+  const handledUnread = run?.handledUnreadCount ?? 0;
+  const total = run?.totalTaskCount ?? totalUnread;
+  const handled = run?.handledTaskCount ?? Math.max(run?.processedCount ?? 0, handledUnread);
+
+  return {
+    total,
+    handled,
+    percent: progressPercent(handled, total)
+  };
+}
+
 function ProcessingProgress({ run, running }: { run?: ProcessingRun | null; running: boolean }) {
   const totalUnread = run?.totalUnreadCount ?? 0;
   const handledUnread = run?.handledUnreadCount ?? 0;
-  const totalTask = run?.totalTaskCount ?? totalUnread;
-  const handledTask = run?.handledTaskCount ?? Math.max(run?.processedCount ?? 0, handledUnread);
-  const totalPercent = progressPercent(handledTask, totalTask);
+  const runProgress = getRunProgress(run);
   const mailboxTotal = run?.currentMailboxUnreadCount ?? 0;
   const mailboxHandled = run?.currentMailboxHandledCount ?? 0;
   const mailboxPercent = progressPercent(mailboxHandled, mailboxTotal);
   const emailStepTotal = run?.currentEmailStepTotal ?? 0;
   const emailStepIndex = run?.currentEmailStepIndex ?? 0;
-  const emailPercent = progressPercent(emailStepIndex, emailStepTotal);
+  const visibleStepTotal = emailStepTotal || 4;
   const mailboxLabel =
     run?.currentMailboxName && run.totalMailboxCount
       ? `${run.currentMailboxName} · ${run.currentMailboxIndex ?? 1}/${run.totalMailboxCount}`
       : run?.currentMailboxName || "等待任务";
+  const currentEmailLabel = run?.currentEmailStep || run?.currentStage || "等待下一封邮件";
 
   return (
     <section className={running ? "progress-panel active" : "progress-panel"} aria-label="邮件处理进度">
@@ -797,10 +809,10 @@ function ProcessingProgress({ run, running }: { run?: ProcessingRun | null; runn
         <div className="progress-card">
           <div className="progress-row">
             <span>本轮任务</span>
-            <strong>{handledTask}/{totalTask}</strong>
+            <strong>{runProgress.handled}/{runProgress.total}</strong>
           </div>
-          <div className="progress-track" aria-label={`本轮进度 ${totalPercent}%`}>
-            <span style={{ width: `${totalPercent}%` }} />
+          <div className="progress-track" aria-label={`本轮进度 ${runProgress.percent}%`}>
+            <span style={{ width: `${runProgress.percent}%` }} />
           </div>
           <p>未读 {handledUnread}/{totalUnread}</p>
         </div>
@@ -815,15 +827,23 @@ function ProcessingProgress({ run, running }: { run?: ProcessingRun | null; runn
           </div>
         </div>
 
-        <div className="progress-card wide">
+        <div className="progress-card current-email-card">
           <div className="progress-row">
-            <span>{run?.currentEmailStep || run?.currentStage || "等待下一封邮件"}</span>
+            <span>当前邮件</span>
             <strong>{emailStepTotal ? `${emailStepIndex}/${emailStepTotal}` : "--"}</strong>
           </div>
-          <div className="progress-track" aria-label={`当前邮件步骤 ${emailPercent}%`}>
-            <span style={{ width: `${emailPercent}%` }} />
+          <div className="step-strip" aria-label={`当前邮件步骤 ${emailStepIndex}/${visibleStepTotal}`}>
+            {Array.from({ length: visibleStepTotal }).map((_, index) => {
+              const step = index + 1;
+              const className =
+                step < emailStepIndex ? "step-dot done" : step === emailStepIndex ? "step-dot active" : "step-dot";
+              return <span className={className} key={step} />;
+            })}
           </div>
-          {run?.currentSubject && <p>{run.currentSubject}</p>}
+          <p>
+            <strong>{currentEmailLabel}</strong>
+            {run?.currentSubject ? ` · ${run.currentSubject}` : ""}
+          </p>
         </div>
       </div>
     </section>
