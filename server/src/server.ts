@@ -5,6 +5,7 @@ import express from "express";
 import router from "./routes";
 import { startProcessingWorker } from "./email/processor";
 import { defaultWeclawApiUrl, ensureWeclawStarted } from "./weclaw/manager";
+import { apiRateLimit, corsOrigin, csrfProtection, securityHeaders } from "./security";
 import {
   hasInterruptedRecoveryRetry,
   markInterruptedRuns
@@ -19,12 +20,11 @@ const port = Number(process.env.PORT ?? 8787);
 const app = express();
 
 app.set("trust proxy", true);
-app.use((_req, res, next) => {
-  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex");
-  next();
-});
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: "20mb" }));
+app.disable("x-powered-by");
+app.use(securityHeaders);
+app.use(cors({ origin: corsOrigin, credentials: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] }));
+app.use(express.json({ limit: "10mb", strict: true }));
+app.use("/api", apiRateLimit, csrfProtection);
 app.use("/api", router);
 app.use(
   express.static(distDir, {

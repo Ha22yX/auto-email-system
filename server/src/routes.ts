@@ -6,6 +6,7 @@ import { fetchRemoteEmailImage, findInlineEmailImage } from "./email/assets";
 import { fetchUnreadImap } from "./email/imap";
 import { fetchUnreadPop3 } from "./email/pop3";
 import { isProcessorRunning, processMailboxes } from "./email/processor";
+import { checkLoginAllowed, registerLoginFailure, registerLoginSuccess } from "./security";
 import {
   publicAiSettings,
   publicAuthSettings,
@@ -198,12 +199,16 @@ router.get(
 router.post(
   "/auth/login",
   asyncRoute((req, res) => {
+    if (!checkLoginAllowed(req, res)) return;
+
     const parsed = loginSchema.parse(req.body);
     if (!verifyAdminPassword(parsed.password)) {
+      registerLoginFailure(req);
       res.status(401).json({ error: "登录密码不正确。" });
       return;
     }
 
+    registerLoginSuccess(req);
     setAuthCookie(req, res);
     res.json({
       authenticated: true,
