@@ -825,6 +825,8 @@ body.resizing-detail iframe {
 
 .email-list {
   display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: 10px;
   flex: 1 1 auto;
   min-height: 0;
@@ -848,6 +850,7 @@ body.resizing-detail iframe {
 
 .email-row {
   display: grid;
+  align-content: start;
   gap: 9px;
   width: 100%;
   padding: 15px;
