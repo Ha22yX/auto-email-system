@@ -66,9 +66,20 @@ export type ProcessingRun = {
   finishedAt?: string;
   status: "running" | "success" | "failed";
   mailboxId?: string;
+  totalMailboxCount?: number;
+  currentMailboxIndex?: number;
   currentMailboxName?: string;
   currentSubject?: string;
   currentStage?: string;
+  totalTaskCount?: number;
+  handledTaskCount?: number;
+  totalUnreadCount?: number;
+  handledUnreadCount?: number;
+  currentMailboxUnreadCount?: number;
+  currentMailboxHandledCount?: number;
+  currentEmailStep?: string;
+  currentEmailStepIndex?: number;
+  currentEmailStepTotal?: number;
   processedCount: number;
   importantCount: number;
   secondaryCount: number;
@@ -84,6 +95,7 @@ export type Dashboard = {
   mailboxes: Mailbox[];
   counts: Record<MailCategory, number>;
   total: number;
+  allTotal: number;
   recentEmails: EmailListItem[];
   runs: ProcessingRun[];
   processorRunning: boolean;

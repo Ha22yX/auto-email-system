@@ -29,10 +29,15 @@ import type {
   MailCategory,
   Mailbox,
   ProcessedEmail,
+  ProcessingRun,
   SystemSettings
 } from "./types";
 
 type View = "mail" | "settings";
+
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL ??
+  (window.location.port === "5173" ? "http://127.0.0.1:8787" : "");
 
 const categoryMeta: Record<
   MailCategory,
@@ -122,7 +127,27 @@ function cleanInlineStyle(value: string) {
     .trim();
 }
 
-function postProcessEmailHtml(html: string) {
+function emailApiPath(path: string) {
+  return `${API_BASE}${path}`;
+}
+
+function proxiedRemoteImageUrl(value: string) {
+  return emailApiPath(`/api/email-assets/image?url=${encodeURIComponent(value)}`);
+}
+
+function inlineImageUrl(emailId: string, cid: string) {
+  return emailApiPath(`/api/emails/${encodeURIComponent(emailId)}/inline-image?cid=${encodeURIComponent(cid)}`);
+}
+
+function rewriteEmailImageSource(value: string, options: { emailId?: string; loadRemoteImages: boolean }) {
+  if (/^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(value)) return value;
+  if (/^cid:/i.test(value) && options.emailId) return inlineImageUrl(options.emailId, value.replace(/^cid:/i, ""));
+  if (options.loadRemoteImages && /^\/\//.test(value)) return proxiedRemoteImageUrl(`https:${value}`);
+  if (options.loadRemoteImages && /^https?:\/\//i.test(value)) return proxiedRemoteImageUrl(value);
+  return "";
+}
+
+function postProcessEmailHtml(html: string, options: { emailId?: string; loadRemoteImages: boolean }) {
   const template = document.createElement("template");
   template.innerHTML = html;
 
@@ -144,10 +169,14 @@ function postProcessEmailHtml(html: string) {
       }
 
       if (resourceAttributes.has(name)) {
-        const isSafeEmbeddedImage =
-          name === "src" && /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(value);
+        const nextSource =
+          name === "src" && element.tagName.toLowerCase() === "img"
+            ? rewriteEmailImageSource(value, options)
+            : "";
 
-        if (!isSafeEmbeddedImage) {
+        if (nextSource) {
+          element.setAttribute(attribute.name, nextSource);
+        } else {
           element.removeAttribute(attribute.name);
         }
         return;
@@ -171,14 +200,15 @@ function textToSafeHtml(text: string) {
   return `<pre class="plain-email">${escapeHtml(text || "无可展示原文。")}</pre>`;
 }
 
-function createSafeEmailSrcDoc(sourceHtml: string) {
+function createSafeEmailSrcDoc(sourceHtml: string, options: { emailId?: string; loadRemoteImages: boolean }) {
   const sanitized = DOMPurify.sanitize(sourceHtml, {
     USE_PROFILES: { html: true },
     FORBID_TAGS: blockedEmailTags,
     FORBID_ATTR: ["autofocus", "srcdoc"],
-    ALLOW_DATA_ATTR: false
+    ALLOW_DATA_ATTR: false,
+    ALLOW_UNKNOWN_PROTOCOLS: true
   });
-  const body = postProcessEmailHtml(sanitized);
+  const body = postProcessEmailHtml(sanitized, options);
 
   return `<!doctype html>
 <html>
@@ -186,7 +216,7 @@ function createSafeEmailSrcDoc(sourceHtml: string) {
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; frame-src 'none'; connect-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none';"
+      content="default-src 'none'; img-src data: blob: http: https:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; frame-src 'none'; connect-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none';"
     />
     <style>
       :root {
@@ -411,7 +441,7 @@ function App() {
                 >
                   <MailboxIcon size={17} />
                   <span className="mailbox-chip-label">全部邮箱</span>
-                  <em>{dashboard?.total ?? 0}</em>
+                  <em>{dashboard?.allTotal ?? dashboard?.total ?? 0}</em>
                 </button>
                 {dashboard?.mailboxes.map((mailbox) => (
                   <button
@@ -488,6 +518,8 @@ function App() {
                   );
                 })}
               </div>
+
+              <ProcessingProgress run={dashboard?.currentRun} running={Boolean(dashboard?.processorRunning)} />
 
               <div className="list-toolbar">
                 <div>
@@ -589,11 +621,85 @@ function App() {
   );
 }
 
+function progressPercent(done = 0, total = 0) {
+  if (!total || total <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+}
+
+function ProcessingProgress({ run, running }: { run?: ProcessingRun | null; running: boolean }) {
+  const totalUnread = run?.totalUnreadCount ?? 0;
+  const handledUnread = run?.handledUnreadCount ?? 0;
+  const totalTask = run?.totalTaskCount ?? totalUnread;
+  const handledTask = run?.handledTaskCount ?? Math.max(run?.processedCount ?? 0, handledUnread);
+  const totalPercent = progressPercent(handledTask, totalTask);
+  const mailboxTotal = run?.currentMailboxUnreadCount ?? 0;
+  const mailboxHandled = run?.currentMailboxHandledCount ?? 0;
+  const mailboxPercent = progressPercent(mailboxHandled, mailboxTotal);
+  const emailStepTotal = run?.currentEmailStepTotal ?? 0;
+  const emailStepIndex = run?.currentEmailStepIndex ?? 0;
+  const emailPercent = progressPercent(emailStepIndex, emailStepTotal);
+  const mailboxLabel =
+    run?.currentMailboxName && run.totalMailboxCount
+      ? `${run.currentMailboxName} · ${run.currentMailboxIndex ?? 1}/${run.totalMailboxCount}`
+      : run?.currentMailboxName || "等待任务";
+
+  return (
+    <section className={running ? "progress-panel active" : "progress-panel"} aria-label="邮件处理进度">
+      <div className="progress-heading">
+        <div>
+          <p className="section-kicker">处理进度</p>
+          <h2>{running ? "正在处理邮件" : "当前没有运行中的任务"}</h2>
+        </div>
+        <span className={running ? "progress-status running" : "progress-status"}>
+          <i />
+          {running ? "运行中" : "空闲"}
+        </span>
+      </div>
+
+      <div className="progress-grid">
+        <div className="progress-card">
+          <div className="progress-row">
+            <span>本轮任务</span>
+            <strong>{handledTask}/{totalTask}</strong>
+          </div>
+          <div className="progress-track" aria-label={`本轮进度 ${totalPercent}%`}>
+            <span style={{ width: `${totalPercent}%` }} />
+          </div>
+          <p>未读 {handledUnread}/{totalUnread}</p>
+        </div>
+
+        <div className="progress-card">
+          <div className="progress-row">
+            <span>{mailboxLabel}</span>
+            <strong>{mailboxHandled}/{mailboxTotal}</strong>
+          </div>
+          <div className="progress-track" aria-label={`当前邮箱进度 ${mailboxPercent}%`}>
+            <span style={{ width: `${mailboxPercent}%` }} />
+          </div>
+        </div>
+
+        <div className="progress-card wide">
+          <div className="progress-row">
+            <span>{run?.currentEmailStep || run?.currentStage || "等待下一封邮件"}</span>
+            <strong>{emailStepTotal ? `${emailStepIndex}/${emailStepTotal}` : "--"}</strong>
+          </div>
+          <div className="progress-track" aria-label={`当前邮件步骤 ${emailPercent}%`}>
+            <span style={{ width: `${emailPercent}%` }} />
+          </div>
+          {run?.currentSubject && <p>{run.currentSubject}</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function EmailDetail({ detail, mailbox }: { detail: ProcessedEmail | null; mailbox?: Mailbox }) {
   const [originalMode, setOriginalMode] = useState<"rendered" | "source">("rendered");
+  const [loadImages, setLoadImages] = useState(false);
 
   useEffect(() => {
     setOriginalMode("rendered");
+    setLoadImages(false);
   }, [detail?.id]);
 
   const originalSource = useMemo(() => {
@@ -607,8 +713,11 @@ function EmailDetail({ detail, mailbox }: { detail: ProcessedEmail | null; mailb
       ? detail.originalHtml
       : textToSafeHtml(detail.originalText || originalSource);
 
-    return createSafeEmailSrcDoc(sourceHtml);
-  }, [detail, originalSource]);
+    return createSafeEmailSrcDoc(sourceHtml, {
+      emailId: detail.id,
+      loadRemoteImages: loadImages
+    });
+  }, [detail, originalSource, loadImages]);
 
   if (!detail) {
     return (
@@ -662,24 +771,35 @@ function EmailDetail({ detail, mailbox }: { detail: ProcessedEmail | null; mailb
             <p className="section-kicker">邮件原件</p>
             <span className="security-note">
               <ShieldCheck size={14} />
-              安全沙箱预览，已禁用脚本、表单、插件和外链资源
+              {loadImages
+                ? "安全沙箱预览，图片通过本地代理加载，脚本、表单和插件仍禁用"
+                : "安全沙箱预览，已禁用脚本、表单、插件和远程图片"}
             </span>
           </div>
-          <div className="view-toggle" role="tablist" aria-label="邮件原件视图">
+          <div className="original-actions">
             <button
-              className={originalMode === "rendered" ? "active" : ""}
+              className={loadImages ? "image-load-button active" : "image-load-button"}
               type="button"
-              onClick={() => setOriginalMode("rendered")}
+              onClick={() => setLoadImages((current) => !current)}
             >
-              渲染
+              {loadImages ? "隐藏图片" : "加载图片"}
             </button>
-            <button
-              className={originalMode === "source" ? "active" : ""}
-              type="button"
-              onClick={() => setOriginalMode("source")}
-            >
-              源码
-            </button>
+            <div className="view-toggle" role="tablist" aria-label="邮件原件视图">
+              <button
+                className={originalMode === "rendered" ? "active" : ""}
+                type="button"
+                onClick={() => setOriginalMode("rendered")}
+              >
+                渲染
+              </button>
+              <button
+                className={originalMode === "source" ? "active" : ""}
+                type="button"
+                onClick={() => setOriginalMode("source")}
+              >
+                源码
+              </button>
+            </div>
           </div>
         </div>
         {originalMode === "rendered" ? (

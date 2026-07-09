@@ -456,6 +456,119 @@ body.resizing-detail iframe {
   color: var(--soft);
 }
 
+.progress-panel {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(253 252 248 / 0.78);
+  padding: 16px;
+}
+
+.progress-panel.active {
+  border-color: rgb(32 90 75 / 0.34);
+  box-shadow: 0 14px 32px rgb(45 55 49 / 0.08);
+}
+
+.progress-heading,
+.progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-heading h2 {
+  margin: 3px 0 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.progress-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  border-radius: 999px;
+  background: rgb(21 26 25 / 0.06);
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.progress-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: #8ca196;
+}
+
+.progress-status.running i {
+  background: #bd6a33;
+  animation: pulse 1.4s var(--ease) infinite;
+}
+
+.progress-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.progress-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.74);
+  padding: 12px;
+}
+
+.progress-card.wide {
+  grid-column: 1 / -1;
+}
+
+.progress-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-row strong {
+  flex: 0 0 auto;
+  color: var(--ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(32 90 75 / 0.1);
+}
+
+.progress-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 420ms var(--ease);
+}
+
+.progress-card p {
+  margin: 0;
+  overflow: hidden;
+  color: #303835;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .list-toolbar {
   display: flex;
   align-items: end;
@@ -750,6 +863,37 @@ body.resizing-detail iframe {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.original-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-load-button {
+  height: 34px;
+  border-radius: 8px;
+  background: rgb(32 90 75 / 0.09);
+  color: var(--accent);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  transition:
+    background 240ms var(--ease),
+    color 240ms var(--ease),
+    transform 240ms var(--ease);
+}
+
+.image-load-button:hover {
+  transform: translateY(-1px);
+  background: rgb(32 90 75 / 0.14);
+}
+
+.image-load-button.active {
+  background: var(--accent);
+  color: white;
 }
 
 .view-toggle {
@@ -1070,8 +1214,15 @@ body.resizing-detail iframe {
   }
 
   .metric-grid,
-  .form-grid {
+  .form-grid,
+  .progress-grid {
     grid-template-columns: 1fr;
+  }
+
+  .original-heading,
+  .original-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .mailbox-row-meta {

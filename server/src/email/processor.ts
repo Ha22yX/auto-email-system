@@ -10,8 +10,8 @@ import {
   updateRun
 } from "../store";
 import type { Mailbox, ProcessingRun } from "../types";
-import { fetchInterruptedImapRecovery, fetchUnreadImap, type FetchedEmail } from "./imap";
-import { fetchUnreadPop3 } from "./pop3";
+import { countUnreadImap, fetchInterruptedImapRecovery, fetchUnreadImap, type FetchedEmail } from "./imap";
+import { countUnreadPop3, fetchUnreadPop3 } from "./pop3";
 
 let running = false;
 
@@ -48,6 +48,13 @@ async function fetchForMailbox(mailbox: Mailbox, limit: number) {
   return fetchUnreadPop3(mailbox, limit);
 }
 
+async function countForMailbox(mailbox: Mailbox, limit: number) {
+  if (mailbox.protocol === "imap") {
+    return countUnreadImap(mailbox, limit);
+  }
+  return countUnreadPop3(mailbox, limit);
+}
+
 export async function processMailboxes(options: {
   mailboxId?: string;
   manual?: boolean;
@@ -64,7 +71,18 @@ export async function processMailboxes(options: {
     startedAt: new Date().toISOString(),
     status: "running",
     mailboxId: options.mailboxId,
+    totalMailboxCount: 0,
+    currentMailboxIndex: 0,
     currentStage: "准备读取邮箱",
+    totalTaskCount: 0,
+    handledTaskCount: 0,
+    totalUnreadCount: 0,
+    handledUnreadCount: 0,
+    currentMailboxUnreadCount: 0,
+    currentMailboxHandledCount: 0,
+    currentEmailStep: "",
+    currentEmailStepIndex: 0,
+    currentEmailStepTotal: 0,
     processedCount: 0,
     importantCount: 0,
     secondaryCount: 0,
@@ -79,18 +97,54 @@ export async function processMailboxes(options: {
       if (options.mailboxId) return mailbox.id === options.mailboxId;
       return true;
     });
+    run.totalMailboxCount = mailboxes.length;
+    persistRun(run);
+
+    const unreadCountByMailbox = new Map<string, number>();
+    persistRun(run, { currentStage: "正在统计本轮未读邮件" });
+    for (const [index, mailbox] of mailboxes.entries()) {
+      try {
+        persistRun(run, {
+          currentMailboxIndex: index + 1,
+          currentMailboxName: mailbox.name,
+          currentStage: "正在统计本轮未读邮件"
+        });
+        const count = await withTimeout(
+          countForMailbox(mailbox, state.settings.system.processLimitPerMailbox),
+          45000,
+          `${mailbox.name}: 统计未读邮件超时`
+        );
+        unreadCountByMailbox.set(mailbox.id, count);
+        run.totalUnreadCount = (run.totalUnreadCount ?? 0) + count;
+        run.totalTaskCount = (run.totalTaskCount ?? 0) + count;
+        persistRun(run);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        unreadCountByMailbox.set(mailbox.id, 0);
+        run.errors.push(`${mailbox.name}: 统计未读邮件失败，仍会尝试读取。${message}`);
+        persistRun(run);
+      }
+    }
 
     const processFetchedItem = async (mailbox: Mailbox, item: FetchedEmail, recovered = false) => {
       persistRun(run, {
         currentMailboxName: mailbox.name,
         currentSubject: item.email.subject,
-        currentStage: "正在检查处理记录"
+        currentStage: "正在检查处理记录",
+        currentEmailStep: "检查处理记录",
+        currentEmailStepIndex: 1,
+        currentEmailStepTotal: 4
       });
 
       const existing = getProcessedEmail(item.email.mailboxId, item.email.externalUid);
       if (existing) {
         try {
-          persistRun(run, { currentStage: "邮件已在数据库中，正在补标已读" });
+          persistRun(run, {
+            currentStage: "邮件已在数据库中，正在补标已读",
+            currentEmailStep: "补标已读",
+            currentEmailStepIndex: 4,
+            currentEmailStepTotal: 4
+          });
           const readMark = await withTimeout(item.markRead(), 30000, "标记已读超时");
           updateProcessedEmailReadMark(item.email.mailboxId, item.email.externalUid, readMark);
         } catch (error) {
@@ -107,7 +161,12 @@ export async function processMailboxes(options: {
 
       let classification;
       try {
-        persistRun(run, { currentStage: recovered ? "正在恢复并请求 AI 分类" : "正在请求 AI 分类" });
+        persistRun(run, {
+          currentStage: recovered ? "正在恢复并请求 AI 分类" : "正在请求 AI 分类",
+          currentEmailStep: "AI 分类",
+          currentEmailStepIndex: 2,
+          currentEmailStepTotal: 4
+        });
         classification = await classifyEmail(item.email, state.settings.ai, { timeoutMs: 45000 });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -134,9 +193,20 @@ export async function processMailboxes(options: {
         readMarkNote: "已写入数据库，正在标记已读。"
       });
       incrementRun(run, classification.category);
-      persistRun(run, { currentStage: "已写入数据库，正在标记已读" });
+      persistRun(run, {
+        currentStage: "已写入数据库，正在标记已读",
+        currentEmailStep: "写入数据库",
+        currentEmailStepIndex: 3,
+        currentEmailStepTotal: 4
+      });
 
       try {
+        persistRun(run, {
+          currentStage: "已写入数据库，正在标记已读",
+          currentEmailStep: "标记已读",
+          currentEmailStepIndex: 4,
+          currentEmailStepTotal: 4
+        });
         const readMark = await withTimeout(item.markRead(), 30000, "标记已读超时");
         updateProcessedEmailReadMark(item.email.mailboxId, item.email.externalUid, readMark);
       } catch (error) {
@@ -147,15 +217,26 @@ export async function processMailboxes(options: {
         });
         run.errors.push(`${mailbox.name}: 邮件已入库，但标记已读失败。${message}`);
       }
-      persistRun(run, { currentStage: `已处理 ${run.processedCount} 封` });
+      persistRun(run, {
+        currentStage: `已处理 ${run.processedCount} 封`,
+        currentEmailStep: "完成",
+        currentEmailStepIndex: 4,
+        currentEmailStepTotal: 4
+      });
     };
 
-    for (const mailbox of mailboxes) {
+    for (const [index, mailbox] of mailboxes.entries()) {
       try {
         persistRun(run, {
+          currentMailboxIndex: index + 1,
           currentMailboxName: mailbox.name,
           currentSubject: undefined,
-          currentStage: "正在读取未读邮件"
+          currentStage: "正在读取未读邮件",
+          currentMailboxUnreadCount: unreadCountByMailbox.get(mailbox.id) ?? 0,
+          currentMailboxHandledCount: 0,
+          currentEmailStep: "",
+          currentEmailStepIndex: 0,
+          currentEmailStepTotal: 0
         });
 
         if (options.recoverInterrupted && mailbox.protocol === "imap") {
@@ -179,9 +260,15 @@ export async function processMailboxes(options: {
                 45000,
                 `${mailbox.name}: 中断恢复扫描超时`
               );
+              if (recoveryItems.length) {
+                run.totalTaskCount = (run.totalTaskCount ?? 0) + recoveryItems.length;
+                persistRun(run);
+              }
 
               for (const item of recoveryItems) {
                 await processFetchedItem(mailbox, item, true);
+                run.handledTaskCount = (run.handledTaskCount ?? 0) + 1;
+                persistRun(run);
               }
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
@@ -197,9 +284,21 @@ export async function processMailboxes(options: {
           120000,
           `${mailbox.name}: 读取邮箱超时`
         );
+        const expectedUnreadCount = unreadCountByMailbox.get(mailbox.id) ?? 0;
+        if (fetched.length > expectedUnreadCount) {
+          const additionalUnread = fetched.length - expectedUnreadCount;
+          run.totalUnreadCount = (run.totalUnreadCount ?? 0) + additionalUnread;
+          run.currentMailboxUnreadCount = (run.currentMailboxUnreadCount ?? 0) + additionalUnread;
+          run.totalTaskCount = (run.totalTaskCount ?? 0) + additionalUnread;
+          persistRun(run);
+        }
 
         for (const item of fetched) {
           await processFetchedItem(mailbox, item);
+          run.handledTaskCount = (run.handledTaskCount ?? 0) + 1;
+          run.handledUnreadCount = (run.handledUnreadCount ?? 0) + 1;
+          run.currentMailboxHandledCount = (run.currentMailboxHandledCount ?? 0) + 1;
+          persistRun(run);
         }
 
         updateMailboxSync(mailbox.id, {

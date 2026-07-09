@@ -1,6 +1,7 @@
 import express from "express";
 import { z } from "zod";
 import { classifyEmail } from "./ai";
+import { fetchRemoteEmailImage, findInlineEmailImage } from "./email/assets";
 import { fetchUnreadImap } from "./email/imap";
 import { fetchUnreadPop3 } from "./email/pop3";
 import { isProcessorRunning, processMailboxes } from "./email/processor";
@@ -77,6 +78,7 @@ function emailListItem(email: ReturnType<typeof readState>["emails"][number]) {
 
 function buildDashboard(mailboxId?: string) {
   const state = readState();
+  const allEmails = state.emails;
   const emails = state.emails.filter((email) => !mailboxId || mailboxId === "all" || email.mailboxId === mailboxId);
   const counts: Record<MailCategory, number> = {
     important: 0,
@@ -97,6 +99,7 @@ function buildDashboard(mailboxId?: string) {
     mailboxes: state.mailboxes.map(publicMailbox),
     counts,
     total: emails.length,
+    allTotal: allEmails.length,
     recentEmails: emails.slice(0, 8).map(emailListItem),
     runs: state.runs.slice(0, 10),
     processorRunning: isProcessorRunning(),
@@ -260,6 +263,52 @@ router.get(
     });
 
     res.json(emails.map(emailListItem));
+  })
+);
+
+function sendImageAsset(res: express.Response, asset: { content: Buffer; contentType: string }) {
+  res.setHeader("Content-Type", asset.contentType);
+  res.setHeader("Content-Length", asset.content.length);
+  res.setHeader("Cache-Control", "private, max-age=86400");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.end(asset.content);
+}
+
+router.get(
+  "/email-assets/image",
+  asyncRoute(async (req, res) => {
+    const url = String(req.query.url || "");
+    if (!url) {
+      res.status(400).json({ error: "缺少图片地址" });
+      return;
+    }
+
+    sendImageAsset(res, await fetchRemoteEmailImage(url));
+  })
+);
+
+router.get(
+  "/emails/:id/inline-image",
+  asyncRoute(async (req, res) => {
+    const email = readState().emails.find((item) => item.id === req.params.id);
+    if (!email) {
+      res.status(404).json({ error: "邮件不存在" });
+      return;
+    }
+
+    const cid = String(req.query.cid || "");
+    if (!cid) {
+      res.status(400).json({ error: "缺少内嵌图片 ID" });
+      return;
+    }
+
+    const asset = await findInlineEmailImage(email, cid);
+    if (!asset) {
+      res.status(404).json({ error: "内嵌图片不存在" });
+      return;
+    }
+
+    sendImageAsset(res, asset);
   })
 );
 

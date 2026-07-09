@@ -115,6 +115,18 @@ export type FetchedPopEmail = {
   markRead: () => Promise<{ marked: boolean; note?: string }>;
 };
 
+export async function countUnreadPop3(mailbox: Mailbox, limit: number): Promise<number> {
+  const client = new Pop3Client(mailbox);
+
+  await client.connect();
+  try {
+    const refs = await client.listUidl();
+    return Math.min(refs.filter((ref) => !hasProcessed(mailbox.id, ref.uid)).length, limit);
+  } finally {
+    await client.quit();
+  }
+}
+
 export async function fetchUnreadPop3(mailbox: Mailbox, limit: number): Promise<FetchedPopEmail[]> {
   const client = new Pop3Client(mailbox);
   const results: FetchedPopEmail[] = [];

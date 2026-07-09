@@ -91,6 +91,20 @@ export async function fetchUnreadImap(mailbox: Mailbox, limit: number): Promise<
   return results;
 }
 
+export async function countUnreadImap(mailbox: Mailbox, limit: number): Promise<number> {
+  const client = createImapClient(mailbox);
+
+  await client.connect();
+  const lock = await client.getMailboxLock(mailbox.folder || "INBOX", { acquireTimeout: 15000 });
+  try {
+    const unseen = (await client.search({ seen: false }, { uid: true })) || [];
+    return Math.min(unseen.length, limit);
+  } finally {
+    lock.release();
+    await client.logout();
+  }
+}
+
 export async function fetchInterruptedImapRecovery(mailbox: Mailbox, options: {
   afterUid: number;
   uidWindow?: number;
