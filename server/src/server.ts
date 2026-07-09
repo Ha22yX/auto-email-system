@@ -5,7 +5,7 @@ import express from "express";
 import router from "./routes";
 import { startProcessingWorker } from "./email/processor";
 import {
-  demoteEducationMarketingEmails,
+  demotePromotionalAndNewsEmails,
   hasInterruptedRecoveryRetry,
   markInterruptedRuns,
   promoteFinancialRecordEmails,
@@ -32,7 +32,7 @@ app.get(/.*/, (_req, res) => {
 app.listen(port, () => {
   promoteFinancialRecordEmails();
   repairSchoolPriorityPromotions();
-  demoteEducationMarketingEmails();
+  demotePromotionalAndNewsEmails();
   promoteSchoolPriorityEmails();
   const retryInterruptedRecovery = hasInterruptedRecoveryRetry();
   const interruptedCount = markInterruptedRuns();

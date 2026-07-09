@@ -3,7 +3,7 @@ import type { AiSettings, ClassificationResult, IncomingEmail, MailCategory } fr
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
 
 const systemPrompt =
-  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同、学校/老师联系、课程作业、成绩、考勤、会议或明确截止时间。来自学校官方域名、老师、advisor、counselor、faculty、principal、dean，或明显是用户本人学校事务且和用户有关的邮件，必须归为 important。普通大学招生广告、教育机构推广、私校广告、college search、open house、gift card 这类营销邮件，不要因为包含 school、college、education 就标 important，除非它来自用户学校官方或老师并需要用户处理。secondary 表示值得阅读但无需立刻行动，付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等财务记录至少必须归为 secondary，不能归为 ignore。ignore 只用于营销、订阅推广、社交提醒或明显无需留档的低价值通知。";
+  "你是一个可靠的中文邮件助理。请判断邮件重要程度并输出严格 JSON。分类只能是 important、secondary、ignore。important 表示需要用户处理、回复、付款、确认、安全风险、合同、老师/学校联系、课程作业、成绩、考勤、会议或明确截止时间。只有真正来自老师、advisor、counselor、faculty、principal、dean、教务等，并且和用户本人学校事务有关的邮件，才归为 important。任何推广邮件、招生广告、教育机构推广、私校广告、college search、open house、gift card、visit campus、newsletter、news、digest、新闻摘要、品牌宣传、活动宣传、促销折扣都必须归为 ignore，不要因为包含 school、college、education 或截止时间就标 important。secondary 表示值得阅读但无需立刻行动，付款成功回执、扣款确认、AutoPay confirmation、收据、账单记录、订单确认、订阅续费确认等财务记录至少必须归为 secondary，不能归为 ignore。";
 
 function compactEmail(email: IncomingEmail) {
   const body = email.originalText || email.rawSource || "";
@@ -22,8 +22,8 @@ function userPrompt(email: IncomingEmail) {
     "请用中文整理并分类这封邮件。",
     "只输出一个 JSON 对象，不要 Markdown，不要解释。",
     "JSON 字段必须是：category, summaryZh, reasonZh, actionItemsZh。",
-    "注意：学校官方、老师、advisor、counselor、faculty、principal、dean 发来的邮件，或涉及课程、作业、成绩、考勤、会议、学校活动、学校截止时间并和用户有关的邮件，必须标为 important。",
-    "注意：大学招生、教育机构广告、私校推广、college search、open house、gift card、visit campus 等营销邮件，如果不是来自用户学校官方或老师，不要标为 important。",
+    "注意：老师、advisor、counselor、faculty、principal、dean、教务等发来的，并且涉及课程、作业、成绩、考勤、会议、提交、确认、回复等用户本人学校事务的邮件，必须标为 important。",
+    "注意：任何推广、招生广告、教育机构广告、私校推广、college search、open house、gift card、visit campus、newsletter、news、digest、新闻摘要、品牌宣传、活动宣传、促销折扣，都必须标为 ignore，不要因为有截止时间或 school/college/education 字样就标为 important。",
     "注意：付款成功、扣款确认、AutoPay confirmation、收据、账单记录、订单确认等财务留档邮件，即使不需要操作，也必须标为 secondary，不能标为 ignore。",
     "",
     compactEmail(email)
@@ -206,6 +206,12 @@ function isSchoolPriorityEmail(email: IncomingEmail) {
     "sign",
     "submit",
     "register",
+    "please",
+    "schedule",
+    "meeting",
+    "conference",
+    "appointment",
+    "required",
     "请回复",
     "需要回复",
     "需要处理",
@@ -215,17 +221,42 @@ function isSchoolPriorityEmail(email: IncomingEmail) {
     "确认",
     "提交",
     "报名",
-    "签字"
+    "签字",
+    "安排",
+    "会议",
+    "必须"
   ];
 
-  if (senderIsKnownSchool || includesAny(from, directSchoolSenderTerms)) return true;
+  if (isPromotionalOrNewsEmail(email)) return false;
+  if (includesAny(from, directSchoolSenderTerms)) return true;
+  if (senderIsKnownSchool) return includesAny(text, schoolContextTerms) || includesAny(text, directActionTerms);
   if (!messageIsForSchoolMailbox) return false;
   return includesAny(text, schoolContextTerms) && includesAny(text, directActionTerms);
 }
 
-function isEducationMarketingEmail(email: IncomingEmail) {
+function isPromotionalOrNewsEmail(email: IncomingEmail) {
   const text = emailText(email);
   return includesAny(text, [
+    "promotion",
+    "promotional",
+    "marketing",
+    "advertisement",
+    "sponsored",
+    "sale",
+    "discount",
+    "deal",
+    "offer",
+    "coupon",
+    "limited time",
+    "unsubscribe",
+    "newsletter",
+    "news",
+    "digest",
+    "weekly update",
+    "daily update",
+    "headlines",
+    "latest stories",
+    "press release",
     "admissions",
     "admission",
     "apply now",
@@ -242,18 +273,43 @@ function isEducationMarketingEmail(email: IncomingEmail) {
     "prospective student",
     "unsubscribe",
     "newsletter",
+    "推广",
+    "营销",
+    "广告",
+    "促销",
+    "折扣",
+    "优惠",
+    "限时",
+    "退订",
+    "新闻",
+    "资讯",
+    "简报",
+    "周报",
+    "日报",
+    "摘要",
+    "头条",
+    "品牌宣传",
+    "活动宣传",
     "招生",
     "申请入学",
     "校园参观",
     "开放日",
     "教育推广",
     "教育广告",
-    "礼品卡",
-    "退订"
+    "礼品卡"
   ]);
 }
 
 function normalizeBusinessRules(email: IncomingEmail, result: ClassificationResult): ClassificationResult {
+  if (isPromotionalOrNewsEmail(email) && !isFinancialRecordEmail(email)) {
+    return {
+      ...result,
+      category: "ignore",
+      reasonZh: `${result.reasonZh} 这封邮件命中推广、招生、新闻简报或营销规则，系统要求归为不用管。`,
+      actionItemsZh: []
+    };
+  }
+
   if (result.category !== "important" && isSchoolPriorityEmail(email)) {
     return {
       ...result,
@@ -262,15 +318,6 @@ function normalizeBusinessRules(email: IncomingEmail, result: ClassificationResu
       actionItemsZh: result.actionItemsZh.length
         ? result.actionItemsZh
         : ["优先打开原件确认是否需要回复、提交材料、参加会议或完成学校相关事项。"]
-    };
-  }
-
-  if (result.category === "important" && !isSchoolPriorityEmail(email) && isEducationMarketingEmail(email)) {
-    return {
-      ...result,
-      category: "ignore",
-      reasonZh: `${result.reasonZh} 这封邮件属于招生、教育机构或私校推广类营销邮件，并非来自用户学校官方或老师，不应归为重要。`,
-      actionItemsZh: []
     };
   }
 
@@ -288,6 +335,7 @@ function normalizeBusinessRules(email: IncomingEmail, result: ClassificationResu
 function heuristicClassify(email: IncomingEmail): ClassificationResult {
   const haystack = emailText(email);
   const financialRecordHit = isFinancialRecordEmail(email);
+  const promotionalOrNewsHit = isPromotionalOrNewsEmail(email);
   const schoolPriorityHit = isSchoolPriorityEmail(email);
   const importantWords = [
     "contract",
@@ -335,12 +383,22 @@ function heuristicClassify(email: IncomingEmail): ClassificationResult {
   const importantHit = importantWords.some((word) => haystack.includes(word));
   const ignoreHit = ignoreWords.some((word) => haystack.includes(word));
   const category: MailCategory =
-    importantHit || schoolPriorityHit ? "important" : financialRecordHit ? "secondary" : ignoreHit ? "ignore" : "secondary";
+    promotionalOrNewsHit && !financialRecordHit
+      ? "ignore"
+      : importantHit || schoolPriorityHit
+        ? "important"
+        : financialRecordHit
+          ? "secondary"
+          : ignoreHit
+            ? "ignore"
+            : "secondary";
 
   return {
     category,
     summaryZh: `来自 ${email.fromName || email.fromAddress || "未知发件人"} 的邮件，主题为“${email.subject || "无主题"}”。当前未配置可用 AI Key，系统使用规则兜底完成分类。`,
-    reasonZh: schoolPriorityHit
+    reasonZh: promotionalOrNewsHit && !financialRecordHit
+      ? "邮件命中推广、招生广告、新闻简报或营销类信号，应归为不用管。"
+      : schoolPriorityHit
       ? "邮件命中学校/老师/课程事务规则，属于需要优先查看的学校相关邮件。"
       : importantHit
       ? "邮件包含安全、会议、截止时间、失败付款或需要操作等高优先级信号。"

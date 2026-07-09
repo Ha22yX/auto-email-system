@@ -231,6 +231,12 @@ function isSchoolPriorityEmail(email: ProcessedEmail) {
     "sign",
     "submit",
     "register",
+    "please",
+    "schedule",
+    "meeting",
+    "conference",
+    "appointment",
+    "required",
     "请回复",
     "需要回复",
     "需要处理",
@@ -240,10 +246,15 @@ function isSchoolPriorityEmail(email: ProcessedEmail) {
     "确认",
     "提交",
     "报名",
-    "签字"
+    "签字",
+    "安排",
+    "会议",
+    "必须"
   ];
 
-  if (senderIsKnownSchool || includesAny(from, directSchoolSenderTerms)) return true;
+  if (isPromotionalOrNewsEmail(email)) return false;
+  if (includesAny(from, directSchoolSenderTerms)) return true;
+  if (senderIsKnownSchool) return includesAny(text, schoolContextTerms) || includesAny(text, directActionTerms);
   if (!messageIsForSchoolMailbox) return false;
   return includesAny(text, schoolContextTerms) && includesAny(text, directActionTerms);
 }
@@ -269,9 +280,29 @@ function isLikelyIgnorableEmail(email: ProcessedEmail) {
   ]);
 }
 
-function isEducationMarketingEmail(email: ProcessedEmail) {
+function isPromotionalOrNewsEmail(email: ProcessedEmail) {
   const text = processedEmailText(email);
   return includesAny(text, [
+    "promotion",
+    "promotional",
+    "marketing",
+    "advertisement",
+    "sponsored",
+    "sale",
+    "discount",
+    "deal",
+    "offer",
+    "coupon",
+    "limited time",
+    "unsubscribe",
+    "newsletter",
+    "news",
+    "digest",
+    "weekly update",
+    "daily update",
+    "headlines",
+    "latest stories",
+    "press release",
     "admissions",
     "admission",
     "apply now",
@@ -286,16 +317,30 @@ function isEducationMarketingEmail(email: ProcessedEmail) {
     "enroll",
     "enrollment",
     "prospective student",
-    "unsubscribe",
-    "newsletter",
+    "推广",
+    "营销",
+    "广告",
+    "促销",
+    "折扣",
+    "优惠",
+    "限时",
+    "退订",
+    "新闻",
+    "资讯",
+    "简报",
+    "周报",
+    "日报",
+    "摘要",
+    "头条",
+    "品牌宣传",
+    "活动宣传",
     "招生",
     "申请入学",
     "校园参观",
     "开放日",
     "教育推广",
     "教育广告",
-    "礼品卡",
-    "退订"
+    "礼品卡"
   ]);
 }
 
@@ -502,14 +547,14 @@ export function repairSchoolPriorityPromotions() {
   return repairedCount;
 }
 
-export function demoteEducationMarketingEmails() {
+export function demotePromotionalAndNewsEmails() {
   let demotedCount = 0;
   updateState((draft) => {
     for (const email of draft.emails) {
-      if (email.category === "important" && !isSchoolPriorityEmail(email) && isEducationMarketingEmail(email)) {
+      if (email.category !== "ignore" && !isFinancialRecordEmail(email) && isPromotionalOrNewsEmail(email)) {
         demotedCount += 1;
         email.category = "ignore";
-        email.reasonZh = `${email.reasonZh} 系统规则更新：招生、教育机构或私校推广类营销邮件不来自用户学校官方或老师时，不归为重要。`;
+        email.reasonZh = `${email.reasonZh} 系统规则更新：推广、招生、新闻简报或营销类邮件归为不用管。`;
         email.actionItemsZh = [];
       }
     }
