@@ -188,23 +188,36 @@ function emailApiPath(path: string) {
   return `${API_BASE}${path}`;
 }
 
-function proxiedRemoteImageUrl(value: string) {
-  return emailApiPath(`/api/email-assets/image?url=${encodeURIComponent(value)}`);
+function proxiedRemoteImageUrl(value: string, emailId: string, token: string) {
+  const params = new URLSearchParams({ emailId, token, url: value });
+  return emailApiPath(`/api/email-assets/image?${params.toString()}`);
 }
 
-function inlineImageUrl(emailId: string, cid: string) {
-  return emailApiPath(`/api/emails/${encodeURIComponent(emailId)}/inline-image?cid=${encodeURIComponent(cid)}`);
+function inlineImageUrl(emailId: string, cid: string, token: string) {
+  const params = new URLSearchParams({ cid, token });
+  return emailApiPath(`/api/emails/${encodeURIComponent(emailId)}/inline-image?${params.toString()}`);
 }
 
-function rewriteEmailImageSource(value: string, options: { emailId?: string; loadRemoteImages: boolean }) {
+function rewriteEmailImageSource(
+  value: string,
+  options: { emailId?: string; assetToken?: string; loadRemoteImages: boolean }
+) {
   if (/^data:image\/(?:png|jpe?g|gif|webp|avif);base64,/i.test(value)) return value;
-  if (/^cid:/i.test(value) && options.emailId) return inlineImageUrl(options.emailId, value.replace(/^cid:/i, ""));
-  if (options.loadRemoteImages && /^\/\//.test(value)) return proxiedRemoteImageUrl(`https:${value}`);
-  if (options.loadRemoteImages && /^https?:\/\//i.test(value)) return proxiedRemoteImageUrl(value);
+  if (!options.emailId || !options.assetToken) return "";
+  if (/^cid:/i.test(value)) return inlineImageUrl(options.emailId, value.replace(/^cid:/i, ""), options.assetToken);
+  if (options.loadRemoteImages && /^\/\//.test(value)) {
+    return proxiedRemoteImageUrl(`https:${value}`, options.emailId, options.assetToken);
+  }
+  if (options.loadRemoteImages && /^https?:\/\//i.test(value)) {
+    return proxiedRemoteImageUrl(value, options.emailId, options.assetToken);
+  }
   return "";
 }
 
-function postProcessEmailHtml(html: string, options: { emailId?: string; loadRemoteImages: boolean }) {
+function postProcessEmailHtml(
+  html: string,
+  options: { emailId?: string; assetToken?: string; loadRemoteImages: boolean }
+) {
   const template = document.createElement("template");
   template.innerHTML = html;
 
@@ -257,7 +270,10 @@ function textToSafeHtml(text: string) {
   return `<pre class="plain-email">${escapeHtml(text || "无可展示原文。")}</pre>`;
 }
 
-function createSafeEmailSrcDoc(sourceHtml: string, options: { emailId?: string; loadRemoteImages: boolean }) {
+function createSafeEmailSrcDoc(
+  sourceHtml: string,
+  options: { emailId?: string; assetToken?: string; loadRemoteImages: boolean }
+) {
   const sanitized = DOMPurify.sanitize(sourceHtml, {
     USE_PROFILES: { html: true },
     FORBID_TAGS: blockedEmailTags,
@@ -1092,6 +1108,7 @@ function EmailDetail({
 
     return createSafeEmailSrcDoc(sourceHtml, {
       emailId: detail.id,
+      assetToken: detail.assetToken,
       loadRemoteImages: loadImages
     });
   }, [detail, originalSource, loadImages]);

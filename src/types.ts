@@ -78,6 +78,7 @@ export type EmailListItem = {
 export type ProcessedEmail = EmailListItem & {
   messageId?: string;
   toText?: string;
+  assetToken?: string;
   originalText: string;
   originalHtml?: string;
   rawSource?: string;

@@ -1,4 +1,5 @@
 import express from "express";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { classifyEmail } from "./ai";
 import { clearAuthCookie, isAuthenticated, requireAuth, setAuthCookie } from "./auth";
@@ -33,6 +34,7 @@ import {
 import type { MailCategory } from "./types";
 
 const router = express.Router();
+const EMAIL_ASSET_TOKEN_TTL_SECONDS = 6 * 60 * 60;
 
 const mailboxSchema = z.object({
   id: z.string().optional(),
@@ -134,8 +136,69 @@ function emailListItem(email: ReturnType<typeof readState>["emails"][number]) {
 function emailDetailItem(email: ReturnType<typeof readState>["emails"][number]) {
   return {
     ...email,
-    panelRead: email.panelRead ?? email.category === "ignore"
+    panelRead: email.panelRead ?? email.category === "ignore",
+    assetToken: createEmailAssetToken(email.id)
   };
+}
+
+function base64Url(value: Buffer | string) {
+  return Buffer.from(value).toString("base64url");
+}
+
+function fromBase64Url(value: string) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+
+function emailAssetSigningKey() {
+  const auth = readState().settings.auth;
+  return `${auth.passwordHash}.${auth.passwordSalt}.${auth.passwordIterations}`;
+}
+
+function signEmailAssetPayload(payload: string) {
+  return createHmac("sha256", emailAssetSigningKey()).update(payload).digest("base64url");
+}
+
+function createEmailAssetToken(emailId: string) {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = base64Url(
+    JSON.stringify({
+      emailId,
+      exp: now + EMAIL_ASSET_TOKEN_TTL_SECONDS
+    })
+  );
+  return `${payload}.${signEmailAssetPayload(payload)}`;
+}
+
+function verifyEmailAssetToken(emailId: string, token: string) {
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature) return false;
+
+  const expectedSignature = signEmailAssetPayload(payload);
+  const expected = Buffer.from(expectedSignature, "base64url");
+  const actual = Buffer.from(signature, "base64url");
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return false;
+
+  try {
+    const parsed = JSON.parse(fromBase64Url(payload)) as { emailId?: string; exp?: number };
+    return parsed.emailId === emailId && Boolean(parsed.exp && parsed.exp >= Math.floor(Date.now() / 1000));
+  } catch {
+    return false;
+  }
+}
+
+function authorizeEmailAsset(req: express.Request, res: express.Response, emailId: string) {
+  const token = String(req.query.token || "");
+  if (!emailId || !verifyEmailAssetToken(emailId, token)) {
+    res.status(401).json({ error: "图片访问令牌无效或已过期。" });
+    return null;
+  }
+
+  const email = readState().emails.find((item) => item.id === emailId);
+  if (!email) {
+    res.status(404).json({ error: "邮件不存在。" });
+    return null;
+  }
+  return email;
 }
 
 function buildDashboard(mailboxId?: string) {
@@ -222,6 +285,44 @@ router.post(
   asyncRoute((req, res) => {
     clearAuthCookie(req, res);
     res.json({ authenticated: false });
+  })
+);
+
+router.get(
+  "/email-assets/image",
+  asyncRoute(async (req, res) => {
+    const emailId = String(req.query.emailId || "");
+    if (!authorizeEmailAsset(req, res, emailId)) return;
+
+    const url = String(req.query.url || "");
+    if (!url) {
+      res.status(400).json({ error: "缺少图片地址。" });
+      return;
+    }
+
+    sendImageAsset(res, await fetchRemoteEmailImage(url));
+  })
+);
+
+router.get(
+  "/emails/:id/inline-image",
+  asyncRoute(async (req, res) => {
+    const email = authorizeEmailAsset(req, res, String(req.params.id));
+    if (!email) return;
+
+    const cid = String(req.query.cid || "");
+    if (!cid) {
+      res.status(400).json({ error: "缺少内嵌图片 ID。" });
+      return;
+    }
+
+    const asset = await findInlineEmailImage(email, cid);
+    if (!asset) {
+      res.status(404).json({ error: "内嵌图片不存在。" });
+      return;
+    }
+
+    sendImageAsset(res, asset);
   })
 );
 
