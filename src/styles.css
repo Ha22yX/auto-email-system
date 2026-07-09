@@ -1494,7 +1494,8 @@ body.resizing-detail iframe {
   gap: 12px 14px;
 }
 
-.form-grid label {
+.form-grid label,
+.mailbox-field-grid label {
   display: grid;
   gap: 7px;
   color: var(--muted);
@@ -1503,7 +1504,9 @@ body.resizing-detail iframe {
 }
 
 .form-grid input,
-.form-grid select {
+.form-grid select,
+.mailbox-field-grid input,
+.mailbox-field-grid select {
   width: 100%;
   min-height: 42px;
   border: 1px solid var(--line);
@@ -1521,13 +1524,17 @@ body.resizing-detail iframe {
 
 .form-grid input:focus,
 .form-grid select:focus,
+.mailbox-field-grid input:focus,
+.mailbox-field-grid select:focus,
 .search-box:focus-within {
   border-color: rgb(32 90 75 / 0.7);
   box-shadow: 0 0 0 4px rgb(32 90 75 / 0.1);
 }
 
 .form-grid input:disabled,
-.form-grid select:disabled {
+.form-grid select:disabled,
+.mailbox-field-grid input:disabled,
+.mailbox-field-grid select:disabled {
   background: rgb(235 237 231 / 0.62);
   color: #8a9188;
   cursor: not-allowed;
@@ -1697,7 +1704,7 @@ body.resizing-detail iframe {
 }
 
 .mailbox-connection-grid {
-  grid-template-columns: 150px minmax(220px, 1fr) 120px minmax(150px, 0.75fr);
+  grid-template-columns: minmax(150px, 0.5fr) minmax(260px, 1.4fr) minmax(120px, 0.45fr) minmax(180px, 0.75fr);
   align-items: end;
 }
 
