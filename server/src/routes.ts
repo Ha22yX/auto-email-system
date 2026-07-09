@@ -1,5 +1,6 @@
 import express from "express";
 import { z } from "zod";
+import { classifyEmail } from "./ai";
 import { fetchUnreadImap } from "./email/imap";
 import { fetchUnreadPop3 } from "./email/pop3";
 import { isProcessorRunning, processMailboxes } from "./email/processor";
@@ -127,6 +128,45 @@ router.put(
   asyncRoute((req, res) => {
     const parsed = aiSchema.parse(req.body);
     res.json(publicAiSettings(updateAiSettings(parsed)));
+  })
+);
+
+router.post(
+  "/settings/ai/test",
+  asyncRoute(async (req, res) => {
+    const parsed = aiSchema.parse(req.body);
+    const saved = readState().settings.ai;
+    const settings = {
+      ...parsed,
+      apiKey: parsed.apiKey || saved.apiKey
+    };
+
+    if (!settings.apiKey.trim()) {
+      res.status(400).json({ error: "请输入 API Key 后再测试。" });
+      return;
+    }
+
+    const result = await classifyEmail(
+      {
+        mailboxId: "test",
+        externalUid: "test",
+        subject: "测试邮件：明天下午三点确认合同",
+        fromName: "系统测试",
+        fromAddress: "test@example.com",
+        toText: "me@example.com",
+        receivedAt: new Date().toISOString(),
+        originalText:
+          "这是一封用于测试 AI API 连通性的邮件。请判断它是否重要，并用中文返回简短概况。"
+      },
+      settings,
+      { timeoutMs: 20000 }
+    );
+
+    res.json({
+      ok: true,
+      message: `AI API 测试成功，模型返回分类：${result.category}`,
+      result
+    });
   })
 );
 

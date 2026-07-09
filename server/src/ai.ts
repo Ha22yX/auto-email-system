@@ -93,13 +93,33 @@ function heuristicClassify(email: IncomingEmail): ClassificationResult {
   };
 }
 
-export async function classifyEmail(email: IncomingEmail, settings: AiSettings): Promise<ClassificationResult> {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("AI 请求超时，请检查 Base URL、网络或模型名称。");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function classifyEmail(
+  email: IncomingEmail,
+  settings: AiSettings,
+  options: { timeoutMs?: number } = {}
+): Promise<ClassificationResult> {
   if (!settings.apiKey.trim()) {
     return heuristicClassify(email);
   }
 
   const baseUrl = settings.baseUrl.replace(/\/+$/, "");
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${settings.apiKey}`,
@@ -121,7 +141,7 @@ export async function classifyEmail(email: IncomingEmail, settings: AiSettings):
         }
       ]
     })
-  });
+  }, options.timeoutMs ?? 90000);
 
   if (!response.ok) {
     const detail = await response.text();

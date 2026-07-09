@@ -440,6 +440,19 @@ function SettingsPanel({
     }
   }
 
+  async function testAi() {
+    if (!aiForm) return;
+    setSaving(true);
+    try {
+      const result = await api.testAi(aiForm);
+      setToast(result.message);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveSystem() {
     if (!systemForm) return;
     setSaving(true);
@@ -544,10 +557,16 @@ function SettingsPanel({
                   onChange={(event) => setAiForm({ ...aiForm, apiKey: event.target.value })}
                 />
               </label>
-              <button className="secondary-button full-span" disabled={saving} onClick={saveAi}>
-                <FloppyDisk size={18} />
-                保存 AI 设置
-              </button>
+              <div className="form-actions full-span">
+                <button className="ghost-button" disabled={saving} onClick={testAi}>
+                  <Plugs size={18} />
+                  测试 AI API
+                </button>
+                <button className="secondary-button" disabled={saving} onClick={saveAi}>
+                  <FloppyDisk size={18} />
+                  保存 AI 设置
+                </button>
+              </div>
             </div>
           )}
         </div>

@@ -47,6 +47,12 @@ export const api = {
       body: JSON.stringify(settings)
     });
   },
+  testAi(settings: AiSettings) {
+    return request<{ ok: boolean; message: string }>("/api/settings/ai/test", {
+      method: "POST",
+      body: JSON.stringify(settings)
+    });
+  },
   updateSystem(settings: SystemSettings) {
     return request<SystemSettings>("/api/settings/system", {
       method: "PUT",
