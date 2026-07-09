@@ -1279,13 +1279,13 @@ body.resizing-detail iframe {
 }
 
 .detail-switch-indicator {
-  position: sticky;
-  top: 0;
+  position: absolute;
+  top: 18px;
+  right: 20px;
   z-index: 3;
   display: block;
   width: 72px;
   height: 3px;
-  margin: -6px 0 10px auto;
   overflow: hidden;
   border-radius: 999px;
   background: rgb(32 90 75 / 0.1);
@@ -1311,10 +1311,8 @@ body.resizing-detail iframe {
 }
 
 .detail-panel.empty .detail-switch-indicator {
-  position: absolute;
   top: 14px;
   right: 20px;
-  margin: 0;
 }
 
 .detail-header {
