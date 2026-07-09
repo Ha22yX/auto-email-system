@@ -14,7 +14,14 @@ type RateBucket = {
 const loginAttempts = new Map<string, LoginAttempt>();
 const apiBuckets = new Map<string, RateBucket>();
 
-const trustedDevHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+const trustedHosts = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "147.189.128.208",
+  "mail.rosebeg.com"
+]);
+
 const extraAllowedOrigins = new Set(
   (process.env.ALLOWED_ORIGINS || "")
     .split(",")
@@ -26,6 +33,10 @@ function now() {
   return Date.now();
 }
 
+function normalizeHost(value: string) {
+  return value.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "").split(":")[0];
+}
+
 function clientKey(req: express.Request) {
   return req.ip || String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "unknown";
 }
@@ -34,15 +45,25 @@ function requestOrigin(req: express.Request) {
   return String(req.headers.origin || "").trim();
 }
 
+function requestHosts(req: express.Request) {
+  return [
+    String(req.headers.host || ""),
+    String(req.headers["x-forwarded-host"] || "").split(",")[0]
+  ]
+    .map(normalizeHost)
+    .filter(Boolean);
+}
+
 function sameSiteOrigin(req: express.Request, origin: string) {
   try {
     const parsed = new URL(origin);
-    const host = String(req.headers.host || "");
-    const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
-    const protocol = forwardedProto || req.protocol;
-    const expected = `${protocol}://${host}`;
-    if (parsed.origin === expected) return true;
-    return trustedDevHosts.has(parsed.hostname) && trustedDevHosts.has(host.split(":")[0]);
+    if (extraAllowedOrigins.has(parsed.origin)) return true;
+
+    const originHost = normalizeHost(parsed.hostname);
+    const hosts = requestHosts(req);
+    if (hosts.includes(originHost)) return true;
+
+    return trustedHosts.has(originHost) && hosts.some((host) => trustedHosts.has(host));
   } catch {
     return false;
   }
@@ -85,7 +106,7 @@ export function corsOrigin(origin: string | undefined, callback: (error: Error |
   }
   try {
     const parsed = new URL(origin);
-    if (extraAllowedOrigins.has(parsed.origin) || trustedDevHosts.has(parsed.hostname)) {
+    if (extraAllowedOrigins.has(parsed.origin) || trustedHosts.has(normalizeHost(parsed.hostname))) {
       callback(null, true);
       return;
     }
