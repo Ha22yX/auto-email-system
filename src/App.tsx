@@ -1981,113 +1981,143 @@ function SettingsPanel({
             </div>
             <Plus size={22} />
           </div>
-          <div className="form-grid mailbox-form">
-            <label>
-              名称
-              <input
-                value={mailboxForm.name || ""}
-                onChange={(event) => setMailboxForm({ ...mailboxForm, name: event.target.value })}
-              />
-            </label>
-            <label>
-              邮箱地址
-              <input
-                value={mailboxForm.email || ""}
-                onChange={(event) => setMailboxForm({ ...mailboxForm, email: event.target.value })}
-              />
-            </label>
-            <label>
-              协议
-              <select
-                value={mailboxForm.protocol || "imap"}
-                onChange={(event) => {
-                  const protocol = event.target.value as "imap" | "pop3";
-                  setMailboxForm({
-                    ...mailboxForm,
-                    protocol,
-                    port: protocol === "imap" ? 993 : 995,
-                    folder: protocol === "imap" ? mailboxForm.folder || "INBOX" : ""
-                  });
-                }}
-              >
-                <option value="imap">IMAP</option>
-                <option value="pop3">POP3</option>
-              </select>
-            </label>
-            <label>
-              主机
-              <input
-                placeholder="imap.example.com"
-                value={mailboxForm.host || ""}
-                onChange={(event) => setMailboxForm({ ...mailboxForm, host: event.target.value })}
-              />
-            </label>
-            <label>
-              端口
-              <input
-                type="number"
-                value={mailboxForm.port || ""}
-                onChange={(event) => setMailboxForm({ ...mailboxForm, port: Number(event.target.value) })}
-              />
-            </label>
-            <label>
-              文件夹
-              <input
-                disabled={mailboxForm.protocol === "pop3"}
-                value={mailboxForm.folder || ""}
-                onChange={(event) => setMailboxForm({ ...mailboxForm, folder: event.target.value })}
-              />
-            </label>
-            <label>
-              用户名
-              <input
-                value={mailboxForm.username || ""}
-                onChange={(event) => setMailboxForm({ ...mailboxForm, username: event.target.value })}
-              />
-            </label>
-            <label>
-              密码或授权码
-              <input
-                type="password"
-                value={mailboxForm.password || ""}
-                placeholder={mailboxForm.hasPassword ? "已保存，留空不修改" : "输入密码或授权码"}
-                onChange={(event) => setMailboxForm({ ...mailboxForm, password: event.target.value })}
-              />
-            </label>
-            <label className="switch-row">
-              <span>
-                <strong>SSL/TLS</strong>
-                <small>推荐开启</small>
-              </span>
-              <input
-                type="checkbox"
-                checked={Boolean(mailboxForm.secure)}
-                onChange={(event) => setMailboxForm({ ...mailboxForm, secure: event.target.checked })}
-              />
-            </label>
-            <label className="switch-row">
-              <span>
-                <strong>启用</strong>
-                <small>自动处理此邮箱</small>
-              </span>
-              <input
-                type="checkbox"
-                checked={Boolean(mailboxForm.enabled)}
-                onChange={(event) => setMailboxForm({ ...mailboxForm, enabled: event.target.checked })}
-              />
-            </label>
-            <div className="form-actions full-span">
-              <button className="secondary-button" disabled={saving} onClick={saveMailbox}>
-                <FloppyDisk size={18} />
-                保存邮箱
-              </button>
-              {mailboxForm.id && (
-                <button className="ghost-button" onClick={() => setMailboxForm(emptyMailbox)}>
-                  <X size={18} />
-                  取消编辑
+          <div className="mailbox-form-shell">
+            <section className="mailbox-form-section">
+              <div className="mailbox-form-section-head">
+                <span>
+                  <EnvelopeSimple size={18} />
+                </span>
+                <div>
+                  <h3>账户信息</h3>
+                  <p>填写显示名称、登录账号和授权码。</p>
+                </div>
+              </div>
+              <div className="mailbox-field-grid mailbox-account-grid">
+                <label>
+                  名称
+                  <input
+                    value={mailboxForm.name || ""}
+                    onChange={(event) => setMailboxForm({ ...mailboxForm, name: event.target.value })}
+                  />
+                </label>
+                <label>
+                  邮箱地址
+                  <input
+                    value={mailboxForm.email || ""}
+                    onChange={(event) => setMailboxForm({ ...mailboxForm, email: event.target.value })}
+                  />
+                </label>
+                <label>
+                  用户名
+                  <input
+                    value={mailboxForm.username || ""}
+                    onChange={(event) => setMailboxForm({ ...mailboxForm, username: event.target.value })}
+                  />
+                </label>
+                <label>
+                  密码或授权码
+                  <input
+                    type="password"
+                    value={mailboxForm.password || ""}
+                    placeholder={mailboxForm.hasPassword ? "已保存，留空不修改" : "输入密码或授权码"}
+                    onChange={(event) => setMailboxForm({ ...mailboxForm, password: event.target.value })}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="mailbox-form-section">
+              <div className="mailbox-form-section-head">
+                <span>
+                  <Plugs size={18} />
+                </span>
+                <div>
+                  <h3>连接设置</h3>
+                  <p>配置 IMAP/POP3 服务地址和安全连接。</p>
+                </div>
+              </div>
+              <div className="mailbox-field-grid mailbox-connection-grid">
+                <label>
+                  协议
+                  <select
+                    value={mailboxForm.protocol || "imap"}
+                    onChange={(event) => {
+                      const protocol = event.target.value as "imap" | "pop3";
+                      setMailboxForm({
+                        ...mailboxForm,
+                        protocol,
+                        port: protocol === "imap" ? 993 : 995,
+                        folder: protocol === "imap" ? mailboxForm.folder || "INBOX" : ""
+                      });
+                    }}
+                  >
+                    <option value="imap">IMAP</option>
+                    <option value="pop3">POP3</option>
+                  </select>
+                </label>
+                <label>
+                  主机
+                  <input
+                    placeholder="imap.example.com"
+                    value={mailboxForm.host || ""}
+                    onChange={(event) => setMailboxForm({ ...mailboxForm, host: event.target.value })}
+                  />
+                </label>
+                <label>
+                  端口
+                  <input
+                    type="number"
+                    value={mailboxForm.port || ""}
+                    onChange={(event) => setMailboxForm({ ...mailboxForm, port: Number(event.target.value) })}
+                  />
+                </label>
+                <label>
+                  文件夹
+                  <input
+                    disabled={mailboxForm.protocol === "pop3"}
+                    value={mailboxForm.folder || ""}
+                    onChange={(event) => setMailboxForm({ ...mailboxForm, folder: event.target.value })}
+                  />
+                </label>
+                <label className="switch-row mailbox-switch-card">
+                  <span>
+                    <strong>SSL/TLS</strong>
+                    <small>推荐开启</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(mailboxForm.secure)}
+                    onChange={(event) => setMailboxForm({ ...mailboxForm, secure: event.target.checked })}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="mailbox-form-section mailbox-run-section">
+              <label className="switch-row mailbox-switch-card">
+                <span>
+                  <strong>启用邮箱</strong>
+                  <small>开启后自动轮询并处理此邮箱。</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(mailboxForm.enabled)}
+                  onChange={(event) => setMailboxForm({ ...mailboxForm, enabled: event.target.checked })}
+                />
+              </label>
+              <div className="form-actions full-span">
+                <button className="secondary-button" disabled={saving} onClick={saveMailbox}>
+                  <FloppyDisk size={18} />
+                  保存邮箱
                 </button>
-              )}
-            </div>
+                {mailboxForm.id && (
+                  <button className="ghost-button" onClick={() => setMailboxForm(emptyMailbox)}>
+                    <X size={18} />
+                    取消编辑
+                  </button>
+                )}
+              </div>
+            </section>
           </div>
         </div>
 
