@@ -19,6 +19,10 @@ const port = Number(process.env.PORT ?? 8787);
 const app = express();
 
 app.set("trust proxy", true);
+app.use((_req, res, next) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet, noimageindex");
+  next();
+});
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "20mb" }));
 app.use("/api", router);
