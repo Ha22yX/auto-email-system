@@ -442,9 +442,40 @@ body.resizing-detail iframe {
   color: var(--secondary);
 }
 
-.metric-card strong {
+.metric-card > strong {
   font-size: 32px;
   line-height: 1;
+}
+
+.metric-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-count.split {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.metric-count.split b {
+  color: var(--ink);
+  font-size: 32px;
+  font-weight: 760;
+  line-height: 1;
+}
+
+.metric-count.split em {
+  color: var(--soft);
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.metric-count.muted-total {
+  color: var(--soft);
+  font-size: 24px;
+  font-weight: 650;
 }
 
 .metric-card span {
@@ -459,16 +490,38 @@ body.resizing-detail iframe {
 .progress-panel {
   display: grid;
   gap: 10px;
-  margin: 0 0 18px;
+  max-height: 0;
+  margin: 0;
   border: 1px solid var(--line);
+  border-width: 0;
   border-radius: 8px;
   background: rgb(253 252 248 / 0.78);
-  padding: 12px;
+  overflow: hidden;
+  padding: 0 12px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+  transition:
+    max-height 360ms var(--ease),
+    margin 360ms var(--ease),
+    padding 360ms var(--ease),
+    opacity 260ms var(--ease),
+    transform 360ms var(--ease),
+    border-width 360ms var(--ease),
+    border-color 360ms var(--ease),
+    box-shadow 360ms var(--ease);
 }
 
 .progress-panel.active {
   border-color: rgb(32 90 75 / 0.34);
+  border-width: 1px;
+  max-height: 220px;
+  margin: 0 0 18px;
+  padding: 12px;
+  opacity: 1;
+  pointer-events: auto;
   box-shadow: 0 14px 32px rgb(45 55 49 / 0.08);
+  transform: translateY(0);
 }
 
 .progress-heading,
@@ -1373,6 +1426,10 @@ body.resizing-detail iframe {
   .form-grid,
   .progress-grid {
     grid-template-columns: 1fr;
+  }
+
+  .progress-panel.active {
+    max-height: 520px;
   }
 
   .original-heading,

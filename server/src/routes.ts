@@ -99,9 +99,16 @@ function buildDashboard(mailboxId?: string) {
     secondary: 0,
     ignore: 0
   };
+  const unreadCounts: Record<MailCategory, number> = {
+    important: 0,
+    secondary: 0,
+    ignore: 0
+  };
 
   for (const email of emails) {
     counts[email.category] += 1;
+    const panelRead = email.panelRead ?? email.category === "ignore";
+    if (!panelRead) unreadCounts[email.category] += 1;
   }
   const currentRun = state.runs.find((run) => run.status === "running") ?? null;
 
@@ -112,6 +119,7 @@ function buildDashboard(mailboxId?: string) {
     },
     mailboxes: state.mailboxes.map(publicMailbox),
     counts,
+    unreadCounts,
     total: emails.length,
     allTotal: allEmails.length,
     recentEmails: emails.slice(0, 8).map(emailListItem),

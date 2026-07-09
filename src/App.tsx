@@ -70,7 +70,7 @@ const categoryMeta: Record<
 };
 
 function shouldAutoMarkPanelRead(category: MailCategory) {
-  return category === "important" || category === "secondary";
+  return category === "important";
 }
 
 const emptyMailbox: Partial<Mailbox> = {
@@ -387,11 +387,12 @@ function App() {
       if (panelRead) {
         setAutoReadSuppressedId((current) => (current === id ? null : current));
       }
+      void loadDashboard().catch(() => undefined);
       if (!options.silent) {
         setToast(panelRead ? "已标记为系统已读" : "已标记为系统未读");
       }
     },
-    [applyEmailReadState]
+    [applyEmailReadState, loadDashboard]
   );
 
   const openEmailContextMenu = useCallback((event: ReactMouseEvent<HTMLButtonElement>, email: EmailListItem) => {
@@ -404,6 +405,16 @@ function App() {
       panelRead: email.panelRead
     });
   }, []);
+
+  const selectEmail = useCallback(
+    (email: EmailListItem) => {
+      setSelectedEmailId(email.id);
+      if (email.category === "secondary" && !email.panelRead) {
+        void updateEmailReadState(email.id, true, { silent: true }).catch((error) => setToast(error.message));
+      }
+    },
+    [updateEmailReadState]
+  );
 
   useEffect(() => {
     void loadDashboard().catch((error) => setToast(error.message));
@@ -583,6 +594,8 @@ function App() {
                 {(Object.keys(categoryMeta) as MailCategory[]).map((category) => {
                   const Icon = categoryMeta[category].icon;
                   const active = activeCategory === category;
+                  const totalCount = dashboard?.counts[category] ?? 0;
+                  const unreadCount = dashboard?.unreadCounts?.[category] ?? 0;
                   return (
                     <button
                       key={category}
@@ -593,7 +606,14 @@ function App() {
                         <Icon size={22} />
                       </div>
                       <span>{categoryMeta[category].label}</span>
-                      <strong>{dashboard?.counts[category] ?? 0}</strong>
+                      {category === "ignore" ? (
+                        <strong className="metric-count muted-total">{totalCount}</strong>
+                      ) : (
+                        <strong className="metric-count split">
+                          <b>{unreadCount}</b>
+                          <em>/{totalCount}</em>
+                        </strong>
+                      )}
                       <small>{categoryMeta[category].short}</small>
                     </button>
                   );
@@ -634,7 +654,7 @@ function App() {
                       <button
                         key={email.id}
                         className={rowClassName}
-                        onClick={() => setSelectedEmailId(email.id)}
+                        onClick={() => selectEmail(email)}
                         onContextMenu={(event) => openEmailContextMenu(event, email)}
                       >
                         <div className="email-row-top">
@@ -793,7 +813,11 @@ function ProcessingProgress({ run, running }: { run?: ProcessingRun | null; runn
   const currentEmailLabel = run?.currentEmailStep || run?.currentStage || "等待下一封邮件";
 
   return (
-    <section className={running ? "progress-panel active" : "progress-panel"} aria-label="邮件处理进度">
+    <section
+      className={running ? "progress-panel active" : "progress-panel"}
+      aria-hidden={!running}
+      aria-label="邮件处理进度"
+    >
       <div className="progress-heading">
         <div>
           <p className="section-kicker">处理进度</p>

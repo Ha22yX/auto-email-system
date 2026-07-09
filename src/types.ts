@@ -96,6 +96,7 @@ export type Dashboard = {
   };
   mailboxes: Mailbox[];
   counts: Record<MailCategory, number>;
+  unreadCounts: Record<MailCategory, number>;
   total: number;
   allTotal: number;
   recentEmails: EmailListItem[];
