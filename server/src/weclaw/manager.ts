@@ -12,6 +12,7 @@ type WeclawState = {
 };
 
 const state: WeclawState = {};
+let qrLogMode = false;
 const rootDir = path.resolve(process.cwd());
 const toolDir = path.join(rootDir, "tools", "weclaw");
 const logDir = path.join(rootDir, "data");
@@ -38,9 +39,20 @@ function appendLog(source: string, chunk: Buffer | string) {
   fs.mkdirSync(logDir, { recursive: true });
   const text = String(chunk);
   const lines = text
-    .split(/\r?\n/)
+    .split(/\r\n|\n|\r/)
     .filter(Boolean)
-    .map((line) => `[${new Date().toISOString()}] [${source}] ${line}`)
+    .map((line) => {
+      if (line.includes("Scan this QR code with WeChat")) {
+        qrLogMode = true;
+        return `[${new Date().toISOString()}] [${source}] ${line}`;
+      }
+      if (qrLogMode && (line.includes("QR URL:") || line.includes("Waiting for scan"))) {
+        if (line.includes("Waiting for scan")) qrLogMode = false;
+        return `[${new Date().toISOString()}] [${source}] ${line}`;
+      }
+      if (qrLogMode) return line;
+      return `[${new Date().toISOString()}] [${source}] ${line}`;
+    })
     .join("\n");
   if (lines) fs.appendFileSync(logFile, `${lines}\n`, "utf8");
 }
@@ -48,7 +60,7 @@ function appendLog(source: string, chunk: Buffer | string) {
 function readLogTail(lines = 120) {
   if (!fs.existsSync(logFile)) return "";
   const content = fs.readFileSync(logFile, "utf8");
-  return content.split(/\r?\n/).slice(-lines).join("\n").trim();
+  return content.split(/\r\n|\n|\r/).slice(-lines).join("\n").trim();
 }
 
 function apiUrlToBase(apiUrl: string) {

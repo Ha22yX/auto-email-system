@@ -1580,8 +1580,19 @@ body.resizing-detail iframe {
 }
 
 .weclaw-console-actions {
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.weclaw-refresh-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .weclaw-runtime {
@@ -1604,18 +1615,96 @@ body.resizing-detail iframe {
   white-space: nowrap;
 }
 
+.weclaw-qr-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 124px;
+  align-items: center;
+  gap: 14px;
+  min-height: 132px;
+  border: 1px solid rgb(32 90 75 / 0.12);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgb(255 255 252 / 0.9), rgb(236 241 233 / 0.74));
+  padding: 12px;
+  transition:
+    border-color 240ms var(--ease),
+    background 240ms var(--ease),
+    transform 240ms var(--ease);
+}
+
+.weclaw-qr-card.ready {
+  border-color: rgb(32 90 75 / 0.22);
+  background:
+    linear-gradient(135deg, rgb(255 255 252 / 0.98), rgb(232 242 235 / 0.9));
+}
+
+.weclaw-qr-card.connected {
+  border-color: rgb(32 90 75 / 0.14);
+  background:
+    linear-gradient(135deg, rgb(239 247 240 / 0.95), rgb(246 248 243 / 0.8));
+}
+
+.weclaw-qr-copy span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.weclaw-qr-copy strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.weclaw-qr-copy small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.weclaw-qr-frame {
+  display: grid;
+  place-items: center;
+  width: 116px;
+  aspect-ratio: 1;
+  justify-self: end;
+  border: 1px solid rgb(21 26 25 / 0.08);
+  border-radius: 8px;
+  background: white;
+  color: rgb(32 90 75 / 0.62);
+  box-shadow: 0 14px 28px rgb(21 26 25 / 0.08);
+}
+
+.weclaw-qr-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  object-fit: contain;
+}
+
 .weclaw-log {
-  max-height: 210px;
+  min-height: 124px;
+  max-height: 188px;
   margin: 0;
   overflow: auto;
+  overflow-wrap: normal;
   border: 1px solid rgb(21 26 25 / 0.1);
   border-radius: 8px;
   background: #151a19;
   color: #e4eae5;
-  padding: 12px;
-  font: 12px/1.55 "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
+  padding: 12px 14px;
+  font: 11px/1.34 "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  scrollbar-gutter: stable both-edges;
+  tab-size: 2;
+  white-space: pre;
+  word-break: normal;
 }
 
 .mailbox-table {
@@ -1931,6 +2020,20 @@ body.resizing-detail iframe {
   .weclaw-status,
   .weclaw-console-actions button {
     width: 100%;
+  }
+
+  .weclaw-refresh-note {
+    justify-content: center;
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .weclaw-qr-card {
+    grid-template-columns: 1fr;
+  }
+
+  .weclaw-qr-frame {
+    justify-self: center;
   }
 
   .progress-panel.active {

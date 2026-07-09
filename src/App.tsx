@@ -13,6 +13,7 @@ import {
   Play,
   Plugs,
   Plus,
+  QrCode,
   SealCheck,
   ShieldCheck,
   Star,
@@ -21,6 +22,7 @@ import {
   X
 } from "@phosphor-icons/react";
 import DOMPurify from "dompurify";
+import QRCode from "qrcode";
 import { api } from "./api";
 import type {
   AiSettings,
@@ -73,6 +75,19 @@ const categoryMeta: Record<
 
 function shouldAutoMarkPanelRead(category: MailCategory) {
   return category === "important";
+}
+
+function extractWeclawQrUrl(logTail: string) {
+  const lastStart = logTail.lastIndexOf("starting ");
+  const lastStop = Math.max(
+    logTail.lastIndexOf("stopping managed weclaw process"),
+    logTail.lastIndexOf("weclaw exited")
+  );
+  if (lastStop > lastStart) return "";
+
+  const activeLog = lastStart >= 0 ? logTail.slice(lastStart) : logTail;
+  const matches = [...activeLog.matchAll(/QR URL:\s*(https?:\/\/\S+)/g)];
+  return matches.length ? matches[matches.length - 1][1] : "";
 }
 
 const emptyMailbox: Partial<Mailbox> = {
@@ -1044,9 +1059,11 @@ function SettingsPanel({
   const [systemForm, setSystemForm] = useState<SystemSettings | null>(null);
   const [notificationForm, setNotificationForm] = useState<NotificationSettings | null>(null);
   const [weclawStatus, setWeclawStatus] = useState<WeclawStatus | null>(null);
+  const [weclawQrDataUrl, setWeclawQrDataUrl] = useState("");
   const [weclawBusy, setWeclawBusy] = useState(false);
   const [mailboxForm, setMailboxForm] = useState<Partial<Mailbox>>(emptyMailbox);
   const [saving, setSaving] = useState(false);
+  const weclawQrUrl = useMemo(() => extractWeclawQrUrl(weclawStatus?.logTail ?? ""), [weclawStatus?.logTail]);
 
   useEffect(() => {
     if (!dashboard) return;
@@ -1072,9 +1089,37 @@ function SettingsPanel({
     void refreshWeclawStatus().catch(() => undefined);
     const timer = window.setInterval(() => {
       void refreshWeclawStatus().catch(() => undefined);
-    }, 5000);
+    }, 2500);
     return () => window.clearInterval(timer);
   }, [refreshWeclawStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!weclawQrUrl || weclawStatus?.apiReachable) {
+      setWeclawQrDataUrl("");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    QRCode.toDataURL(weclawQrUrl, {
+      color: { dark: "#151a19", light: "#ffffff" },
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 256
+    })
+      .then((dataUrl) => {
+        if (!cancelled) setWeclawQrDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setWeclawQrDataUrl("");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [weclawQrUrl, weclawStatus?.apiReachable]);
 
   async function saveAi() {
     if (!aiForm) return;
@@ -1170,6 +1215,14 @@ function SettingsPanel({
     }
   }
 
+  async function toggleManagedWeclaw() {
+    if (weclawStatus?.managedRunning) {
+      await stopManagedWeclaw();
+      return;
+    }
+    await startManagedWeclaw();
+  }
+
   async function saveMailbox() {
     setSaving(true);
     try {
@@ -1208,6 +1261,21 @@ function SettingsPanel({
       setSaving(false);
     }
   }
+
+  const weclawExternalRunning = Boolean(weclawStatus?.apiReachable && !weclawStatus.managedRunning);
+  const weclawToggleDisabled = weclawBusy || !weclawStatus?.installed || weclawExternalRunning;
+  const weclawToggleLabel = weclawExternalRunning
+    ? "外部 WeClaw 在线"
+    : weclawStatus?.managedRunning
+      ? "停止 WeClaw"
+      : "启动 WeClaw";
+  const weclawQrHint = weclawStatus?.apiReachable
+    ? "微信桥接已经在线，不需要扫码。"
+    : weclawQrUrl
+      ? "用手机微信扫描下方二维码完成登录。"
+      : weclawStatus?.managedRunning
+        ? "正在等待 WeClaw 输出登录二维码。"
+        : "启动 WeClaw 后，这里会自动显示登录二维码。";
 
   return (
     <section className="settings-layout">
@@ -1414,29 +1482,40 @@ function SettingsPanel({
                 </div>
                 <div className="weclaw-console-actions">
                   <button
-                    className="secondary-button"
-                    disabled={weclawBusy || Boolean(weclawStatus?.apiReachable)}
-                    onClick={startManagedWeclaw}
+                    className={weclawStatus?.managedRunning ? "ghost-button" : "secondary-button"}
+                    disabled={weclawToggleDisabled}
+                    onClick={toggleManagedWeclaw}
                   >
-                    <Play size={18} />
-                    启动 WeClaw
+                    {weclawStatus?.managedRunning ? <X size={18} /> : <Play size={18} />}
+                    {weclawBusy ? "处理中..." : weclawToggleLabel}
                   </button>
-                  <button
-                    className="ghost-button"
-                    disabled={weclawBusy || !weclawStatus?.managedRunning}
-                    onClick={stopManagedWeclaw}
-                  >
-                    <X size={18} />
-                    停止
-                  </button>
-                  <button
-                    className="ghost-button"
-                    disabled={weclawBusy}
-                    onClick={() => void refreshWeclawStatus().catch((error) => setToast(error.message))}
-                  >
-                    <ClockCounterClockwise size={18} />
-                    刷新
-                  </button>
+                  <span className="weclaw-refresh-note">
+                    <ClockCounterClockwise size={15} />
+                    日志自动刷新
+                  </span>
+                </div>
+                <div
+                  className={`weclaw-qr-card${weclawQrDataUrl ? " ready" : ""}${
+                    weclawStatus?.apiReachable ? " connected" : ""
+                  }`}
+                >
+                  <div className="weclaw-qr-copy">
+                    <span>
+                      <QrCode size={16} />
+                      微信登录二维码
+                    </span>
+                    <strong>
+                      {weclawStatus?.apiReachable ? "已连接到微信" : weclawQrDataUrl ? "扫码登录 WeClaw" : "等待二维码"}
+                    </strong>
+                    <small>{weclawQrHint}</small>
+                  </div>
+                  <div className="weclaw-qr-frame">
+                    {weclawQrDataUrl ? (
+                      <img src={weclawQrDataUrl} alt="WeClaw 微信登录二维码" />
+                    ) : (
+                      <QrCode size={54} weight="duotone" />
+                    )}
+                  </div>
                 </div>
                 <div className="weclaw-runtime">
                   <span>运行文件</span>
