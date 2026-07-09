@@ -23,6 +23,7 @@ const toolDir = path.join(rootDir, "tools", "weclaw");
 const logDir = path.join(rootDir, "data");
 const logFile = path.join(logDir, "weclaw.log");
 export const defaultWeclawApiUrl = "http://127.0.0.1:18011/api/send";
+const bridgeRuntimeName = "内置 Node iLink 桥接";
 const ilinkBaseUrl = "https://ilinkai.weixin.qq.com";
 const qrCodeUrl = `${ilinkBaseUrl}/ilink/bot/get_bot_qrcode?bot_type=3`;
 const qrStatusUrl = `${ilinkBaseUrl}/ilink/bot/get_qrcode_status?qrcode=`;
@@ -572,7 +573,7 @@ function managedRunning() {
 
 export async function getWeclawStatus(apiUrl: string) {
   const exe = executablePath();
-  const installed = fs.existsSync(exe);
+  const legacyExecutableAvailable = fs.existsSync(exe);
   const legacyApiReachable = await isApiReachable(apiUrl);
   const accounts = readWeclawAccounts();
   const activeAccount = accounts[0];
@@ -582,8 +583,12 @@ export async function getWeclawStatus(apiUrl: string) {
   const runtimeHealth = analyzeWeclawRuntime(logTail);
   const bridgeReady = managedRunning();
   return {
-    installed,
-    executablePath: exe,
+    installed: true,
+    runtimeMode: "node-ilink",
+    runtimeName: bridgeRuntimeName,
+    executablePath: legacyExecutableAvailable ? exe : "",
+    legacyExecutablePath: exe,
+    legacyExecutableAvailable,
     apiUrl: apiUrl || defaultWeclawApiUrl,
     apiBaseUrl: apiUrlToBase(apiUrl),
     apiReachable: bridgeReady || legacyApiReachable,

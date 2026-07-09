@@ -1,6 +1,6 @@
-# Local WeClaw Patches
+# Local WeChat Bridge Notes
 
-The bundled Windows AMD64 runtime is based on upstream `fastclaw-ai/weclaw` v0.7.1 with a small local patch for this email system.
+The project originally bundled a patched upstream `fastclaw-ai/weclaw` v0.7.1 Windows runtime. The current implementation has moved the required bridge behavior into the Node backend so the app can run on Linux without a platform-specific WeClaw executable.
 
 ## Context Token Persistence
 
@@ -21,4 +21,4 @@ After first login, open the ClawBot contact in WeChat and send any short message
 
 ## Current Project Bridge
 
-The email system now sends notifications through its own Node iLink bridge instead of keeping the WeClaw agent bridge running. Incoming WeChat messages are only used to refresh `context_token`; they are not forwarded to Claude/Codex and do not receive automatic replies.
+The email system sends notifications through its own Node iLink bridge instead of keeping the WeClaw agent bridge running. Incoming WeChat messages are only used to refresh `context_token`; they are not forwarded to Claude/Codex and do not receive automatic replies.

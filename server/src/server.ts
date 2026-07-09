@@ -18,7 +18,8 @@ const port = Number(process.env.PORT ?? 8787);
 
 const app = express();
 
-app.use(cors());
+app.set("trust proxy", true);
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "20mb" }));
 app.use("/api", router);
 app.use(

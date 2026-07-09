@@ -1,20 +1,24 @@
 import express from "express";
 import { z } from "zod";
 import { classifyEmail } from "./ai";
+import { clearAuthCookie, isAuthenticated, requireAuth, setAuthCookie } from "./auth";
 import { fetchRemoteEmailImage, findInlineEmailImage } from "./email/assets";
 import { fetchUnreadImap } from "./email/imap";
 import { fetchUnreadPop3 } from "./email/pop3";
 import { isProcessorRunning, processMailboxes } from "./email/processor";
 import {
   publicAiSettings,
+  publicAuthSettings,
   publicMailbox,
   readState,
   removeMailbox,
+  updateAuthPassword,
   updateAiSettings,
   updateNotificationSettings,
   updateProcessedEmailPanelRead,
   updateSystemSettings,
-  upsertMailbox
+  upsertMailbox,
+  verifyAdminPassword
 } from "./store";
 import { sendClawbotTestNotification } from "./notifications/clawbot";
 import {
@@ -78,6 +82,15 @@ const notificationSchema = z.object({
 
 const panelReadSchema = z.object({
   panelRead: z.coerce.boolean()
+});
+
+const loginSchema = z.object({
+  password: z.string().min(1, "请输入登录密码")
+});
+
+const authPasswordSchema = z.object({
+  currentPassword: z.string().min(1, "请输入当前密码"),
+  newPassword: z.string().min(8, "新密码至少 8 位")
 });
 
 function asyncRoute(
@@ -145,7 +158,8 @@ function buildDashboard(mailboxId?: string) {
     settings: {
       ai: publicAiSettings(state.settings.ai),
       system: state.settings.system,
-      notification: state.settings.notification
+      notification: state.settings.notification,
+      auth: publicAuthSettings(state.settings.auth)
     },
     mailboxes: state.mailboxes.map(publicMailbox),
     counts,
@@ -165,6 +179,43 @@ router.get(
     res.json({ ok: true, processorRunning: isProcessorRunning() });
   })
 );
+
+router.get(
+  "/auth/session",
+  asyncRoute((req, res) => {
+    res.json({
+      authenticated: isAuthenticated(req),
+      auth: publicAuthSettings(readState().settings.auth)
+    });
+  })
+);
+
+router.post(
+  "/auth/login",
+  asyncRoute((req, res) => {
+    const parsed = loginSchema.parse(req.body);
+    if (!verifyAdminPassword(parsed.password)) {
+      res.status(401).json({ error: "登录密码不正确。" });
+      return;
+    }
+
+    setAuthCookie(req, res);
+    res.json({
+      authenticated: true,
+      auth: publicAuthSettings(readState().settings.auth)
+    });
+  })
+);
+
+router.post(
+  "/auth/logout",
+  asyncRoute((req, res) => {
+    clearAuthCookie(req, res);
+    res.json({ authenticated: false });
+  })
+);
+
+router.use(requireAuth);
 
 router.get(
   "/dashboard",
@@ -239,6 +290,21 @@ router.put(
   asyncRoute((req, res) => {
     const parsed = systemSchema.parse(req.body);
     res.json(updateSystemSettings(parsed));
+  })
+);
+
+router.get(
+  "/settings/auth",
+  asyncRoute((_req, res) => {
+    res.json(publicAuthSettings(readState().settings.auth));
+  })
+);
+
+router.put(
+  "/settings/auth/password",
+  asyncRoute((req, res) => {
+    const parsed = authPasswordSchema.parse(req.body);
+    res.json(publicAuthSettings(updateAuthPassword(parsed.currentPassword, parsed.newPassword)));
   })
 );
 

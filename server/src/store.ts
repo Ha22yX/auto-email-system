@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { createAuthSettings, verifyPassword } from "./auth-crypto";
 import type {
   AiSettings,
   AppState,
+  AuthSettings,
   Mailbox,
   NotificationSettings,
   ProcessedEmail,
@@ -40,7 +42,8 @@ const defaultState: AppState = {
       clawbotRecipientId: "",
       importantOnly: true,
       notifyCategories: defaultNotifyCategories
-    }
+    },
+    auth: createAuthSettings()
   },
   mailboxes: [],
   emails: [],
@@ -67,11 +70,20 @@ function loadState(): AppState {
   const raw = fs.readFileSync(DATA_FILE, "utf8");
   const parsed = JSON.parse(raw) as Partial<AppState>;
   const parsedNotification = parsed.settings?.notification as Partial<NotificationSettings> | undefined;
+  const parsedAuth = parsed.settings?.auth as Partial<AuthSettings> | undefined;
   const migratedNotifyCategories = parsedNotification?.notifyCategories ?? {
     important: true,
     secondary: parsedNotification?.importantOnly === false,
     ignore: false
   };
+  const auth =
+    parsedAuth?.passwordHash && parsedAuth.passwordSalt
+      ? {
+          ...defaultState.settings.auth,
+          ...parsedAuth,
+          passwordIterations: parsedAuth.passwordIterations ?? defaultState.settings.auth.passwordIterations
+        }
+      : createAuthSettings();
   stateCache = {
     settings: {
       ai: { ...defaultState.settings.ai, ...parsed.settings?.ai },
@@ -85,12 +97,16 @@ function loadState(): AppState {
         },
         clawbotApiUrl: "http://127.0.0.1:18011/api/send",
         clawbotRecipientId: ""
-      }
+      },
+      auth
     },
     mailboxes: parsed.mailboxes ?? [],
     emails: parsed.emails ?? [],
     runs: parsed.runs ?? []
   };
+  if (!parsedAuth?.passwordHash || !parsedAuth.passwordSalt) {
+    saveState(stateCache);
+  }
   return stateCache;
 }
 
@@ -133,6 +149,13 @@ export function publicAiSettings(settings: AiSettings) {
     apiKey: "",
     hasApiKey: Boolean(settings.apiKey),
     maskedApiKey: maskSecret(settings.apiKey)
+  };
+}
+
+export function publicAuthSettings(settings: AuthSettings) {
+  return {
+    passwordUpdatedAt: settings.passwordUpdatedAt,
+    sessionDays: 7
   };
 }
 
@@ -205,6 +228,21 @@ export function updateNotificationSettings(input: Partial<NotificationSettings>)
       importantOnly: notifyCategories.important && !notifyCategories.secondary && !notifyCategories.ignore
     };
   }).settings.notification;
+}
+
+export function verifyAdminPassword(password: string) {
+  return verifyPassword(password, loadState().settings.auth);
+}
+
+export function updateAuthPassword(currentPassword: string, newPassword: string) {
+  const current = loadState().settings.auth;
+  if (!verifyPassword(currentPassword, current)) {
+    throw new Error("当前登录密码不正确。");
+  }
+
+  return updateState((draft) => {
+    draft.settings.auth = createAuthSettings(newPassword);
+  }).settings.auth;
 }
 
 export function hasProcessed(mailboxId: string, externalUid: string) {

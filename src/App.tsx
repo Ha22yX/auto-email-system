@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  CSSProperties,
+  FormEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent
+} from "react";
 import {
   Archive,
   BellRinging,
@@ -9,6 +14,7 @@ import {
   EnvelopeSimple,
   FloppyDisk,
   GearSix,
+  LockKey,
   MagnifyingGlass,
   Mailbox as MailboxIcon,
   PencilSimple,
@@ -18,6 +24,7 @@ import {
   QrCode,
   SealCheck,
   ShieldCheck,
+  SignOut,
   SlidersHorizontal,
   Star,
   Trash,
@@ -312,7 +319,7 @@ function createSafeEmailSrcDoc(sourceHtml: string, options: { emailId?: string; 
 </html>`;
 }
 
-function App() {
+function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const [view, setView] = useState<View>("mail");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [activeCategory, setActiveCategory] = useState<MailCategory>("important");
@@ -629,6 +636,9 @@ function App() {
               <Play size={18} weight="fill" />
               {busy ? "处理中" : "立即处理"}
             </button>
+            <button className="ghost-button icon-button" onClick={onLogout} title="退出登录" aria-label="退出登录">
+              <SignOut size={18} />
+            </button>
           </div>
         </header>
 
@@ -832,6 +842,128 @@ function App() {
       )}
     </div>
   );
+}
+
+function AuthLoading() {
+  return (
+    <main className="auth-shell">
+      <section className="auth-card loading">
+        <div className="auth-mark">
+          <ShieldCheck size={28} weight="duotone" />
+        </div>
+        <p className="section-kicker">安全验证</p>
+        <h1>正在检查登录状态</h1>
+        <div className="auth-loading-bar">
+          <span />
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function LoginView({
+  error,
+  onLogin
+}: {
+  error: string;
+  onLogin: (password: string) => Promise<void>;
+}) {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [localError, setLocalError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setLocalError("");
+    try {
+      await onLogin(password);
+      setPassword("");
+    } catch (loginError) {
+      setLocalError(loginError instanceof Error ? loginError.message : String(loginError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <form className="auth-card" onSubmit={submit}>
+        <div className="auth-card-head">
+          <div className="auth-mark">
+            <LockKey size={28} weight="duotone" />
+          </div>
+          <div>
+            <p className="section-kicker">AI Inbox Console</p>
+            <h1>登录自动邮件系统</h1>
+          </div>
+        </div>
+        <p className="auth-copy">请输入管理密码。登录状态会在当前浏览器保存 7 天。</p>
+        <label className="auth-field">
+          管理密码
+          <input
+            autoFocus
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            placeholder="输入管理密码"
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </label>
+        {(localError || error) && <div className="auth-error">{localError || error}</div>}
+        <button className="primary-button auth-submit" disabled={busy || !password.trim()} type="submit">
+          <ShieldCheck size={18} />
+          {busy ? "正在登录" : "登录"}
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function App() {
+  const [authReady, setAuthReady] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [authError, setAuthError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .authSession()
+      .then((session) => {
+        if (!cancelled) setAuthenticated(session.authenticated);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAuthenticated(false);
+          setAuthError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAuthReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function login(password: string) {
+    const result = await api.login(password);
+    setAuthenticated(result.authenticated);
+    setAuthError("");
+  }
+
+  async function logout() {
+    try {
+      await api.logout();
+    } finally {
+      setAuthenticated(false);
+    }
+  }
+
+  if (!authReady) return <AuthLoading />;
+  if (!authenticated) return <LoginView error={authError} onLogin={login} />;
+  return <ConsoleApp onLogout={logout} />;
 }
 
 function progressPercent(done = 0, total = 0) {
@@ -1081,6 +1213,11 @@ function SettingsPanel({
   const [aiForm, setAiForm] = useState<AiSettings | null>(null);
   const [systemForm, setSystemForm] = useState<SystemSettings | null>(null);
   const [notificationForm, setNotificationForm] = useState<NotificationSettings | null>(null);
+  const [authForm, setAuthForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: ""
+  });
   const [notificationCategoryOpen, setNotificationCategoryOpen] = useState(true);
   const [weclawStatus, setWeclawStatus] = useState<WeclawStatus | null>(null);
   const [weclawQrDataUrl, setWeclawQrDataUrl] = useState("");
@@ -1205,6 +1342,29 @@ function SettingsPanel({
       await api.updateSystem(systemForm);
       await onReload();
       setToast("系统设置已保存。");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveAuthPassword() {
+    if (authForm.newPassword !== authForm.confirmPassword) {
+      setToast("两次输入的新密码不一致。");
+      return;
+    }
+    if (authForm.newPassword.length < 8) {
+      setToast("新密码至少需要 8 位。");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await api.updateAuthPassword(authForm.currentPassword, authForm.newPassword);
+      setAuthForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      await onReload();
+      setToast("登录密码已更新，旧登录状态会失效。");
     } catch (error) {
       setToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1341,7 +1501,7 @@ function SettingsPanel({
   const notificationCategories = normalizeNotifyCategories(notificationForm?.notifyCategories);
   const notificationSummary = notificationCategorySummary(notificationCategories);
   const weclawExternalRunning = Boolean(weclawStatus?.apiReachable && !weclawStatus.managedRunning);
-  const weclawToggleDisabled = weclawBusy || !weclawStatus?.installed || weclawExternalRunning;
+  const weclawToggleDisabled = weclawBusy || weclawExternalRunning;
   const weclawToggleLabel = weclawExternalRunning
     ? "外部桥接在线"
     : weclawStatus?.managedRunning
@@ -1381,9 +1541,17 @@ function SettingsPanel({
       : "外部桥接在线"
     : weclawLoginSaved
       ? "已绑定微信"
-      : weclawStatus?.installed
+      : weclawStatus
         ? "可启动"
-        : "未安装";
+        : "检测中";
+  const weclawRuntimeText = weclawLoginSaved
+    ? `${weclawStatus?.credentialsPath || "检测中"} · ${weclawStatus?.credentialCount ?? 0} 个账号`
+    : weclawStatus?.runtimeName || "内置 Node iLink 桥接";
+  const weclawRuntimeTitle = weclawLoginSaved
+    ? weclawStatus?.credentialsPath
+    : weclawStatus?.legacyExecutableAvailable
+      ? `当前使用内置代码桥接；兼容二进制：${weclawStatus.legacyExecutablePath}`
+      : "当前使用内置 Node iLink 桥接，无需 WeClaw exe，Linux 可直接运行。";
   const weclawLogText =
     weclawStatus?.logTail || "启动后这里会显示 WeClaw 日志。首次运行时请根据日志提示用手机微信扫码登录。";
 
@@ -1514,6 +1682,62 @@ function SettingsPanel({
           )}
         </div>
 
+        <div className="settings-panel auth-settings-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="section-kicker">访问控制</p>
+              <h2>登录安全</h2>
+            </div>
+            <LockKey size={22} />
+          </div>
+          <div className="auth-settings-summary">
+            <span>登录状态</span>
+            <strong>保存 {dashboard?.settings.auth.sessionDays ?? 7} 天</strong>
+            <small>
+              {dashboard?.settings.auth.passwordUpdatedAt
+                ? `密码更新时间：${formatTime(dashboard.settings.auth.passwordUpdatedAt)}`
+                : "使用默认管理员密码，建议上线后立即修改。"}
+            </small>
+          </div>
+          <div className="form-grid auth-password-grid">
+            <label>
+              当前密码
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={authForm.currentPassword}
+                onChange={(event) => setAuthForm({ ...authForm, currentPassword: event.target.value })}
+              />
+            </label>
+            <label>
+              新密码
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={authForm.newPassword}
+                onChange={(event) => setAuthForm({ ...authForm, newPassword: event.target.value })}
+              />
+            </label>
+            <label className="full-span">
+              确认新密码
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={authForm.confirmPassword}
+                onChange={(event) => setAuthForm({ ...authForm, confirmPassword: event.target.value })}
+              />
+            </label>
+            <button
+              className="secondary-button full-span"
+              disabled={saving || !authForm.currentPassword || !authForm.newPassword || !authForm.confirmPassword}
+              onClick={saveAuthPassword}
+            >
+              <FloppyDisk size={18} />
+              保存登录密码
+            </button>
+          </div>
+        </div>
+
         <div className="settings-panel notification-settings-panel">
           <div className="panel-heading">
             <div>
@@ -1627,7 +1851,7 @@ function SettingsPanel({
                     </button>
                     <button
                       className="ghost-button"
-                      disabled={weclawBusy || !weclawStatus?.installed}
+                      disabled={weclawBusy}
                       onClick={rebindManagedWeclaw}
                     >
                       <ClockCounterClockwise size={18} />
@@ -1675,12 +1899,8 @@ function SettingsPanel({
                     </div>
                   )}
                   <div className="weclaw-runtime">
-                    <span>{weclawLoginSaved ? "凭据位置" : "运行文件"}</span>
-                    <strong title={weclawLoginSaved ? weclawStatus?.credentialsPath : weclawStatus?.executablePath}>
-                      {weclawLoginSaved
-                        ? `${weclawStatus?.credentialsPath || "检测中"} · ${weclawStatus?.credentialCount ?? 0} 个账号`
-                        : weclawStatus?.executablePath || "检测中"}
-                    </strong>
+                    <span>{weclawLoginSaved ? "凭据位置" : "桥接模式"}</span>
+                    <strong title={weclawRuntimeTitle}>{weclawRuntimeText}</strong>
                   </div>
                   <details
                     className="weclaw-log-panel"

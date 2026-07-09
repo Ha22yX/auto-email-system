@@ -1,5 +1,6 @@
 import type {
   AiSettings,
+  AuthSettings,
   Dashboard,
   EmailListItem,
   MailCategory,
@@ -15,9 +16,20 @@ const API_BASE =
   import.meta.env.VITE_API_BASE_URL ??
   (window.location.port === "5173" ? "http://127.0.0.1:8787" : "");
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {})
@@ -26,13 +38,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.error || `请求失败: ${response.status}`);
+    throw new ApiError(body.error || `请求失败: ${response.status}`, response.status);
   }
 
   return response.json() as Promise<T>;
 }
 
 export const api = {
+  authSession() {
+    return request<{ authenticated: boolean; auth: AuthSettings }>("/api/auth/session");
+  },
+  login(password: string) {
+    return request<{ authenticated: boolean; auth: AuthSettings }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password })
+    });
+  },
+  logout() {
+    return request<{ authenticated: boolean }>("/api/auth/logout", { method: "POST" });
+  },
   dashboard(mailboxId = "all") {
     return request<Dashboard>(`/api/dashboard?mailboxId=${encodeURIComponent(mailboxId)}`);
   },
@@ -65,6 +89,12 @@ export const api = {
     return request<SystemSettings>("/api/settings/system", {
       method: "PUT",
       body: JSON.stringify(settings)
+    });
+  },
+  updateAuthPassword(currentPassword: string, newPassword: string) {
+    return request<AuthSettings>("/api/settings/auth/password", {
+      method: "PUT",
+      body: JSON.stringify({ currentPassword, newPassword })
     });
   },
   updateNotification(settings: NotificationSettings) {

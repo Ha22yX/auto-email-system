@@ -26,6 +26,11 @@ export type NotificationSettings = {
   notifyCategories: Record<MailCategory, boolean>;
 };
 
+export type AuthSettings = {
+  passwordUpdatedAt: string;
+  sessionDays: number;
+};
+
 export type Mailbox = {
   id: string;
   name: string;
@@ -105,6 +110,7 @@ export type Dashboard = {
     ai: AiSettings;
     system: SystemSettings;
     notification: NotificationSettings;
+    auth: AuthSettings;
   };
   mailboxes: Mailbox[];
   counts: Record<MailCategory, number>;
@@ -119,7 +125,11 @@ export type Dashboard = {
 
 export type WeclawStatus = {
   installed: boolean;
+  runtimeMode?: "node-ilink";
+  runtimeName?: string;
   executablePath: string;
+  legacyExecutablePath?: string;
+  legacyExecutableAvailable?: boolean;
   apiUrl: string;
   apiBaseUrl: string;
   apiReachable: boolean;
