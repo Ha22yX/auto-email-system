@@ -52,6 +52,8 @@ WeClaw 来源：https://github.com/fastclaw-ai/weclaw
 
 内置 Windows AMD64 运行时包含本项目补丁：主动推送会自动使用并持久化微信 iLink `context_token`。扫码登录后，接收人会自动绑定为扫码微信；首次发送通知前，请在微信里打开 ClawBot 联系人并发送任意一条消息，用于建立会话上下文。之后 token 会保存到 `~/.weclaw/context_tokens.json`，重启后继续可用。补丁说明见 `tools/weclaw/PATCHES.md`。
 
+服务启动时会自动尝试启动项目内 WeClaw。管理面板里的“重新绑定微信”会停止当前 WeClaw、清理 `~/.weclaw/accounts/*.json` 和 `~/.weclaw/context_tokens.json`，然后重新生成扫码二维码。
+
 ## 配置步骤
 
 1. 打开「管理设置」。

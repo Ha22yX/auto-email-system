@@ -17,7 +17,14 @@ import {
   upsertMailbox
 } from "./store";
 import { sendClawbotTestNotification } from "./notifications/clawbot";
-import { defaultWeclawApiUrl, getWeclawLogTail, getWeclawStatus, startWeclaw, stopWeclaw } from "./weclaw/manager";
+import {
+  defaultWeclawApiUrl,
+  getWeclawLogTail,
+  getWeclawStatus,
+  rebindWeclaw,
+  startWeclaw,
+  stopWeclaw
+} from "./weclaw/manager";
 import type { MailCategory } from "./types";
 
 const router = express.Router();
@@ -284,6 +291,13 @@ router.post(
   "/weclaw/stop",
   asyncRoute(async (_req, res) => {
     res.json(await stopWeclaw(notificationApiUrl()));
+  })
+);
+
+router.post(
+  "/weclaw/rebind",
+  asyncRoute(async (_req, res) => {
+    res.status(202).json(await rebindWeclaw(notificationApiUrl()));
   })
 );
 

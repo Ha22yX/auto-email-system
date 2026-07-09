@@ -4,6 +4,7 @@ import cors from "cors";
 import express from "express";
 import router from "./routes";
 import { startProcessingWorker } from "./email/processor";
+import { defaultWeclawApiUrl, ensureWeclawStarted } from "./weclaw/manager";
 import {
   demotePromotionalAndNewsEmails,
   hasInterruptedRecoveryRetry,
@@ -48,5 +49,6 @@ app.listen(port, () => {
   const retryInterruptedRecovery = hasInterruptedRecoveryRetry();
   const interruptedCount = markInterruptedRuns();
   startProcessingWorker({ recoverInterruptedOnFirstRun: interruptedCount > 0 || retryInterruptedRecovery });
+  void ensureWeclawStarted(defaultWeclawApiUrl);
   console.log(`自动邮件系统已启动: http://127.0.0.1:${port}`);
 });

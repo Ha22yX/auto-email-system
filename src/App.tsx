@@ -1242,6 +1242,19 @@ function SettingsPanel({
     }
   }
 
+  async function rebindManagedWeclaw() {
+    setWeclawBusy(true);
+    try {
+      const status = await api.rebindWeclaw();
+      setWeclawStatus(status);
+      setToast(status.message || "已启动微信重新绑定。");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setWeclawBusy(false);
+    }
+  }
+
   async function toggleManagedWeclaw() {
     if (weclawStatus?.managedRunning) {
       await stopManagedWeclaw();
@@ -1317,7 +1330,7 @@ function SettingsPanel({
   const weclawQrHint = weclawStatus?.apiReachable
     ? weclawContextReady
       ? `微信桥接已经在线，通知会自动发送给扫码绑定的微信。`
-      : "微信已登录并自动绑定扫码用户。首次通知前，请在微信里给 ClawBot 发任意一条消息来激活会话。"
+      : "微信已登录并自动绑定扫码用户。首次通知前，请在微信里搜索并打开 ClawBot，对它发送任意一条消息来激活会话；如果找不到联系人，请重新绑定微信。"
     : weclawQrUrl
       ? "用手机微信扫描下方二维码完成登录。"
       : weclawStatus?.managedRunning
@@ -1573,6 +1586,14 @@ function SettingsPanel({
                   >
                     {weclawStatus?.managedRunning ? <X size={18} /> : <Play size={18} />}
                     {weclawBusy ? "处理中..." : weclawToggleLabel}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    disabled={weclawBusy || !weclawStatus?.installed}
+                    onClick={rebindManagedWeclaw}
+                  >
+                    <ClockCounterClockwise size={18} />
+                    重新绑定微信
                   </button>
                   <span className="weclaw-refresh-note">
                     <ClockCounterClockwise size={15} />

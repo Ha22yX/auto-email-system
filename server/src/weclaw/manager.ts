@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -149,6 +149,33 @@ function readLogTail(lines = 120) {
   return content.split(/\r\n|\n|\r/).slice(-lines).join("\n").trim();
 }
 
+function execFileQuiet(file: string, args: string[]) {
+  return new Promise<void>((resolve) => {
+    execFile(file, args, { windowsHide: true }, () => resolve());
+  });
+}
+
+async function forceStopBundledWeclaw() {
+  if (process.platform === "win32") {
+    await execFileQuiet("taskkill.exe", ["/F", "/IM", executableName()]);
+    return;
+  }
+  await execFileQuiet("pkill", ["-f", executablePath()]);
+}
+
+function clearWeclawBindingFiles() {
+  const accountDir = credentialsDir();
+  if (fs.existsSync(accountDir)) {
+    for (const name of fs.readdirSync(accountDir)) {
+      if (name.endsWith(".json")) {
+        fs.rmSync(path.join(accountDir, name), { force: true });
+      }
+    }
+  }
+  fs.rmSync(contextTokensPath(), { force: true });
+  appendLog("system", "cleared WeClaw login credentials, sync cursor, and context tokens for rebinding");
+}
+
 function apiUrlToBase(apiUrl: string) {
   const url = new URL(apiUrl || defaultWeclawApiUrl);
   return `${url.protocol}//${url.host}`;
@@ -256,6 +283,18 @@ export async function startWeclaw(apiUrl: string) {
   };
 }
 
+export async function ensureWeclawStarted(apiUrl: string) {
+  try {
+    const status = await startWeclaw(apiUrl);
+    appendLog("system", `auto-start WeClaw: ${status.running ? "running" : "not running"}`);
+    return status;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    appendLog("system", `auto-start WeClaw failed: ${message}`);
+    return undefined;
+  }
+}
+
 export async function stopWeclaw(apiUrl: string) {
   if (managedRunning() && state.child) {
     appendLog("system", "stopping managed weclaw process");
@@ -265,6 +304,23 @@ export async function stopWeclaw(apiUrl: string) {
   return {
     ...(await getWeclawStatus(apiUrl)),
     message: "已请求停止本项目启动的 WeClaw。"
+  };
+}
+
+export async function rebindWeclaw(apiUrl: string) {
+  await stopWeclaw(apiUrl);
+
+  if (await isApiReachable(apiUrl, 800)) {
+    appendLog("system", "WeClaw API still reachable after managed stop; forcing bundled process stop before rebinding");
+    await forceStopBundledWeclaw();
+    await new Promise((resolve) => setTimeout(resolve, 900));
+  }
+
+  clearWeclawBindingFiles();
+  const status = await startWeclaw(apiUrl);
+  return {
+    ...status,
+    message: "已清除旧微信绑定并启动重新扫码。请用手机微信扫描新的二维码并确认登录。"
   };
 }
 

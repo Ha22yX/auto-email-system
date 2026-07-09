@@ -88,6 +88,9 @@ export const api = {
   stopWeclaw() {
     return request<WeclawStatus>("/api/weclaw/stop", { method: "POST" });
   },
+  rebindWeclaw() {
+    return request<WeclawStatus>("/api/weclaw/rebind", { method: "POST" });
+  },
   weclawLogs(lines = 160) {
     return request<{ logTail: string; logFile: string }>(`/api/weclaw/logs?lines=${encodeURIComponent(String(lines))}`);
   },
