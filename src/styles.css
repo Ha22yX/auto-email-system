@@ -1959,6 +1959,8 @@ body.resizing-detail iframe {
 }
 
 .weclaw-log-panel {
+  min-width: 0;
+  overflow: hidden;
   border-top: 1px solid rgb(32 90 75 / 0.1);
   padding-top: 10px;
 }
@@ -1994,10 +1996,15 @@ body.resizing-detail iframe {
 }
 
 .weclaw-log {
-  min-height: 92px;
-  max-height: 150px;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-height: 116px;
+  max-height: 178px;
   margin: 10px 0 0;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   overflow-wrap: normal;
   border: 1px solid rgb(21 26 25 / 0.1);
   border-radius: 8px;
@@ -2005,7 +2012,11 @@ body.resizing-detail iframe {
   color: #e4eae5;
   padding: 10px 12px;
   font: 10.5px/1.36 "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-  scrollbar-gutter: stable both-edges;
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.08) inset,
+    inset -18px 0 24px rgb(21 26 25 / 0.36);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   tab-size: 2;
   white-space: pre;
   word-break: normal;

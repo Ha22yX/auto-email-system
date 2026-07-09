@@ -1085,6 +1085,8 @@ function SettingsPanel({
   const [weclawStatus, setWeclawStatus] = useState<WeclawStatus | null>(null);
   const [weclawQrDataUrl, setWeclawQrDataUrl] = useState("");
   const [weclawBusy, setWeclawBusy] = useState(false);
+  const [weclawLogOpen, setWeclawLogOpen] = useState(false);
+  const weclawLogRef = useRef<HTMLPreElement | null>(null);
   const [mailboxForm, setMailboxForm] = useState<Partial<Mailbox>>(emptyMailbox);
   const [saving, setSaving] = useState(false);
   const weclawQrUrl = useMemo(() => extractWeclawQrUrl(weclawStatus?.logTail ?? ""), [weclawStatus?.logTail]);
@@ -1147,6 +1149,27 @@ function SettingsPanel({
       cancelled = true;
     };
   }, [weclawQrUrl, weclawStatus?.apiReachable]);
+
+  useEffect(() => {
+    if (!weclawLogOpen) return;
+
+    let secondFrame = 0;
+    const scrollToLatest = () => {
+      const logNode = weclawLogRef.current;
+      if (!logNode) return;
+      logNode.scrollTop = logNode.scrollHeight;
+      logNode.scrollLeft = 0;
+    };
+    const firstFrame = window.requestAnimationFrame(() => {
+      scrollToLatest();
+      secondFrame = window.requestAnimationFrame(scrollToLatest);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [weclawLogOpen, weclawStatus?.logTail]);
 
   async function saveAi() {
     if (!aiForm) return;
@@ -1361,6 +1384,8 @@ function SettingsPanel({
       : weclawStatus?.installed
         ? "可启动"
         : "未安装";
+  const weclawLogText =
+    weclawStatus?.logTail || "启动后这里会显示 WeClaw 日志。首次运行时请根据日志提示用手机微信扫码登录。";
 
   return (
     <section className="settings-layout">
@@ -1657,7 +1682,11 @@ function SettingsPanel({
                         : weclawStatus?.executablePath || "检测中"}
                     </strong>
                   </div>
-                  <details className="weclaw-log-panel">
+                  <details
+                    className="weclaw-log-panel"
+                    open={weclawLogOpen}
+                    onToggle={(event) => setWeclawLogOpen(event.currentTarget.open)}
+                  >
                     <summary>
                       <span>运行日志</span>
                       <small>
@@ -1665,9 +1694,8 @@ function SettingsPanel({
                         自动刷新
                       </small>
                     </summary>
-                    <pre className="weclaw-log">
-                      {weclawStatus?.logTail ||
-                        "启动后这里会显示 WeClaw 日志。首次运行时请根据日志提示用手机微信扫码登录。"}
+                    <pre ref={weclawLogRef} className="weclaw-log" tabIndex={0}>
+                      {weclawLogText}
                     </pre>
                   </details>
                 </section>
