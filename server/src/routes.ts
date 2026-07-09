@@ -43,6 +43,7 @@ const aiSchema = z.object({
 
 const systemSchema = z.object({
   autoProcessEnabled: z.coerce.boolean(),
+  autoLoadRemoteImages: z.coerce.boolean().optional().default(false),
   pollIntervalMinutes: z.coerce.number().int().min(1).max(1440),
   processLimitPerMailbox: z.coerce.number().int().min(1).max(500)
 });

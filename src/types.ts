@@ -13,6 +13,7 @@ export type AiSettings = {
 
 export type SystemSettings = {
   autoProcessEnabled: boolean;
+  autoLoadRemoteImages: boolean;
   pollIntervalMinutes: number;
   processLimitPerMailbox: number;
 };

@@ -25,6 +25,7 @@ const defaultState: AppState = {
     },
     system: {
       autoProcessEnabled: true,
+      autoLoadRemoteImages: false,
       pollIntervalMinutes: 10,
       processLimitPerMailbox: 30
     }

@@ -728,7 +728,11 @@ function App() {
               <span />
             </div>
 
-            <EmailDetail detail={detail} mailbox={detail ? mailboxMap.get(detail.mailboxId) : undefined} />
+            <EmailDetail
+              detail={detail}
+              mailbox={detail ? mailboxMap.get(detail.mailboxId) : undefined}
+              autoLoadRemoteImages={Boolean(dashboard?.settings.system.autoLoadRemoteImages)}
+            />
           </section>
         ) : (
           <SettingsPanel
@@ -886,14 +890,22 @@ function ProcessingProgress({ run, running }: { run?: ProcessingRun | null; runn
   );
 }
 
-function EmailDetail({ detail, mailbox }: { detail: ProcessedEmail | null; mailbox?: Mailbox }) {
+function EmailDetail({
+  detail,
+  mailbox,
+  autoLoadRemoteImages
+}: {
+  detail: ProcessedEmail | null;
+  mailbox?: Mailbox;
+  autoLoadRemoteImages: boolean;
+}) {
   const [originalMode, setOriginalMode] = useState<"rendered" | "source">("rendered");
-  const [loadImages, setLoadImages] = useState(false);
+  const [loadImages, setLoadImages] = useState(autoLoadRemoteImages);
 
   useEffect(() => {
     setOriginalMode("rendered");
-    setLoadImages(false);
-  }, [detail?.id]);
+    setLoadImages(autoLoadRemoteImages);
+  }, [detail?.id, autoLoadRemoteImages]);
 
   const originalSource = useMemo(() => {
     if (!detail) return "无可展示原文。";
@@ -1034,7 +1046,10 @@ function SettingsPanel({
   useEffect(() => {
     if (!dashboard) return;
     setAiForm({ ...dashboard.settings.ai, apiKey: "" });
-    setSystemForm(dashboard.settings.system);
+    setSystemForm({
+      ...dashboard.settings.system,
+      autoLoadRemoteImages: Boolean(dashboard.settings.system.autoLoadRemoteImages)
+    });
   }, [dashboard]);
 
   async function saveAi() {
@@ -1201,6 +1216,17 @@ function SettingsPanel({
                   type="checkbox"
                   checked={systemForm.autoProcessEnabled}
                   onChange={(event) => setSystemForm({ ...systemForm, autoProcessEnabled: event.target.checked })}
+                />
+              </label>
+              <label className="switch-row full-span">
+                <span>
+                  <strong>自动加载邮件图片</strong>
+                  <small>默认通过本地安全代理加载远程图片，可能触发邮件追踪像素</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(systemForm.autoLoadRemoteImages)}
+                  onChange={(event) => setSystemForm({ ...systemForm, autoLoadRemoteImages: event.target.checked })}
                 />
               </label>
               <label>
