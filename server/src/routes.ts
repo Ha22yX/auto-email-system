@@ -465,6 +465,7 @@ function sendImageAsset(res: express.Response, asset: { content: Buffer; content
   res.setHeader("Content-Length", asset.content.length);
   res.setHeader("Cache-Control", "private, max-age=86400");
   res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.end(asset.content);
 }
 
