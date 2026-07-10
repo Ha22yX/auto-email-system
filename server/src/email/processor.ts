@@ -10,7 +10,9 @@ import {
   addProcessedEmail,
   addRun,
   findProcessedEmailDuplicate,
+  getMaxProcessedUid,
   getProcessedEmail,
+  recordProcessingEvent,
   readState,
   updateMailboxSync,
   updateProcessedEmailNotification,
@@ -37,6 +39,16 @@ function incrementRun(run: ProcessingRun, category: "important" | "secondary" | 
 function persistRun(run: ProcessingRun, patch: Partial<ProcessingRun> = {}) {
   Object.assign(run, patch);
   updateRun(run);
+  if (patch.currentStage || patch.currentEmailStep || patch.status) {
+    recordProcessingEvent({
+      runId: run.id,
+      mailboxId: run.mailboxId,
+      subject: run.currentSubject,
+      stage: run.currentEmailStep || run.currentStage || "progress",
+      status: run.status,
+      message: run.currentStage
+    });
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -350,11 +362,7 @@ export async function processMailboxes(options: {
         });
 
         if (options.recoverInterrupted && mailbox.protocol === "imap") {
-          const processedUids = state.emails
-            .filter((email) => email.mailboxId === mailbox.id)
-            .map((email) => Number(email.externalUid))
-            .filter((uid) => Number.isFinite(uid) && uid > 0);
-          const maxProcessedUid = processedUids.length ? Math.max(...processedUids) : 0;
+          const maxProcessedUid = getMaxProcessedUid(mailbox.id);
 
           if (maxProcessedUid > 0) {
             persistRun(run, {

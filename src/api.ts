@@ -45,6 +45,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  eventsUrl() {
+    return `${API_BASE}/api/events`;
+  },
   authSession() {
     return request<{ authenticated: boolean; auth: AuthSettings }>("/api/auth/session");
   },

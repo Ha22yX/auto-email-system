@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { classifyEmail } from "./ai";
 import { clearAuthCookie, isAuthenticated, requireAuth, setAuthCookie } from "./auth";
+import { handleAppEvents } from "./events";
 import { fetchRemoteEmailImage, findInlineEmailImage } from "./email/assets";
 import { fetchUnreadImap } from "./email/imap";
 import { fetchUnreadPop3 } from "./email/pop3";
@@ -12,6 +13,9 @@ import {
   publicAiSettings,
   publicAuthSettings,
   publicMailbox,
+  getDashboardData,
+  getProcessedEmailById,
+  queryProcessedEmails,
   readState,
   removeMailbox,
   updateAuthPassword,
@@ -194,7 +198,7 @@ function authorizeEmailAsset(req: express.Request, res: express.Response, emailI
     return null;
   }
 
-  const email = readState().emails.find((item) => item.id === emailId);
+  const email = getProcessedEmailById(emailId);
   if (!email) {
     res.status(404).json({ error: "邮件不存在。" });
     return null;
@@ -203,26 +207,8 @@ function authorizeEmailAsset(req: express.Request, res: express.Response, emailI
 }
 
 function buildDashboard(mailboxId?: string) {
-  const state = readState();
-  const allEmails = state.emails;
-  const emails = state.emails.filter((email) => !mailboxId || mailboxId === "all" || email.mailboxId === mailboxId);
-  const counts: Record<MailCategory, number> = {
-    important: 0,
-    secondary: 0,
-    ignore: 0
-  };
-  const unreadCounts: Record<MailCategory, number> = {
-    important: 0,
-    secondary: 0,
-    ignore: 0
-  };
-
-  for (const email of emails) {
-    counts[email.category] += 1;
-    const panelRead = email.panelRead ?? email.category === "ignore";
-    if (!panelRead) unreadCounts[email.category] += 1;
-  }
-  const currentRun = state.runs.find((run) => run.status === "running") ?? null;
+  const dashboard = getDashboardData(mailboxId);
+  const { state } = dashboard;
 
   return {
     settings: {
@@ -232,14 +218,14 @@ function buildDashboard(mailboxId?: string) {
       auth: publicAuthSettings(state.settings.auth)
     },
     mailboxes: state.mailboxes.map(publicMailbox),
-    counts,
-    unreadCounts,
-    total: emails.length,
-    allTotal: allEmails.length,
-    recentEmails: emails.slice(0, 8).map(emailListItem),
+    counts: dashboard.counts,
+    unreadCounts: dashboard.unreadCounts,
+    total: dashboard.total,
+    allTotal: dashboard.allTotal,
+    recentEmails: dashboard.recentEmails.map(emailListItem),
     runs: state.runs.slice(0, 10),
     processorRunning: isProcessorRunning(),
-    currentRun
+    currentRun: dashboard.currentRun
   };
 }
 
@@ -328,6 +314,8 @@ router.get(
 );
 
 router.use(requireAuth);
+
+router.get("/events", handleAppEvents);
 
 router.get(
   "/dashboard",
@@ -554,21 +542,21 @@ router.get(
     const limit = Math.min(100, Math.max(20, Math.floor(Number(req.query.limit ?? 40) || 40)));
     const allowedCategories = new Set(["important", "secondary", "ignore"]);
 
-    const emails = readState().emails.filter((email) => {
-      if (allowedCategories.has(category) && email.category !== category) return false;
-      if (mailboxId !== "all" && email.mailboxId !== mailboxId) return false;
-      if (!q) return true;
-      return `${email.subject}\n${email.fromName}\n${email.fromAddress}\n${email.summaryZh}`.toLowerCase().includes(q);
+    const result = queryProcessedEmails({
+      category: allowedCategories.has(category) ? category : undefined,
+      mailboxId,
+      q,
+      offset,
+      limit
     });
-
-    const items = emails.slice(offset, offset + limit).map(emailListItem);
+    const items = result.items.map(emailListItem);
     res.json({
       items,
-      total: emails.length,
+      total: result.total,
       offset,
       limit,
-      hasMoreBefore: offset > 0,
-      hasMoreAfter: offset + items.length < emails.length
+      hasMoreBefore: result.hasMoreBefore,
+      hasMoreAfter: result.hasMoreAfter
     });
   })
 );
@@ -598,7 +586,7 @@ router.get(
 router.get(
   "/emails/:id/inline-image",
   asyncRoute(async (req, res) => {
-    const email = readState().emails.find((item) => item.id === req.params.id);
+    const email = getProcessedEmailById(String(req.params.id));
     if (!email) {
       res.status(404).json({ error: "邮件不存在" });
       return;
@@ -623,7 +611,7 @@ router.get(
 router.get(
   "/emails/:id",
   asyncRoute((req, res) => {
-    const email = readState().emails.find((item) => item.id === req.params.id);
+    const email = getProcessedEmailById(String(req.params.id));
     if (!email) {
       res.status(404).json({ error: "邮件不存在" });
       return;

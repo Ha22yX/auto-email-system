@@ -676,9 +676,50 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   }, [contextMenu]);
 
   useEffect(() => {
+    let refreshTimer = 0;
+    let closed = false;
+    const source = new EventSource(api.eventsUrl(), { withCredentials: true });
+
+    const scheduleRefresh = (event: MessageEvent<string>) => {
+      if (closed) return;
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        void loadDashboard().catch(() => undefined);
+        const nearLatest =
+          emailOffsetRef.current === 0 &&
+          (!emailListRef.current || emailListRef.current.scrollTop < EMAIL_SCROLL_THRESHOLD);
+        if (view === "mail" && nearLatest) {
+          void loadEmails(true).catch(() => undefined);
+        }
+
+        try {
+          const message = JSON.parse(event.data) as { payload?: { id?: string } };
+          if (message.payload?.id && message.payload.id === selectedEmailId) {
+            void api
+              .email(selectedEmailId)
+              .then((nextDetail) => setDetail(nextDetail))
+              .catch(() => undefined);
+          }
+        } catch {
+          // SSE events are best-effort UI hints; malformed payloads should not interrupt the console.
+        }
+      }, 220);
+    };
+
+    source.addEventListener("app", scheduleRefresh);
+
+    return () => {
+      closed = true;
+      window.clearTimeout(refreshTimer);
+      source.removeEventListener("app", scheduleRefresh);
+      source.close();
+    };
+  }, [loadDashboard, loadEmails, selectedEmailId, view]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       void loadDashboard().catch(() => undefined);
-    }, 15000);
+    }, 60000);
     return () => window.clearInterval(timer);
   }, [loadDashboard]);
 
@@ -691,7 +732,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
       if (view === "mail" && nearLatest) {
         void loadEmails(true).catch(() => undefined);
       }
-    }, 3000);
+    }, 10000);
     return () => window.clearInterval(timer);
   }, [dashboard?.processorRunning, loadDashboard, loadEmails, view]);
 
