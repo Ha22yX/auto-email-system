@@ -14,6 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/Ha22yX/auto-email-system"><img alt="GitHub repo" src="https://img.shields.io/badge/GitHub-auto--email--system-111?style=for-the-badge&logo=github" /></a>
+  <a href="https://github.com/Ha22yX/auto-email-system/pkgs/container/auto-email-system"><img alt="GHCR image" src="https://img.shields.io/badge/GHCR-Docker%20image-2496ED?style=for-the-badge&logo=docker&logoColor=white" /></a>
   <img alt="Node.js" src="https://img.shields.io/badge/Node.js-24.x-205A4B?style=for-the-badge&logo=node.js&logoColor=white" />
   <img alt="React" src="https://img.shields.io/badge/React-19-6B7FD7?style=for-the-badge&logo=react&logoColor=white" />
   <img alt="IMAP POP3" src="https://img.shields.io/badge/IMAP%20%2F%20POP3-supported-5F7F73?style=for-the-badge" />
@@ -67,6 +68,22 @@ npm run dev
 ```
 
 The web app defaults to `http://127.0.0.1:5173`; the API defaults to `http://127.0.0.1:8787`.
+
+## Docker / GHCR
+
+The repository publishes a Docker image to GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/ha22yx/auto-email-system:latest
+docker run -d \
+  --name auto-email-system \
+  -p 8787:8787 \
+  -v auto-email-data:/data \
+  -e DATA_DIR=/data \
+  ghcr.io/ha22yx/auto-email-system:latest
+```
+
+The image is built by `.github/workflows/docker-publish.yml` on pushes to `main`. Do not bake mailbox passwords, AI API keys, WeChat/ClawBot sessions, `.env`, or `data/` into the image. Configure secrets at runtime through the app UI, environment variables, or a mounted `/data` volume.
 
 ## First-Time Setup
 

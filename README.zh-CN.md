@@ -61,6 +61,22 @@ npm run dev
 
 前端默认运行在 `http://127.0.0.1:5173`，后端 API 默认运行在 `http://127.0.0.1:8787`。
 
+## Docker / GHCR
+
+仓库会通过 GitHub Actions 发布 Docker 镜像到 GitHub Container Registry：
+
+```bash
+docker pull ghcr.io/ha22yx/auto-email-system:latest
+docker run -d \
+  --name auto-email-system \
+  -p 8787:8787 \
+  -v auto-email-data:/data \
+  -e DATA_DIR=/data \
+  ghcr.io/ha22yx/auto-email-system:latest
+```
+
+镜像由 `.github/workflows/docker-publish.yml` 在 `main` 分支推送后自动构建。不要把邮箱授权码、AI API Key、微信/ClawBot 会话、`.env` 或 `data/` 打进镜像；这些敏感信息应通过运行时配置、应用 UI 或挂载的 `/data` 数据卷提供。
+
 ## 首次配置
 
 1. 登录管理面板。

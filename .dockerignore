@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+dist
+.vite
+data
+.env
+.env.*
+*.log
+npm-debug.log*
+Dockerfile
+docker-compose*.yml
+README*.md
+docs
+Thumbs.db
+.DS_Store
