@@ -123,6 +123,7 @@ async function connectWatcher(watcher: IdleWatcher) {
     });
 
     await client.connect();
+    const previousExists = watcher.lastExists;
     const opened = await client.mailboxOpen(mailbox.folder || "INBOX");
     watcher.lastExists = opened.exists;
     watcher.reconnectAttempts = 0;
@@ -130,8 +131,10 @@ async function connectWatcher(watcher: IdleWatcher) {
       lastError: ""
     });
 
-    // Catch messages that arrived while the listener was down or while reconnecting.
-    requestMailboxProcessing(watcher.mailboxId, 2000);
+    // Catch messages that arrived while reconnecting without creating empty progress runs.
+    if (previousExists !== undefined && opened.exists > previousExists) {
+      requestMailboxProcessing(watcher.mailboxId, 2000);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (watcher.client) {

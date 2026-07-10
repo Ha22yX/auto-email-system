@@ -757,6 +757,10 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const runStatusText = dashboard?.processorRunning
     ? dashboard.currentRun?.currentStage || "正在处理"
     : "空闲";
+  const showProcessingProgress = shouldShowProcessingProgress(
+    dashboard?.currentRun,
+    Boolean(dashboard?.processorRunning)
+  );
   const mailNavExpanded = view === "mail";
   const loadedEmailStart = emailTotal ? emailOffset + 1 : 0;
   const loadedEmailEnd = emailOffset + emails.length;
@@ -886,7 +890,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                 })}
               </div>
 
-              <ProcessingProgress run={dashboard?.currentRun} running={Boolean(dashboard?.processorRunning)} />
+              <ProcessingProgress run={dashboard?.currentRun} running={showProcessingProgress} />
 
               <div className="list-toolbar">
                 <div>
@@ -1224,6 +1228,14 @@ function getRunProgress(run?: ProcessingRun | null) {
     handled,
     percent: progressPercent(handled, total)
   };
+}
+
+function shouldShowProcessingProgress(run: ProcessingRun | null | undefined, running: boolean) {
+  if (!running || !run) return false;
+  const confirmedUnread = Math.max(run.totalUnreadCount ?? 0, run.currentMailboxUnreadCount ?? 0);
+  const confirmedTasks = Math.max(run.totalTaskCount ?? 0, run.handledTaskCount ?? 0);
+  const activeEmailStep = (run.currentEmailStepIndex ?? 0) > 0 && (run.currentEmailStepTotal ?? 0) > 0;
+  return confirmedUnread > 0 || confirmedTasks > 0 || activeEmailStep || (run.processedCount ?? 0) > 0;
 }
 
 function ProcessingProgress({ run, running }: { run?: ProcessingRun | null; running: boolean }) {
