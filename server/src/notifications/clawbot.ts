@@ -20,6 +20,34 @@ function senderName(email: ProcessedEmail) {
   return email.fromName || email.fromAddress || "未知发件人";
 }
 
+function compactText(value: string, maxLength: number) {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+}
+
+function notificationCategoryMeta(category: ProcessedEmail["category"]) {
+  if (category === "important") {
+    return {
+      icon: "🚨",
+      label: "重要邮件",
+      helper: "需要尽快查看"
+    };
+  }
+  if (category === "secondary") {
+    return {
+      icon: "📌",
+      label: "次重要邮件",
+      helper: "建议稍后阅读"
+    };
+  }
+  return {
+    icon: "📎",
+    label: "不用管邮件",
+    helper: "仅作记录"
+  };
+}
+
 function validateClawbotSettings(settings: NotificationSettings, options: { requireEnabled?: boolean } = {}) {
   if (options.requireEnabled !== false && !settings.enabled) throw new Error("微信通知未开启。");
 
@@ -39,22 +67,34 @@ export function shouldNotifyEmail(settings: NotificationSettings, email: Process
 }
 
 export function buildImportantEmailMessage(email: ProcessedEmail, mailbox?: Mailbox) {
-  const categoryLabel = email.category === "important" ? "重要" : "次重要";
-  const actions = email.actionItemsZh.length
-    ? email.actionItemsZh.map((item, index) => `${index + 1}. ${item}`).join("\n")
-    : "暂无明确动作，请打开面板确认。";
+  const category = notificationCategoryMeta(email.category);
+  const actionItems = email.actionItemsZh?.length
+    ? email.actionItemsZh.slice(0, 5).map((item, index) => `${index + 1}. ${compactText(item, 80)}`)
+    : ["暂无明确动作，请打开面板确认。"];
+  const metadata = [
+    `发件人：${compactText(senderName(email), 90)}`,
+    `邮箱：${mailbox?.name || "未知邮箱"}`,
+    email.toText ? `收件人：${compactText(email.toText, 90)}` : "",
+    `时间：${formatDateTime(email.receivedAt || email.processedAt)}`
+  ].filter(Boolean);
 
   return [
-    `📬 自动邮件系统：收到${categoryLabel}邮件`,
+    `${category.icon} 自动邮件系统`,
+    `【${category.label}】${category.helper}`,
     "",
-    `主题：${email.subject || "无主题"}`,
-    `发件人：${senderName(email)}`,
-    `邮箱：${mailbox?.name || "未知邮箱"}`,
-    `时间：${formatDateTime(email.receivedAt || email.processedAt)}`,
+    "主题",
+    compactText(email.subject || "无主题", 90),
     "",
-    `中文概况：${email.summaryZh}`,
+    "关键信息",
+    metadata.join("\n"),
     "",
-    `建议动作：\n${actions}`
+    "中文概况",
+    compactText(email.summaryZh || "暂无概况。", 220),
+    "",
+    "建议动作",
+    actionItems.join("\n"),
+    "",
+    "打开面板可查看邮件原文和完整判断。"
   ].join("\n");
 }
 
