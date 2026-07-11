@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { randomInt, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,6 +29,14 @@ const ilinkBaseUrl = "https://ilinkai.weixin.qq.com";
 const qrCodeUrl = `${ilinkBaseUrl}/ilink/bot/get_bot_qrcode?bot_type=3`;
 const qrStatusUrl = `${ilinkBaseUrl}/ilink/bot/get_qrcode_status?qrcode=`;
 const sessionExpiredCode = -14;
+const contextTokenTtlMs = Math.max(2, Number(process.env.WECLAW_CONTEXT_TOKEN_TTL_HOURS || 24)) * 60 * 60 * 1000;
+const contextTokenReminderLeadMs =
+  Math.max(0.1, Number(process.env.WECLAW_CONTEXT_TOKEN_REMINDER_LEAD_HOURS || 1)) * 60 * 60 * 1000;
+const contextTokenReminderCheckMs = Math.max(
+  60,
+  Number(process.env.WECLAW_CONTEXT_TOKEN_REMINDER_CHECK_SECONDS || 600)
+) * 1000;
+let tokenReminderTimer: ReturnType<typeof setInterval> | undefined;
 
 type WeclawCredential = {
   botToken?: string;
@@ -40,7 +48,17 @@ type WeclawCredential = {
 
 type WeclawContextTokenStore = {
   updated_at?: string;
+  token_updated_at?: Record<string, string>;
   tokens?: Record<string, string>;
+  reminders?: Record<
+    string,
+    {
+      token_hash?: string;
+      reminded_at?: string;
+      attempted_at?: string;
+      last_error?: string;
+    }
+  >;
 };
 
 type WeclawCredentialRecord = {
@@ -119,7 +137,9 @@ function readWeclawContextTokens() {
     return {
       path: filePath,
       updatedAt: "",
-      tokens: {} as Record<string, string>
+      tokenUpdatedAt: {} as Record<string, string>,
+      tokens: {} as Record<string, string>,
+      reminders: {} as NonNullable<WeclawContextTokenStore["reminders"]>
     };
   }
 
@@ -128,15 +148,29 @@ function readWeclawContextTokens() {
     return {
       path: filePath,
       updatedAt: raw.updated_at || "",
-      tokens: raw.tokens || {}
+      tokenUpdatedAt: raw.token_updated_at || {},
+      tokens: raw.tokens || {},
+      reminders: raw.reminders || {}
     };
   } catch {
     return {
       path: filePath,
       updatedAt: "",
-      tokens: {} as Record<string, string>
+      tokenUpdatedAt: {} as Record<string, string>,
+      tokens: {} as Record<string, string>,
+      reminders: {} as NonNullable<WeclawContextTokenStore["reminders"]>
     };
   }
+}
+
+function tokenHash(token: string) {
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+function writeWeclawContextTokenStore(store: WeclawContextTokenStore) {
+  const filePath = contextTokensPath();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(store, null, 2), "utf8");
 }
 
 function notifyWeclawContextReady(userId: string) {
@@ -151,15 +185,23 @@ function writeWeclawContextToken(userId: string, contextToken: string) {
   if (!userId || !contextToken) return false;
   const current = readWeclawContextTokens();
   const previous = current.tokens[userId];
+  const reminders = { ...current.reminders };
+  if (previous !== contextToken) {
+    delete reminders[userId];
+  }
   const next: WeclawContextTokenStore = {
     updated_at: new Date().toISOString(),
+    token_updated_at: {
+      ...current.tokenUpdatedAt,
+      [userId]: new Date().toISOString()
+    },
     tokens: {
       ...current.tokens,
       [userId]: contextToken
-    }
+    },
+    reminders
   };
-  fs.mkdirSync(path.dirname(current.path), { recursive: true });
-  fs.writeFileSync(current.path, JSON.stringify(next, null, 2), "utf8");
+  writeWeclawContextTokenStore(next);
   return previous !== contextToken;
 }
 
@@ -413,6 +455,134 @@ export async function sendWeclawDirectText(recipientId: string, text: string, ti
 
   appendLog("system", `direct notification sent to ${recipientId}: ${text.slice(0, 80)}`);
   return JSON.stringify({ status: "ok", mode: "direct" });
+}
+
+function formatReminderTime(value: Date) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(value);
+}
+
+function buildContextTokenRefreshReminder(updatedAt: string) {
+  const updated = new Date(updatedAt);
+  const expectedExpiry = new Date(updated.getTime() + contextTokenTtlMs);
+  return [
+    "⚠️ 自动邮件系统：微信通知需要刷新",
+    "",
+    `当前 ClawBot 会话 token 已接近预计失效时间：${formatReminderTime(expectedExpiry)}`,
+    "",
+    "请现在打开微信里的 ClawBot 聊天，发送任意一条消息，例如：1",
+    "",
+    "系统收到后会自动刷新 token，并重试之前失败的邮件通知。"
+  ].join("\n");
+}
+
+function shouldThrottleReminderAttempt(attemptedAt?: string) {
+  if (!attemptedAt) return false;
+  const attempted = Date.parse(attemptedAt);
+  if (!Number.isFinite(attempted)) return false;
+  return Date.now() - attempted < 60 * 60 * 1000;
+}
+
+export async function sendDueWeclawTokenRefreshReminders() {
+  const store = readWeclawContextTokens();
+  const accounts = readWeclawCredentialRecords();
+  const now = Date.now();
+  let checked = 0;
+  let sent = 0;
+  let failed = 0;
+
+  for (const account of accounts) {
+    const recipientId = account.recipientId;
+    const token = store.tokens[recipientId];
+    if (!token) continue;
+
+    const updatedAt = store.tokenUpdatedAt[recipientId] || store.updatedAt;
+    const updated = Date.parse(updatedAt);
+    if (!Number.isFinite(updated)) continue;
+
+    checked += 1;
+    const remindAt = updated + contextTokenTtlMs - contextTokenReminderLeadMs;
+    if (now < remindAt) continue;
+
+    const hash = tokenHash(token);
+    const currentStore = readWeclawContextTokens();
+    const reminder = currentStore.reminders[recipientId];
+    if (reminder?.token_hash === hash && reminder.reminded_at) continue;
+    if (reminder?.token_hash === hash && shouldThrottleReminderAttempt(reminder.attempted_at)) continue;
+
+    const attemptedAt = new Date().toISOString();
+    writeWeclawContextTokenStore({
+      updated_at: currentStore.updatedAt,
+      token_updated_at: currentStore.tokenUpdatedAt,
+      tokens: currentStore.tokens,
+      reminders: {
+        ...currentStore.reminders,
+        [recipientId]: {
+          token_hash: hash,
+          attempted_at: attemptedAt,
+          last_error: ""
+        }
+      }
+    });
+
+    try {
+      await sendWeclawDirectText(recipientId, buildContextTokenRefreshReminder(updatedAt), 12000);
+      const latestStore = readWeclawContextTokens();
+      writeWeclawContextTokenStore({
+        updated_at: latestStore.updatedAt,
+        token_updated_at: latestStore.tokenUpdatedAt,
+        tokens: latestStore.tokens,
+        reminders: {
+          ...latestStore.reminders,
+          [recipientId]: {
+            token_hash: hash,
+            attempted_at: attemptedAt,
+            reminded_at: new Date().toISOString(),
+            last_error: ""
+          }
+        }
+      });
+      sent += 1;
+      appendLog("system", `context token refresh reminder sent to ${recipientId}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const latestStore = readWeclawContextTokens();
+      writeWeclawContextTokenStore({
+        updated_at: latestStore.updatedAt,
+        token_updated_at: latestStore.tokenUpdatedAt,
+        tokens: latestStore.tokens,
+        reminders: {
+          ...latestStore.reminders,
+          [recipientId]: {
+            token_hash: hash,
+            attempted_at: attemptedAt,
+            last_error: message.slice(0, 240)
+          }
+        }
+      });
+      failed += 1;
+      appendLog("system", `context token refresh reminder failed for ${recipientId}: ${message}`);
+    }
+  }
+
+  return { checked, sent, failed };
+}
+
+export function startWeclawTokenReminderWorker() {
+  if (tokenReminderTimer) return tokenReminderTimer;
+  const tick = () => {
+    void sendDueWeclawTokenRefreshReminders().catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      appendLog("system", `context token reminder worker failed: ${message}`);
+    });
+  };
+  tokenReminderTimer = setInterval(tick, contextTokenReminderCheckMs);
+  setTimeout(tick, 30000);
+  return tokenReminderTimer;
 }
 
 function textFromIlinkMessage(msg: any) {
