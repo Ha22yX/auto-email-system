@@ -8,7 +8,7 @@ export type FetchedEmail = {
 };
 
 export function createImapClient(mailbox: Mailbox, overrides: Partial<ImapFlowOptions> = {}) {
-  return new ImapFlow({
+  const client = new ImapFlow({
     host: mailbox.host,
     port: mailbox.port,
     secure: mailbox.secure,
@@ -22,6 +22,16 @@ export function createImapClient(mailbox: Mailbox, overrides: Partial<ImapFlowOp
     logger: false,
     ...overrides
   });
+
+  // ImapFlow may emit an async "error" event after a rejected command or close.
+  // Keep those mailbox-level failures local so one bad/expired account cannot
+  // crash the whole web service.
+  client.on("error", () => {
+    // Command-level callers still receive promise rejections; this only catches
+    // EventEmitter errors that otherwise terminate Node.js.
+  });
+
+  return client;
 }
 
 function isSeen(flags: unknown) {
