@@ -5,7 +5,7 @@
 <h1 align="center">Auto Email System</h1>
 
 <p align="center">
-  Self-hosted AI email triage for IMAP/POP3 inboxes: turn unread mail into Chinese summaries, priority queues, multimodal attachment analysis, and optional WeChat alerts.
+  Stop letting junk mail decide how you spend your attention. Auto Email System reads your inbox first, filters out the noise, summarizes the email worth seeing into Chinese key points, and can notify you on WeChat.
 </p>
 
 <p align="center">
@@ -26,17 +26,19 @@
 
 ## Why This Exists
 
-Most inboxes are not hard because of email volume alone. They are hard because school notices, security warnings, bills, receipts, deadlines, and marketing messages all look equally noisy.
+Most inboxes are not hard because of email volume alone. They are hard because school notices, security warnings, bills, receipts, deadlines, and marketing blasts all arrive in the same stream and demand the same attention.
 
-Auto Email System reads first, then gives you a clean work queue:
+Auto Email System is built to give that attention back to you. It checks unread IMAP/POP3 mail, ignores low-value noise, keeps useful records in a secondary queue, lifts real action items into an important queue, summarizes them in Chinese, and can send the key points to WeChat so you only open the inbox when something is actually worth reading.
+
+The result is a cleaner day: fewer random inbox checks, less time wasted on spam, and a short list of emails that actually need your eyes.
 
 | Inbox pain | What the system does |
 | --- | --- |
-| Too many unread messages | Fetches unread IMAP/POP3 mail from one or more accounts |
-| Hard to know what matters | Classifies mail into Important, Secondary, or Ignore |
-| Long or foreign-language emails | Generates Chinese summaries, reasons, and suggested actions |
-| Important content hidden in files | Uses multimodal analysis for embedded images, image attachments, and PDFs |
-| You miss urgent mail | Sends optional WeChat notifications for selected categories |
+| Junk and marketing mail steal your time | Classifies low-value mail as Ignore so it no longer drives your attention |
+| Useful records are mixed with urgent work | Separates Important, Secondary, and Ignore queues |
+| Long or foreign-language emails slow you down | Generates concise Chinese summaries, reasons, and suggested actions |
+| Important details are hidden in files | Uses multimodal analysis for embedded images, image attachments, and PDFs |
+| You do not want to keep checking the inbox | Sends selected email summaries to WeChat when they are worth seeing |
 
 ## Quick Start
 
@@ -231,9 +233,10 @@ tools/weclaw/         WeClaw / ClawBot runtime files
 
 ## Who This Is For
 
-- You receive too many emails, but only a few actually matter.
-- School, teacher, billing, security, order, and receipt emails are mixed with noise.
-- You want AI to read first and surface the real work.
+- You receive too many emails, but only a few actually deserve attention.
+- Spam, promotions, newsletters, school notices, bills, receipts, and security alerts are mixed together.
+- You want AI to read first, throw away the noise, and surface the mail you should actually see.
+- You want Chinese key points and WeChat notifications instead of opening the inbox every time curiosity or anxiety wins.
 - You prefer a self-hosted system instead of giving a third-party client long-term mailbox access.
 
 ## License
