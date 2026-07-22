@@ -24,6 +24,30 @@
   <img src="docs/readme-hero.svg" alt="Auto Email System interface concept" />
 </p>
 
+## Demo Screenshots
+
+<table>
+  <tr>
+    <td colspan="2" align="center">
+      <img src="docs/screenshots/processing-desk.png" alt="Auto Email System processing desk with important email summary and WeChat-ready Chinese key points" />
+      <br />
+      <strong>Processing desk.</strong> Important mail is separated from inbox noise, summarized in Chinese, and prepared for action or WeChat notification.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/settings-panel.png" alt="Auto Email System settings panel for AI, mailbox, polling, and login security configuration" />
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/wechat-notifications.png" alt="Auto Email System ClawBot WeChat notification settings with category controls and active bridge status" />
+    </td>
+  </tr>
+  <tr>
+    <td><strong>Management settings.</strong> Configure AI models, IMAP/POP3 mailboxes, polling rules, attachment handling, and access security from one panel.</td>
+    <td><strong>WeChat alerts.</strong> Choose which queues trigger notifications and keep the ClawBot bridge connected for important-mail summaries.</td>
+  </tr>
+</table>
+
 ## Why This Exists
 
 Most inboxes are not hard because of email volume alone. They are hard because school notices, security warnings, bills, receipts, deadlines, and marketing blasts all arrive in the same stream and demand the same attention.

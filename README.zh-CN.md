@@ -16,6 +16,30 @@
   <img src="docs/readme-hero.svg" alt="自动邮件系统界面概念图" />
 </p>
 
+## 样品截图
+
+<table>
+  <tr>
+    <td colspan="2" align="center">
+      <img src="docs/screenshots/processing-desk.png" alt="自动邮件系统处理台，展示重要邮件摘要和中文要点" />
+      <br />
+      <strong>邮件处理台。</strong>把重要邮件从噪音里分出来，整理成中文要点，并支持后续处理或微信通知。
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/settings-panel.png" alt="自动邮件系统管理设置，配置 AI、邮箱、轮询和登录安全" />
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/wechat-notifications.png" alt="自动邮件系统 ClawBot 微信通知设置，展示分类开关和桥接状态" />
+    </td>
+  </tr>
+  <tr>
+    <td><strong>管理设置。</strong>集中配置 AI 模型、IMAP/POP3 邮箱、轮询规则、附件处理和登录安全。</td>
+    <td><strong>微信通知。</strong>选择哪些队列需要推送，并保持 ClawBot 通知桥接在线，把重要邮件摘要发到微信。</td>
+  </tr>
+</table>
+
 ## 解决什么问题
 
 邮件难处理不只是因为数量多，而是学校通知、账号安全、账单、回执、截止日期和营销广告都混在一起，每一封都像在要求你立刻打开邮箱。
