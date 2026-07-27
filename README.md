@@ -113,12 +113,11 @@ The image is built by `.github/workflows/docker-publish.yml` on pushes to `main`
 
 ## First-Time Setup
 
-1. Log in to the admin panel.
-2. Change the default password. The initial password is `Admin12345`; change it before exposing the service.
-3. Fill in your AI API settings.
-4. Add one or more IMAP / POP3 mailboxes.
-5. Test each mailbox connection.
-6. Click "Process now" in the Processing Desk, or enable automatic polling.
+1. Sign in with the Lazycat account that will own this mailbox data.
+2. Fill in your AI API settings.
+3. Add one or more IMAP / POP3 mailboxes.
+4. Test each mailbox connection.
+5. Click "Process now" in the Processing Desk, or enable automatic polling.
 
 Common email ports:
 
@@ -217,16 +216,15 @@ This project handles mailbox authorization codes, AI keys, and raw email content
 
 | Protection | Details |
 | --- | --- |
-| Password login | The admin panel is password protected. Sessions last 7 days by default. |
-| Password hashing | Admin password is stored with PBKDF2 + salt. |
-| Brute-force protection | Too many failed login attempts temporarily block the source IP. |
+| Lazycat OIDC | The login page starts OIDC only after the user clicks the Lazycat sign-in button. |
+| Account isolation | Each Lazycat account has its own database, email credentials, notification credentials, logs, and event stream. |
 | CSRF defense | Mutating requests from untrusted origins are rejected. |
 | Security headers | CSP, X-Frame-Options, nosniff, Referrer-Policy, and related headers are enabled. |
 | Sandboxed original email | Original HTML is rendered in a sandboxed iframe with scripts, forms, and plugins disabled. |
 | Image proxy | Remote images are fetched through a backend proxy that blocks private IPs, credential URLs, unsafe ports, and oversized files. |
 | No indexing | `robots.txt` and `X-Robots-Tag` are included to discourage search engine indexing. |
 
-Important: `data/` stores mailbox authorization codes, AI keys, processed email records, and runtime state. It is excluded by `.gitignore`. Do not commit `data/`, `.env`, server passwords, or BT/Baota API keys.
+Important: in an LPK install, private data is stored under `/lzcapp/documents/<uid>/auto-email-system/`. Do not commit local test data, `.env`, or production credentials.
 
 ## Deployment Notes
 
@@ -240,9 +238,8 @@ Recommended deployment targets:
 Production suggestions:
 
 - Use HTTPS.
-- Change the default login password.
 - Harden SSH access on the server.
-- Back up `data/app.db.json` regularly.
+- Back up each account's private SQLite database regularly.
 - Do not expose the app to untrusted shared users.
 
 ## Repository Layout
@@ -265,4 +262,6 @@ tools/weclaw/         WeClaw / ClawBot runtime files
 
 ## License
 
-This repository currently does not declare a project-wide open-source license. If you plan to redistribute it publicly, add a project license first and follow the license requirements in `tools/weclaw/LICENSE`.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for the full text.
+
+The `tools/weclaw/` directory contains third-party WeClaw / ClawBot runtime files and keeps its own license in [tools/weclaw/LICENSE](tools/weclaw/LICENSE).

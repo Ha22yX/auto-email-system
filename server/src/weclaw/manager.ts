@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { currentUserId, runAsUser, userDataPath } from "../user-context";
+import { registeredUserIds } from "../user-registry";
 
 type WeclawState = {
   bridgeAbort?: AbortController;
@@ -16,13 +17,24 @@ type WeclawState = {
   };
 };
 
-const state: WeclawState = {};
-let qrLogMode = false;
+const states = new Map<string, WeclawState>();
+const qrLogModes = new Map<string, boolean>();
+const state = new Proxy({} as WeclawState, {
+  get(_target, property) {
+    const current = states.get(currentUserId()) ?? {};
+    return current[property as keyof WeclawState];
+  },
+  set(_target, property, value) {
+    const uid = currentUserId();
+    const current = states.get(uid) ?? {};
+    current[property as keyof WeclawState] = value as never;
+    states.set(uid, current);
+    return true;
+  }
+});
 let contextReadyHandler: ((userId: string) => void | Promise<void>) | undefined;
 const rootDir = path.resolve(process.cwd());
 const toolDir = path.join(rootDir, "tools", "weclaw");
-const logDir = path.join(rootDir, "data");
-const logFile = path.join(logDir, "weclaw.log");
 export const defaultWeclawApiUrl = "http://127.0.0.1:18011/api/send";
 const bridgeRuntimeName = "内置 Node iLink 桥接";
 const ilinkBaseUrl = "https://ilinkai.weixin.qq.com";
@@ -36,7 +48,7 @@ const contextTokenReminderCheckMs = Math.max(
   60,
   Number(process.env.WECLAW_CONTEXT_TOKEN_REMINDER_CHECK_SECONDS || 600)
 ) * 1000;
-let tokenReminderTimer: ReturnType<typeof setInterval> | undefined;
+const tokenReminderTimers = new Map<string, ReturnType<typeof setInterval>>();
 
 type WeclawCredential = {
   botToken?: string;
@@ -99,11 +111,19 @@ function executablePath() {
 }
 
 function credentialsDir() {
-  return path.join(os.homedir(), ".weclaw", "accounts");
+  return path.join(userDataPath(currentUserId()), "weclaw", "accounts");
 }
 
 function contextTokensPath() {
-  return path.join(os.homedir(), ".weclaw", "context_tokens.json");
+  return path.join(userDataPath(currentUserId()), "weclaw", "context_tokens.json");
+}
+
+function logDir() {
+  return path.join(userDataPath(currentUserId()), "weclaw");
+}
+
+function logFile() {
+  return path.join(logDir(), "weclaw.log");
 }
 
 function normalizeAccountId(raw: string) {
@@ -205,6 +225,26 @@ function writeWeclawContextToken(userId: string, contextToken: string) {
   return previous !== contextToken;
 }
 
+function clearWeclawContextToken(userId: string, expectedToken?: string) {
+  const current = readWeclawContextTokens();
+  const token = current.tokens[userId];
+  if (!token || (expectedToken && token !== expectedToken)) return false;
+
+  const tokens = { ...current.tokens };
+  const tokenUpdatedAt = { ...current.tokenUpdatedAt };
+  const reminders = { ...current.reminders };
+  delete tokens[userId];
+  delete tokenUpdatedAt[userId];
+  delete reminders[userId];
+  writeWeclawContextTokenStore({
+    updated_at: new Date().toISOString(),
+    token_updated_at: tokenUpdatedAt,
+    tokens,
+    reminders
+  });
+  return true;
+}
+
 function readWeclawCredentialRecords(): WeclawCredentialRecord[] {
   const dir = credentialsDir();
   if (!fs.existsSync(dir)) return [];
@@ -262,30 +302,31 @@ export function resolveWeclawRecipientId(fallback = "") {
 }
 
 function appendLog(source: string, chunk: Buffer | string) {
-  fs.mkdirSync(logDir, { recursive: true });
+  fs.mkdirSync(logDir(), { recursive: true });
   const text = String(chunk);
+  const uid = currentUserId();
   const lines = text
     .split(/\r\n|\n|\r/)
     .filter(Boolean)
     .map((line) => {
       if (line.includes("Scan this QR code with WeChat")) {
-        qrLogMode = true;
+        qrLogModes.set(uid, true);
         return `[${new Date().toISOString()}] [${source}] ${line}`;
       }
-      if (qrLogMode && (line.includes("QR URL:") || line.includes("Waiting for scan"))) {
-        if (line.includes("Waiting for scan")) qrLogMode = false;
+      if (qrLogModes.get(uid) && (line.includes("QR URL:") || line.includes("Waiting for scan"))) {
+        if (line.includes("Waiting for scan")) qrLogModes.set(uid, false);
         return `[${new Date().toISOString()}] [${source}] ${line}`;
       }
-      if (qrLogMode) return line;
+      if (qrLogModes.get(uid)) return line;
       return `[${new Date().toISOString()}] [${source}] ${line}`;
     })
     .join("\n");
-  if (lines) fs.appendFileSync(logFile, `${lines}\n`, "utf8");
+  if (lines) fs.appendFileSync(logFile(), `${lines}\n`, "utf8");
 }
 
 function readLogTail(lines = 120) {
-  if (!fs.existsSync(logFile)) return "";
-  const content = fs.readFileSync(logFile, "utf8");
+  if (!fs.existsSync(logFile())) return "";
+  const content = fs.readFileSync(logFile(), "utf8");
   return content.split(/\r\n|\n|\r/).slice(-lines).join("\n").trim();
 }
 
@@ -450,6 +491,10 @@ export async function sendWeclawDirectText(recipientId: string, text: string, ti
   );
 
   if (response.ret && response.ret !== 0) {
+    if (response.ret === -2) {
+      clearWeclawContextToken(recipientId, contextToken);
+      appendLog("system", `WeChat rejected the saved context for ${recipientId}; waiting for a fresh incoming message`);
+    }
     throw new Error(`send message failed: ret=${response.ret} errmsg=${response.errmsg || ""}`);
   }
 
@@ -573,16 +618,19 @@ export async function sendDueWeclawTokenRefreshReminders() {
 }
 
 export function startWeclawTokenReminderWorker() {
-  if (tokenReminderTimer) return tokenReminderTimer;
+  const uid = currentUserId();
+  const existing = tokenReminderTimers.get(uid);
+  if (existing) return existing;
   const tick = () => {
     void sendDueWeclawTokenRefreshReminders().catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       appendLog("system", `context token reminder worker failed: ${message}`);
     });
   };
-  tokenReminderTimer = setInterval(tick, contextTokenReminderCheckMs);
+  const timer = setInterval(tick, contextTokenReminderCheckMs);
   setTimeout(tick, 30000);
-  return tokenReminderTimer;
+  tokenReminderTimers.set(uid, timer);
+  return timer;
 }
 
 function textFromIlinkMessage(msg: any) {
@@ -590,8 +638,9 @@ function textFromIlinkMessage(msg: any) {
   return String(item?.text_item?.text || "");
 }
 
-function isUserFinishedMessage(msg: any) {
-  return msg?.message_type === 1 && msg?.message_state === 2;
+function contextTokenFromMessage(msg: any) {
+  const token = msg?.context_token ?? msg?.context?.context_token ?? msg?.message?.context_token;
+  return typeof token === "string" ? token.trim() : "";
 }
 
 async function monitorAccount(account: WeclawCredentialRecord, signal: AbortSignal) {
@@ -639,14 +688,15 @@ async function monitorAccount(account: WeclawCredentialRecord, signal: AbortSign
 
       const messages = Array.isArray(response?.msgs) ? response.msgs : [];
       for (const msg of messages) {
-        if (!isUserFinishedMessage(msg)) continue;
-        if (msg.context_token && msg.from_user_id) {
-          writeWeclawContextToken(msg.from_user_id, msg.context_token);
+        const senderId = typeof msg?.from_user_id === "string" ? msg.from_user_id : "";
+        const contextToken = contextTokenFromMessage(msg);
+        if (senderId && senderId !== account.botId && contextToken) {
+          const contextChanged = writeWeclawContextToken(senderId, contextToken);
           appendLog(
             "system",
             `recorded WeChat context for ${msg.from_user_id}; incoming text ignored: ${textFromIlinkMessage(msg).slice(0, 60)}`
           );
-          notifyWeclawContextReady(msg.from_user_id);
+          if (contextChanged) notifyWeclawContextReady(currentUserId());
         }
       }
     } catch (error) {
@@ -804,7 +854,7 @@ export async function startWeclaw(apiUrl: string) {
     };
   }
 
-  fs.mkdirSync(logDir, { recursive: true });
+  fs.mkdirSync(logDir(), { recursive: true });
   appendLog("system", `starting project notification bridge (${apiUrlToAddr(apiUrl)})`);
   await forceStopBundledWeclaw();
 
@@ -813,12 +863,24 @@ export async function startWeclaw(apiUrl: string) {
   } else {
     await startQrLogin();
   }
+  startWeclawTokenReminderWorker();
 
   await new Promise((resolve) => setTimeout(resolve, 1200));
   return {
     ...(await getWeclawStatus(apiUrl)),
     message: "已启动微信通知桥接。首次运行请查看二维码并用手机微信扫码。"
   };
+}
+
+export async function startStoredWeclawBridges() {
+  for (const userId of registeredUserIds()) {
+    await runAsUser(userId, async () => {
+      if (readWeclawCredentialRecords().length) {
+        startNotificationBridge();
+        startWeclawTokenReminderWorker();
+      }
+    });
+  }
 }
 
 export async function ensureWeclawStarted(apiUrl: string) {
@@ -872,11 +934,13 @@ export async function rebindWeclaw(apiUrl: string) {
 export function getWeclawLogTail(lines = 160) {
   return {
     logTail: readLogTail(lines),
-    logFile
+    logFile: logFile()
   };
 }
 
 process.once("exit", () => {
-  state.bridgeAbort?.abort();
-  state.loginAbort?.abort();
+  for (const userState of states.values()) {
+    userState.bridgeAbort?.abort();
+    userState.loginAbort?.abort();
+  }
 });

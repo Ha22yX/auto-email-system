@@ -105,12 +105,11 @@ docker run -d \
 
 ## 首次配置
 
-1. 登录管理面板。
-2. 修改默认登录密码。默认密码是 `Admin12345`，公开部署前必须修改。
-3. 在 AI API 中填入模型服务配置。
-4. 在多邮箱配置中添加 IMAP/POP3 邮箱。
-5. 点击测试连接，确认邮箱授权码、主机、端口无误。
-6. 回到处理台点击“立即处理”，或开启自动轮询。
+1. 使用将拥有该邮箱数据的懒猫账号登录。
+2. 在 AI API 中填入模型服务配置。
+3. 在多邮箱配置中添加 IMAP/POP3 邮箱。
+4. 点击测试连接，确认邮箱授权码、主机、端口无误。
+5. 回到处理台点击“立即处理”，或开启自动轮询。
 
 常用邮箱端口：
 
@@ -209,16 +208,15 @@ WeClaw 来源：<https://github.com/fastclaw-ai/weclaw>
 
 | 防护 | 说明 |
 | --- | --- |
-| 登录保护 | 管理面板需要密码登录，会话默认保存 7 天。 |
-| 密码存储 | 管理密码使用 PBKDF2 + salt 哈希存储。 |
-| 防爆破 | 登录失败过多会临时限制来源 IP。 |
+| 懒猫 OIDC | 用户点击懒猫登录按钮后才进入授权回调。 |
+| 账户隔离 | 每个懒猫账号拥有独立数据库、邮箱凭据、通知凭据、日志和事件流。 |
 | CSRF 防护 | 非可信来源的修改请求会被拦截。 |
 | 安全响应头 | 启用 CSP、X-Frame-Options、nosniff、Referrer-Policy 等。 |
 | 邮件原件沙箱 | 邮件 HTML 在 sandbox iframe 中显示，禁用脚本、表单和插件。 |
 | 图片代理 | 远程图片经过后端代理，阻止内网地址、认证 URL、异常端口和超大文件。 |
 | 搜索引擎屏蔽 | 内置 `robots.txt` 与 `X-Robots-Tag`，避免被搜索引擎索引。 |
 
-重要提醒：`data/` 会保存邮箱授权码、AI Key、处理后的邮件数据和运行状态，已经在 `.gitignore` 中排除。不要把 `data/`、`.env`、服务器密码或宝塔 API Key 提交到仓库。
+重要提醒：LPK 环境将私有数据保存到 `/lzcapp/documents/<uid>/auto-email-system/`。不要把本地测试数据、`.env` 或生产凭据提交到仓库。
 
 ## 部署建议
 
@@ -232,9 +230,8 @@ WeClaw 来源：<https://github.com/fastclaw-ai/weclaw>
 生产环境建议：
 
 - 使用 HTTPS 域名访问。
-- 修改默认登录密码。
 - 限制服务器 SSH 登录方式。
-- 定期备份 `data/app.db.json`。
+- 定期备份每个账户的私有 SQLite 数据库。
 - 不要把应用直接暴露给不可信用户共同使用。
 
 ## 仓库结构
@@ -257,4 +254,6 @@ tools/weclaw/         WeClaw / ClawBot 运行文件
 
 ## License
 
-当前仓库未声明统一开源许可证。若要用于公开二次分发，请先补充项目 License，并遵守 `tools/weclaw/LICENSE` 中 WeClaw 相关许可要求。
+本项目采用 MIT License，完整协议文本见 [LICENSE](LICENSE)。
+
+`tools/weclaw/` 目录包含第三方 WeClaw / ClawBot 运行文件，其许可协议单独保留在 [tools/weclaw/LICENSE](tools/weclaw/LICENSE) 中。

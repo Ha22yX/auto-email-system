@@ -31,11 +31,6 @@ export type NotificationSettings = {
   notifyCategories: Record<MailCategory, boolean>;
 };
 
-export type AuthSettings = {
-  passwordUpdatedAt: string;
-  sessionDays: number;
-};
-
 export type Mailbox = {
   id: string;
   name: string;
@@ -150,7 +145,6 @@ export type Dashboard = {
     ai: AiSettings;
     system: SystemSettings;
     notification: NotificationSettings;
-    auth: AuthSettings;
   };
   mailboxes: Mailbox[];
   counts: Record<MailCategory, number>;

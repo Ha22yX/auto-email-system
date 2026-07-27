@@ -1,14 +1,19 @@
 {
   "name": "auto-email-system",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "concurrently \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch server/src/server.ts",
     "dev:web": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
-    "start": "tsx server/src/server.ts"
+    "build": "tsc --noEmit && vite build && npm run build:server",
+    "build:server": "esbuild server/src/server.ts --bundle --platform=node --target=node24 --format=esm --packages=external --outfile=server-dist/server.js",
+    "start": "tsx server/src/server.ts",
+    "test": "tsx --test server/src/*.test.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
@@ -18,6 +23,7 @@
     "express": "^5.2.1",
     "imapflow": "^1.2.1",
     "mailparser": "^3.9.0",
+    "openid-client": "^6.8.2",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -32,6 +38,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "concurrently": "^9.2.1",
+    "esbuild": "^0.27.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.2.7"

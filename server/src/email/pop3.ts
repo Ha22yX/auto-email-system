@@ -134,7 +134,12 @@ export async function fetchUnreadPop3(mailbox: Mailbox, limit: number): Promise<
   await client.connect();
   try {
     const refs = await client.listUidl();
-    const candidates = refs.filter((ref) => !hasProcessed(mailbox.id, ref.uid)).slice(0, limit);
+    // POP3 message indexes increase as messages arrive. Process the largest
+    // indexes first so an old backlog does not hide recent mail.
+    const candidates = refs
+      .filter((ref) => !hasProcessed(mailbox.id, ref.uid))
+      .sort((left, right) => right.index - left.index)
+      .slice(0, limit);
 
     for (const ref of candidates) {
       const rawSource = await client.retrieve(ref.index);

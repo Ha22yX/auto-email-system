@@ -19,13 +19,15 @@ import {
   updateProcessedEmailReadMark,
   updateRun
 } from "../store";
+import { currentUserId, runAsUser } from "../user-context";
+import { registeredUserIds } from "../user-registry";
 import { sendEmailNotification, shouldNotifyEmail } from "../notifications/clawbot";
 import type { Mailbox, ProcessingRun } from "../types";
 import { countUnreadImap, fetchInterruptedImapRecovery, fetchUnreadImap, type FetchedEmail } from "./imap";
 import { countUnreadPop3, fetchUnreadPop3 } from "./pop3";
 
-let running = false;
-const queuedMailboxIds = new Set<string>();
+const runningUsers = new Set<string>();
+const queuedMailboxIds = new Map<string, Set<string>>();
 let queueDrainTimer: ReturnType<typeof setTimeout> | undefined;
 let queueDraining = false;
 
@@ -83,12 +85,18 @@ export async function processMailboxes(options: {
   mailboxId?: string;
   manual?: boolean;
   recoverInterrupted?: boolean;
-} = {}) {
-  if (running) {
+  userId?: string;
+} = {}): Promise<ProcessingRun> {
+  if (options.userId) {
+    const { userId, ...scopedOptions } = options;
+    return runAsUser(userId, () => processMailboxes(scopedOptions));
+  }
+  const userId = currentUserId();
+  if (runningUsers.has(userId)) {
     throw new Error("已有处理任务正在运行");
   }
 
-  running = true;
+  runningUsers.add(userId);
   const state = readState();
   const run: ProcessingRun = {
     id: randomUUID(),
@@ -438,13 +446,13 @@ export async function processMailboxes(options: {
     persistRun(run);
     return run;
   } finally {
-    running = false;
+    runningUsers.delete(userId);
     updateRun(run);
   }
 }
 
-export function isProcessorRunning() {
-  return running;
+export function isProcessorRunning(userId?: string) {
+  return userId ? runningUsers.has(userId) : runningUsers.size > 0;
 }
 
 function scheduleQueueDrain(delayMs = 1000) {
@@ -457,20 +465,20 @@ function scheduleQueueDrain(delayMs = 1000) {
 
 async function drainProcessingQueue() {
   if (queueDraining) return;
-  if (running) {
-    scheduleQueueDrain(10000);
-    return;
-  }
-
-  const mailboxId = queuedMailboxIds.values().next().value as string | undefined;
+  const nextQueue = queuedMailboxIds.entries().next().value as [string, Set<string>] | undefined;
+  if (!nextQueue) return;
+  const [userId, mailboxIds] = nextQueue;
+  const mailboxId = mailboxIds.values().next().value as string | undefined;
   if (!mailboxId) return;
-
-  queuedMailboxIds.delete(mailboxId);
+  mailboxIds.delete(mailboxId);
+  if (!mailboxIds.size) queuedMailboxIds.delete(userId);
   queueDraining = true;
   try {
-    await processMailboxes({ mailboxId });
+    await processMailboxes({ mailboxId, userId });
   } catch {
-    queuedMailboxIds.add(mailboxId);
+    const queued = queuedMailboxIds.get(userId) ?? new Set<string>();
+    queued.add(mailboxId);
+    queuedMailboxIds.set(userId, queued);
     scheduleQueueDrain(10000);
   } finally {
     queueDraining = false;
@@ -483,28 +491,39 @@ async function drainProcessingQueue() {
 
 export function requestMailboxProcessing(mailboxId: string, delayMs = 5000) {
   if (!mailboxId) return;
-  queuedMailboxIds.add(mailboxId);
+  const userId = currentUserId();
+  const queued = queuedMailboxIds.get(userId) ?? new Set<string>();
+  queued.add(mailboxId);
+  queuedMailboxIds.set(userId, queued);
   scheduleQueueDrain(delayMs);
 }
 
 export function startProcessingWorker(options: { recoverInterruptedOnFirstRun?: boolean } = {}) {
-  let lastAttemptAt = 0;
-  let shouldRecoverInterrupted = Boolean(options.recoverInterruptedOnFirstRun);
+  const lastAttemptAt = new Map<string, number>();
+  const recoveryPending = new Set<string>();
+  const recoveryChecked = new Set<string>();
 
-  const tick = async () => {
+  const tickUser = async (userId: string) => runAsUser(userId, async () => {
     const current = readState();
-    if (!current.settings.system.autoProcessEnabled || running) return;
+    if (!current.settings.system.autoProcessEnabled || runningUsers.has(userId)) return;
     if (!current.mailboxes.some((mailbox) => mailbox.enabled)) return;
-
     const intervalMs = Math.max(current.settings.system.pollIntervalMinutes, 1) * 60 * 1000;
-    if (Date.now() - lastAttemptAt < intervalMs) return;
-    lastAttemptAt = Date.now();
-
+    if (Date.now() - (lastAttemptAt.get(userId) ?? 0) < intervalMs) return;
+    lastAttemptAt.set(userId, Date.now());
     try {
-      await processMailboxes({ recoverInterrupted: shouldRecoverInterrupted });
-      shouldRecoverInterrupted = false;
+      await processMailboxes({ recoverInterrupted: recoveryPending.delete(userId) });
     } catch {
       // The run itself records detailed errors. The worker stays alive.
+    }
+  });
+
+  const tick = async () => {
+    for (const userId of registeredUserIds()) {
+      if (options.recoverInterruptedOnFirstRun && !recoveryChecked.has(userId)) {
+        recoveryChecked.add(userId);
+        recoveryPending.add(userId);
+      }
+      await tickUser(userId);
     }
   };
 

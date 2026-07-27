@@ -64,8 +64,13 @@ export async function fetchUnreadImap(mailbox: Mailbox, limit: number): Promise<
   const lock = await client.getMailboxLock(mailbox.folder || "INBOX", { acquireTimeout: 15000 });
   try {
     const unseen = (await client.search({ seen: false }, { uid: true })) || [];
-    const uids = unseen.slice(0, limit);
+    // IMAP UIDs grow as messages arrive. Search results are normally oldest
+    // first, so explicitly select the highest UIDs to process recent mail
+    // before a backlog of old unread messages.
+    const uids = unseen.slice().sort((left, right) => right - left).slice(0, limit);
     if (!uids.length) return results;
+
+    const fetchedByUid = new Map<number, FetchedEmail>();
 
     for await (const message of client.fetch(
       uids,
@@ -89,10 +94,15 @@ export async function fetchUnreadImap(mailbox: Mailbox, limit: number): Promise<
         fallbackDate
       });
 
-      results.push({
+      fetchedByUid.set(message.uid, {
         email,
         markRead: readMarker(mailbox, message.uid)
       });
+    }
+
+    for (const uid of uids) {
+      const fetched = fetchedByUid.get(uid);
+      if (fetched) results.push(fetched);
     }
   } finally {
     lock.release();

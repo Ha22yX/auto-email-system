@@ -1,6 +1,5 @@
 import type {
   AiSettings,
-  AuthSettings,
   Dashboard,
   EmailListPage,
   MailCategory,
@@ -49,13 +48,7 @@ export const api = {
     return `${API_BASE}/api/events`;
   },
   authSession() {
-    return request<{ authenticated: boolean; auth: AuthSettings }>("/api/auth/session");
-  },
-  login(password: string) {
-    return request<{ authenticated: boolean; auth: AuthSettings }>("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ password })
-    });
+    return request<{ authenticated: boolean; user?: { uid: string } }>("/api/auth/session");
   },
   logout() {
     return request<{ authenticated: boolean }>("/api/auth/logout", { method: "POST" });
@@ -98,12 +91,6 @@ export const api = {
     return request<SystemSettings>("/api/settings/system", {
       method: "PUT",
       body: JSON.stringify(settings)
-    });
-  },
-  updateAuthPassword(currentPassword: string, newPassword: string) {
-    return request<AuthSettings>("/api/settings/auth/password", {
-      method: "PUT",
-      body: JSON.stringify({ currentPassword, newPassword })
     });
   },
   updateNotification(settings: NotificationSettings) {

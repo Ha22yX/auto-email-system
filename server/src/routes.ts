@@ -2,30 +2,27 @@ import express from "express";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { classifyEmail } from "./ai";
-import { clearAuthCookie, isAuthenticated, requireAuth, setAuthCookie } from "./auth";
+import { beginOidcLogin, clearAuthCookie, completeOidcLogin, getSession, requireAuth } from "./auth";
 import { handleAppEvents } from "./events";
 import { fetchRemoteEmailImage, findInlineEmailImage } from "./email/assets";
 import { fetchUnreadImap } from "./email/imap";
 import { fetchUnreadPop3 } from "./email/pop3";
 import { isProcessorRunning, processMailboxes } from "./email/processor";
-import { checkLoginAllowed, registerLoginFailure, registerLoginSuccess } from "./security";
 import {
   publicAiSettings,
-  publicAuthSettings,
   publicMailbox,
   getDashboardData,
   getProcessedEmailById,
   queryProcessedEmails,
   readState,
   removeMailbox,
-  updateAuthPassword,
   updateAiSettings,
   updateNotificationSettings,
   updateProcessedEmailPanelRead,
   updateSystemSettings,
-  upsertMailbox,
-  verifyAdminPassword
+  upsertMailbox
 } from "./store";
+import { currentUserId } from "./user-context";
 import { sendClawbotTestNotification } from "./notifications/clawbot";
 import { schedulePendingEmailNotificationRetry } from "./notifications/pending";
 import {
@@ -97,15 +94,6 @@ const panelReadSchema = z.object({
   panelRead: z.coerce.boolean()
 });
 
-const loginSchema = z.object({
-  password: z.string().min(1, "请输入登录密码")
-});
-
-const authPasswordSchema = z.object({
-  currentPassword: z.string().min(1, "请输入当前密码"),
-  newPassword: z.string().min(8, "新密码至少 8 位")
-});
-
 function asyncRoute(
   handler: (req: express.Request, res: express.Response) => Promise<unknown> | unknown
 ) {
@@ -155,8 +143,7 @@ function fromBase64Url(value: string) {
 }
 
 function emailAssetSigningKey() {
-  const auth = readState().settings.auth;
-  return `${auth.passwordHash}.${auth.passwordSalt}.${auth.passwordIterations}`;
+  return `${process.env.OIDC_CLIENT_SECRET || "development-secret"}.${currentUserId()}`;
 }
 
 function signEmailAssetPayload(payload: string) {
@@ -168,6 +155,7 @@ function createEmailAssetToken(emailId: string) {
   const payload = base64Url(
     JSON.stringify({
       emailId,
+      uid: currentUserId(),
       exp: now + EMAIL_ASSET_TOKEN_TTL_SECONDS
     })
   );
@@ -184,8 +172,8 @@ function verifyEmailAssetToken(emailId: string, token: string) {
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return false;
 
   try {
-    const parsed = JSON.parse(fromBase64Url(payload)) as { emailId?: string; exp?: number };
-    return parsed.emailId === emailId && Boolean(parsed.exp && parsed.exp >= Math.floor(Date.now() / 1000));
+    const parsed = JSON.parse(fromBase64Url(payload)) as { emailId?: string; uid?: string; exp?: number };
+    return parsed.emailId === emailId && parsed.uid === currentUserId() && Boolean(parsed.exp && parsed.exp >= Math.floor(Date.now() / 1000));
   } catch {
     return false;
   }
@@ -215,7 +203,6 @@ function buildDashboard(mailboxId?: string) {
       ai: publicAiSettings(state.settings.ai),
       system: state.settings.system,
       notification: state.settings.notification,
-      auth: publicAuthSettings(state.settings.auth)
     },
     mailboxes: state.mailboxes.map(publicMailbox),
     counts: dashboard.counts,
@@ -239,33 +226,17 @@ router.get(
 router.get(
   "/auth/session",
   asyncRoute((req, res) => {
+    const session = getSession(req);
+    if (!session) clearAuthCookie(req, res);
     res.json({
-      authenticated: isAuthenticated(req),
-      auth: publicAuthSettings(readState().settings.auth)
+      authenticated: Boolean(session),
+      user: session ? { uid: session.uid } : undefined
     });
   })
 );
 
-router.post(
-  "/auth/login",
-  asyncRoute((req, res) => {
-    if (!checkLoginAllowed(req, res)) return;
-
-    const parsed = loginSchema.parse(req.body);
-    if (!verifyAdminPassword(parsed.password)) {
-      registerLoginFailure(req);
-      res.status(401).json({ error: "登录密码不正确。" });
-      return;
-    }
-
-    registerLoginSuccess(req);
-    setAuthCookie(req, res);
-    res.json({
-      authenticated: true,
-      auth: publicAuthSettings(readState().settings.auth)
-    });
-  })
-);
+router.get("/auth/oidc/login", asyncRoute(beginOidcLogin));
+router.get("/auth/oidc/callback", asyncRoute(completeOidcLogin));
 
 router.post(
   "/auth/logout",
@@ -274,6 +245,8 @@ router.post(
     res.json({ authenticated: false });
   })
 );
+
+router.use(requireAuth);
 
 router.get(
   "/email-assets/image",
@@ -312,8 +285,6 @@ router.get(
     sendImageAsset(res, asset);
   })
 );
-
-router.use(requireAuth);
 
 router.get("/events", handleAppEvents);
 
@@ -372,7 +343,7 @@ router.post(
 
     res.json({
       ok: true,
-      message: `AI API 测试成功，模型返回分类：${result.category}`,
+      message: "AI API 测试成功",
       result
     });
   })
@@ -390,21 +361,6 @@ router.put(
   asyncRoute((req, res) => {
     const parsed = systemSchema.parse(req.body);
     res.json(updateSystemSettings(parsed));
-  })
-);
-
-router.get(
-  "/settings/auth",
-  asyncRoute((_req, res) => {
-    res.json(publicAuthSettings(readState().settings.auth));
-  })
-);
-
-router.put(
-  "/settings/auth/password",
-  asyncRoute((req, res) => {
-    const parsed = authPasswordSchema.parse(req.body);
-    res.json(publicAuthSettings(updateAuthPassword(parsed.currentPassword, parsed.newPassword)));
   })
 );
 

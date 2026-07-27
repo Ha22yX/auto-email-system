@@ -5,28 +5,22 @@ import express from "express";
 import router from "./routes";
 import { startProcessingWorker } from "./email/processor";
 import { startImapIdleWatchers } from "./email/imap-idle";
-import { schedulePendingEmailNotificationRetry } from "./notifications/pending";
-import {
-  defaultWeclawApiUrl,
-  ensureWeclawStarted,
-  setWeclawContextReadyHandler,
-  startWeclawTokenReminderWorker
-} from "./weclaw/manager";
+import { retryPendingEmailNotifications, startPendingNotificationRetryWorker } from "./notifications/pending";
+import { setWeclawContextReadyHandler, startStoredWeclawBridges } from "./weclaw/manager";
+import { runAsUser } from "./user-context";
 import { apiRateLimit, corsOrigin, csrfProtection, securityHeaders } from "./security";
-import {
-  hasInterruptedRecoveryRetry,
-  markInterruptedRuns
-} from "./store";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, "../..");
+const rootDir = path.resolve(process.env.APP_ROOT ?? process.cwd());
 const distDir = path.join(rootDir, "dist");
 const port = Number(process.env.PORT ?? 8787);
 
-const app = express();
+setWeclawContextReadyHandler(async (userId) => {
+  await runAsUser(userId, () => retryPendingEmailNotifications());
+});
 
-setWeclawContextReadyHandler(() => schedulePendingEmailNotificationRetry(500));
+const app = express();
 
 app.set("trust proxy", true);
 app.disable("x-powered-by");
@@ -52,11 +46,9 @@ app.get(/.*/, (_req, res) => {
 });
 
 app.listen(port, () => {
-  const retryInterruptedRecovery = hasInterruptedRecoveryRetry();
-  const interruptedCount = markInterruptedRuns();
-  startProcessingWorker({ recoverInterruptedOnFirstRun: interruptedCount > 0 || retryInterruptedRecovery });
+  startProcessingWorker({ recoverInterruptedOnFirstRun: true });
   startImapIdleWatchers();
-  startWeclawTokenReminderWorker();
-  void ensureWeclawStarted(defaultWeclawApiUrl).finally(() => schedulePendingEmailNotificationRetry(3000));
+  startPendingNotificationRetryWorker();
+  void startStoredWeclawBridges();
   console.log(`自动邮件系统已启动: http://127.0.0.1:${port}`);
 });

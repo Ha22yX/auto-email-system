@@ -2,12 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { createAuthSettings, verifyPassword } from "./auth-crypto";
 import { publishAppEvent } from "./events";
+import { currentUserId } from "./user-context";
 import type {
   AiSettings,
   AppState,
-  AuthSettings,
   IncomingEmail,
   MailCategory,
   Mailbox,
@@ -17,9 +16,7 @@ import type {
   SystemSettings
 } from "./types";
 
-const DATA_DIR = path.resolve(process.env.DATA_DIR ?? "data");
-const JSON_DATA_FILE = path.join(DATA_DIR, "app.db.json");
-const SQLITE_FILE = path.join(DATA_DIR, "app.sqlite");
+const USER_DATA_ROOT = path.resolve(process.env.USER_DATA_ROOT ?? path.join(process.env.DATA_DIR ?? "data", "users"));
 const SCHEMA_VERSION = 1;
 
 const defaultNotifyCategories: Record<MailCategory, boolean> = {
@@ -54,8 +51,7 @@ const defaultState: AppState = {
       clawbotRecipientId: "",
       importantOnly: true,
       notifyCategories: defaultNotifyCategories
-    },
-    auth: createAuthSettings()
+    }
   },
   mailboxes: [],
   emails: [],
@@ -64,9 +60,10 @@ const defaultState: AppState = {
 
 type SqlRow = Record<string, unknown>;
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-const db = new DatabaseSync(SQLITE_FILE);
-db.exec(`
+const databases = new Map<string, DatabaseSync>();
+
+function initializeSchema(database: DatabaseSync) {
+  database.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;
   PRAGMA foreign_keys = ON;
@@ -147,6 +144,34 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_processing_events_run ON processing_events(runId, createdAt DESC);
   CREATE INDEX IF NOT EXISTS idx_processing_events_mailbox ON processing_events(mailboxId, createdAt DESC);
 `);
+}
+
+function userDataDir(uid: string) {
+  return path.join(USER_DATA_ROOT, encodeURIComponent(uid), "auto-email-system");
+}
+
+function databaseForCurrentUser() {
+  const uid = currentUserId();
+  const existing = databases.get(uid);
+  if (existing) return existing;
+
+  const directory = userDataDir(uid);
+  fs.mkdirSync(directory, { recursive: true });
+  const database = new DatabaseSync(path.join(directory, "app.sqlite"));
+  database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;");
+  initializeSchema(database);
+  databases.set(uid, database);
+  ensureInitialized();
+  return database;
+}
+
+const db = new Proxy({} as DatabaseSync, {
+  get(_target, property) {
+    const database = databaseForCurrentUser() as unknown as Record<PropertyKey, unknown>;
+    const value = database[property];
+    return typeof value === "function" ? value.bind(database) : value;
+  }
+});
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -191,7 +216,6 @@ function getMeta(key: string) {
 
 function normalizeState(parsed: Partial<AppState>): AppState {
   const parsedNotification = parsed.settings?.notification as Partial<NotificationSettings> | undefined;
-  const parsedAuth = parsed.settings?.auth as Partial<AuthSettings> | undefined;
   const migratedNotifyCategories =
     parsedNotification?.notifyCategories ??
     (parsedNotification
@@ -201,15 +225,6 @@ function normalizeState(parsed: Partial<AppState>): AppState {
           ignore: false
         }
       : defaultNotifyCategories);
-  const auth =
-    parsedAuth?.passwordHash && parsedAuth.passwordSalt
-      ? {
-          ...defaultState.settings.auth,
-          ...parsedAuth,
-          passwordIterations: parsedAuth.passwordIterations ?? defaultState.settings.auth.passwordIterations
-        }
-      : createAuthSettings();
-
   return {
     settings: {
       ai: { ...defaultState.settings.ai, ...parsed.settings?.ai },
@@ -223,8 +238,7 @@ function normalizeState(parsed: Partial<AppState>): AppState {
         },
         clawbotApiUrl: "http://127.0.0.1:18011/api/send",
         clawbotRecipientId: ""
-      },
-      auth
+      }
     },
     mailboxes: parsed.mailboxes ?? [],
     emails: (parsed.emails ?? []).map((email) => ({
@@ -240,7 +254,6 @@ function insertSettings(settings: AppState["settings"]) {
   statement.run("ai", JSON.stringify(settings.ai));
   statement.run("system", JSON.stringify(settings.system));
   statement.run("notification", JSON.stringify(settings.notification));
-  statement.run("auth", JSON.stringify(settings.auth));
 }
 
 function insertMailbox(mailbox: Mailbox) {
@@ -316,20 +329,9 @@ function replaceState(state: AppState) {
 function ensureInitialized() {
   if (getMeta("schemaVersion")) return;
 
-  let initialState = defaultState;
-  if (fs.existsSync(JSON_DATA_FILE)) {
-    const raw = fs.readFileSync(JSON_DATA_FILE, "utf8");
-    initialState = normalizeState(JSON.parse(raw) as Partial<AppState>);
-  }
-
-  replaceState(initialState);
+  replaceState(normalizeState(defaultState));
   setMeta("schemaVersion", String(SCHEMA_VERSION));
-  if (fs.existsSync(JSON_DATA_FILE)) {
-    setMeta("jsonMigratedAt", new Date().toISOString());
-  }
 }
-
-ensureInitialized();
 
 function getSetting<T>(key: keyof AppState["settings"], fallback: T): T {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(String(key)) as SqlRow | undefined;
@@ -350,8 +352,7 @@ function getSettings(): AppState["settings"] {
       },
       clawbotApiUrl: "http://127.0.0.1:18011/api/send",
       clawbotRecipientId: ""
-    },
-    auth: getSetting<AuthSettings>("auth", defaultState.settings.auth)
+    }
   };
 }
 
@@ -420,13 +421,6 @@ export function publicAiSettings(settings: AiSettings) {
     apiKey: "",
     hasApiKey: Boolean(settings.apiKey),
     maskedApiKey: maskSecret(settings.apiKey)
-  };
-}
-
-export function publicAuthSettings(settings: AuthSettings) {
-  return {
-    passwordUpdatedAt: settings.passwordUpdatedAt,
-    sessionDays: 7
   };
 }
 
@@ -510,22 +504,6 @@ export function updateNotificationSettings(input: Partial<NotificationSettings>)
   };
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run("notification", JSON.stringify(next));
   publishAppEvent("settings", { key: "notification" });
-  return next;
-}
-
-export function verifyAdminPassword(password: string) {
-  return verifyPassword(password, getSettings().auth);
-}
-
-export function updateAuthPassword(currentPassword: string, newPassword: string) {
-  const current = getSettings().auth;
-  if (!verifyPassword(currentPassword, current)) {
-    throw new Error("当前登录密码不正确。");
-  }
-
-  const next = createAuthSettings(newPassword);
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run("auth", JSON.stringify(next));
-  publishAppEvent("settings", { key: "auth" });
   return next;
 }
 

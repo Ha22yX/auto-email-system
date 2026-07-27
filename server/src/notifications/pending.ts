@@ -1,8 +1,12 @@
 import { getPendingNotificationEmails, getProcessedEmailById, readState, updateProcessedEmailNotification } from "../store";
 import { sendEmailNotification, shouldNotifyEmail } from "./clawbot";
+import { runAsUser } from "../user-context";
+import { currentUserId } from "../user-context";
+import { registeredUserIds } from "../user-registry";
 
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
-let retrying = false;
+const retryingUsers = new Set<string>();
+let workerTimer: ReturnType<typeof setInterval> | undefined;
 
 export function schedulePendingEmailNotificationRetry(delayMs = 1000) {
   if (retryTimer) return;
@@ -13,11 +17,12 @@ export function schedulePendingEmailNotificationRetry(delayMs = 1000) {
 }
 
 export async function retryPendingEmailNotifications(limit = 20) {
-  if (retrying) {
+  const userId = currentUserId();
+  if (retryingUsers.has(userId)) {
     return { attempted: 0, sent: 0, failed: 0, skipped: true };
   }
 
-  retrying = true;
+  retryingUsers.add(userId);
   let attempted = 0;
   let sent = 0;
   let failed = 0;
@@ -58,6 +63,18 @@ export async function retryPendingEmailNotifications(limit = 20) {
 
     return { attempted, sent, failed, skipped: false };
   } finally {
-    retrying = false;
+    retryingUsers.delete(userId);
   }
+}
+
+export function startPendingNotificationRetryWorker() {
+  if (workerTimer) return workerTimer;
+  const tick = () => {
+    for (const userId of registeredUserIds()) {
+      void runAsUser(userId, () => retryPendingEmailNotifications());
+    }
+  };
+  tick();
+  workerTimer = setInterval(tick, 60_000);
+  return workerTimer;
 }

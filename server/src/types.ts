@@ -30,13 +30,6 @@ export type NotificationSettings = {
   notifyCategories: Record<MailCategory, boolean>;
 };
 
-export type AuthSettings = {
-  passwordHash: string;
-  passwordSalt: string;
-  passwordIterations: number;
-  passwordUpdatedAt: string;
-};
-
 export type Mailbox = {
   id: string;
   name: string;
@@ -139,7 +132,6 @@ export type AppState = {
     ai: AiSettings;
     system: SystemSettings;
     notification: NotificationSettings;
-    auth: AuthSettings;
   };
   mailboxes: Mailbox[];
   emails: ProcessedEmail[];

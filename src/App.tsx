@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
-  FormEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent
 } from "react";
@@ -14,7 +13,6 @@ import {
   EnvelopeSimple,
   FloppyDisk,
   GearSix,
-  LockKey,
   MagnifyingGlass,
   Mailbox as MailboxIcon,
   PencilSimple,
@@ -1107,61 +1105,26 @@ function AuthLoading() {
   );
 }
 
-function LoginView({
-  error,
-  onLogin
-}: {
-  error: string;
-  onLogin: (password: string) => Promise<void>;
-}) {
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [localError, setLocalError] = useState("");
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setLocalError("");
-    try {
-      await onLogin(password);
-      setPassword("");
-    } catch (loginError) {
-      setLocalError(loginError instanceof Error ? loginError.message : String(loginError));
-    } finally {
-      setBusy(false);
-    }
-  }
-
+function LoginView({ error }: { error: string }) {
   return (
     <main className="auth-shell">
-      <form className="auth-card" onSubmit={submit}>
+      <section className="auth-card">
         <div className="auth-card-head">
           <div className="auth-mark">
-            <LockKey size={28} weight="duotone" />
+            <ShieldCheck size={28} weight="duotone" />
           </div>
           <div>
             <p className="section-kicker">AI Inbox Console</p>
             <h1>登录自动邮件系统</h1>
           </div>
         </div>
-        <p className="auth-copy">请输入管理密码。登录状态会在当前浏览器保存 7 天。</p>
-        <label className="auth-field">
-          管理密码
-          <input
-            autoFocus
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            placeholder="输入管理密码"
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </label>
-        {(localError || error) && <div className="auth-error">{localError || error}</div>}
-        <button className="primary-button auth-submit" disabled={busy || !password.trim()} type="submit">
+        <p className="auth-copy">使用当前懒猫账号授权后，可访问仅属于该账号的邮箱、设置与通知数据。</p>
+        {error && <div className="auth-error">{error}</div>}
+        <button className="primary-button auth-submit" onClick={() => window.location.assign("/api/auth/oidc/login")} type="button">
           <ShieldCheck size={18} />
-          {busy ? "正在登录" : "登录"}
+          使用懒猫账号登录
         </button>
-      </form>
+      </section>
     </main>
   );
 }
@@ -1193,12 +1156,6 @@ function App() {
     };
   }, []);
 
-  async function login(password: string) {
-    const result = await api.login(password);
-    setAuthenticated(result.authenticated);
-    setAuthError("");
-  }
-
   async function logout() {
     try {
       await api.logout();
@@ -1208,7 +1165,7 @@ function App() {
   }
 
   if (!authReady) return <AuthLoading />;
-  if (!authenticated) return <LoginView error={authError} onLogin={login} />;
+  if (!authenticated) return <LoginView error={authError} />;
   return <ConsoleApp onLogout={logout} />;
 }
 
@@ -1484,13 +1441,9 @@ function SettingsPanel({
   setToast: (message: string) => void;
 }) {
   const [aiForm, setAiForm] = useState<AiSettings | null>(null);
+  const settingsInitializedRef = useRef(false);
   const [systemForm, setSystemForm] = useState<SystemSettings | null>(null);
   const [notificationForm, setNotificationForm] = useState<NotificationSettings | null>(null);
-  const [authForm, setAuthForm] = useState({
-    currentPassword: "",
-    newPassword: "",
-    confirmPassword: ""
-  });
   const [notificationCategoryOpen, setNotificationCategoryOpen] = useState(true);
   const [weclawStatus, setWeclawStatus] = useState<WeclawStatus | null>(null);
   const [weclawQrDataUrl, setWeclawQrDataUrl] = useState("");
@@ -1500,9 +1453,13 @@ function SettingsPanel({
   const [mailboxForm, setMailboxForm] = useState<Partial<Mailbox>>(emptyMailbox);
   const [saving, setSaving] = useState(false);
   const weclawQrUrl = useMemo(() => extractWeclawQrUrl(weclawStatus?.logTail ?? ""), [weclawStatus?.logTail]);
+  const weclawAwaitingQr = Boolean(
+    weclawQrUrl && weclawStatus?.managedRunning && !weclawStatus?.hasCredentials
+  );
 
   useEffect(() => {
-    if (!dashboard) return;
+    if (!dashboard || settingsInitializedRef.current) return;
+    settingsInitializedRef.current = true;
     setAiForm({ ...dashboard.settings.ai, apiKey: "" });
     setSystemForm({
       ...dashboard.settings.system,
@@ -1517,6 +1474,10 @@ function SettingsPanel({
       notifyCategories: normalizeNotifyCategories(dashboard.settings.notification.notifyCategories)
     });
   }, [dashboard]);
+
+  function updateAiForm(patch: Partial<AiSettings>) {
+    setAiForm((current) => current ? { ...current, ...patch } : current);
+  }
 
   const refreshWeclawStatus = useCallback(async () => {
     const status = await api.weclawStatus();
@@ -1535,7 +1496,7 @@ function SettingsPanel({
   useEffect(() => {
     let cancelled = false;
 
-    if (!weclawQrUrl || weclawStatus?.apiReachable) {
+    if (!weclawAwaitingQr) {
       setWeclawQrDataUrl("");
       return () => {
         cancelled = true;
@@ -1558,7 +1519,7 @@ function SettingsPanel({
     return () => {
       cancelled = true;
     };
-  }, [weclawQrUrl, weclawStatus?.apiReachable]);
+  }, [weclawAwaitingQr, weclawQrUrl]);
 
   useEffect(() => {
     if (!weclawLogOpen) return;
@@ -1585,7 +1546,8 @@ function SettingsPanel({
     if (!aiForm) return;
     setSaving(true);
     try {
-      await api.updateAi(aiForm);
+      const saved = await api.updateAi(aiForm);
+      setAiForm({ ...saved, apiKey: "" });
       await onReload();
       setToast("AI 设置已保存。");
     } catch (error) {
@@ -1612,32 +1574,13 @@ function SettingsPanel({
     if (!systemForm) return;
     setSaving(true);
     try {
-      await api.updateSystem(systemForm);
+      const saved = await api.updateSystem(systemForm);
+      setSystemForm({
+        ...saved,
+        autoLoadRemoteImages: Boolean(saved.autoLoadRemoteImages)
+      });
       await onReload();
       setToast("系统设置已保存。");
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function saveAuthPassword() {
-    if (authForm.newPassword !== authForm.confirmPassword) {
-      setToast("两次输入的新密码不一致。");
-      return;
-    }
-    if (authForm.newPassword.length < 8) {
-      setToast("新密码至少需要 8 位。");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      await api.updateAuthPassword(authForm.currentPassword, authForm.newPassword);
-      setAuthForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-      await onReload();
-      setToast("登录密码已更新，旧登录状态会失效。");
     } catch (error) {
       setToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1649,7 +1592,15 @@ function SettingsPanel({
     if (!notificationForm) return;
     setSaving(true);
     try {
-      await api.updateNotification(notificationForm);
+      const saved = await api.updateNotification(notificationForm);
+      setNotificationForm({
+        ...saved,
+        enabled: Boolean(saved.enabled),
+        clawbotApiUrl: "http://127.0.0.1:18011/api/send",
+        clawbotRecipientId: "",
+        importantOnly: Boolean(saved.importantOnly),
+        notifyCategories: normalizeNotifyCategories(saved.notifyCategories)
+      });
       await onReload();
       setToast("微信通知设置已保存。");
     } catch (error) {
@@ -1784,27 +1735,31 @@ function SettingsPanel({
   const weclawLoginSaved = Boolean(weclawStatus?.hasCredentials);
   const weclawContextReady = Boolean(weclawStatus?.contextReady);
   const weclawSessionExpired = Boolean(weclawStatus?.sessionExpired);
-  const weclawQrHint = weclawStatus?.apiReachable
+  const weclawQrHint = weclawAwaitingQr
+    ? "用手机微信扫描下方二维码完成登录。"
+    : weclawStatus?.apiReachable
     ? weclawContextReady
       ? `微信桥接已经在线，通知会自动发送给扫码绑定的微信。`
       : weclawSessionExpired
         ? "扫码确认已经完成，但微信侧随后返回 session expired，说明 ClawBot 聊天没有在微信里真正建立。请先确认微信已更新，并且“设置 > 插件”里能看到微信 ClawBot。"
         : "微信已登录并自动绑定扫码用户。首次通知前，请在微信里搜索并打开 ClawBot，对它发送任意一条消息来激活会话；如果找不到联系人，请重新绑定微信。"
-    : weclawQrUrl
-      ? "用手机微信扫描下方二维码完成登录。"
-      : weclawStatus?.managedRunning
+    : weclawStatus?.managedRunning
         ? "正在等待通知桥接输出登录二维码。"
         : weclawLoginSaved
           ? "已保存微信登录状态。重启程序后点击启动通知桥接即可恢复，无需重新扫码。"
           : "启动通知桥接后，这里会自动显示登录二维码。";
-  const weclawHeading = weclawSessionExpired
+  const weclawHeading = weclawAwaitingQr
+    ? "等待微信扫码"
+    : weclawSessionExpired
     ? "微信会话未激活"
     : weclawStatus?.running
     ? "微信桥接已在线"
     : weclawLoginSaved
       ? "微信登录已保存"
       : "微信桥接未在线";
-  const weclawStatusLabel = weclawStatus?.apiReachable
+  const weclawStatusLabel = weclawAwaitingQr
+    ? "等待扫码"
+    : weclawStatus?.apiReachable
     ? weclawStatus.managedRunning
       ? weclawContextReady
         ? `会话已激活${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
@@ -1835,7 +1790,7 @@ function SettingsPanel({
           <div className="panel-heading">
             <div>
               <p className="section-kicker">AI API</p>
-              <h2>智谱 GLM Coding Plan</h2>
+              <h2>AI 模型服务</h2>
             </div>
             <Plugs size={22} />
           </div>
@@ -1845,19 +1800,19 @@ function SettingsPanel({
                 服务名称
                 <input
                   value={aiForm.providerName}
-                  onChange={(event) => setAiForm({ ...aiForm, providerName: event.target.value })}
+                  onChange={(event) => updateAiForm({ providerName: event.target.value })}
                 />
               </label>
               <label>
                 Base URL
                 <input
                   value={aiForm.baseUrl}
-                  onChange={(event) => setAiForm({ ...aiForm, baseUrl: event.target.value })}
+                  onChange={(event) => updateAiForm({ baseUrl: event.target.value })}
                 />
               </label>
               <label>
                 模型
-                <input value={aiForm.model} onChange={(event) => setAiForm({ ...aiForm, model: event.target.value })} />
+                <input value={aiForm.model} onChange={(event) => updateAiForm({ model: event.target.value })} />
               </label>
               <label>
                 Temperature
@@ -1867,32 +1822,32 @@ function SettingsPanel({
                   max="2"
                   step="0.1"
                   value={aiForm.temperature}
-                  onChange={(event) => setAiForm({ ...aiForm, temperature: Number(event.target.value) })}
+                  onChange={(event) => updateAiForm({ temperature: Number(event.target.value) })}
                 />
               </label>
               <label className="switch-row full-span">
                 <span>
                   <strong>多模态附件识别</strong>
-                  <small>内嵌图片、图片附件和 PDF 会先交给 GLM-5V-Turbo 摘要，再参与邮件分类。</small>
+                  <small>内嵌图片、图片附件和 PDF 会先交给多模态模型摘要，再参与邮件分类。</small>
                 </span>
                 <input
                   type="checkbox"
                   checked={Boolean(aiForm.multimodalEnabled)}
-                  onChange={(event) => setAiForm({ ...aiForm, multimodalEnabled: event.target.checked })}
+                  onChange={(event) => updateAiForm({ multimodalEnabled: event.target.checked })}
                 />
               </label>
               <label>
                 多模态 Base URL
                 <input
                   value={aiForm.multimodalBaseUrl}
-                  onChange={(event) => setAiForm({ ...aiForm, multimodalBaseUrl: event.target.value })}
+                  onChange={(event) => updateAiForm({ multimodalBaseUrl: event.target.value })}
                 />
               </label>
               <label>
                 多模态模型
                 <input
                   value={aiForm.multimodalModel}
-                  onChange={(event) => setAiForm({ ...aiForm, multimodalModel: event.target.value })}
+                  onChange={(event) => updateAiForm({ multimodalModel: event.target.value })}
                 />
               </label>
               <label>
@@ -1902,9 +1857,7 @@ function SettingsPanel({
                   min="1"
                   max="32"
                   value={aiForm.multimodalMaxAttachmentMb}
-                  onChange={(event) =>
-                    setAiForm({ ...aiForm, multimodalMaxAttachmentMb: Number(event.target.value) })
-                  }
+                  onChange={(event) => updateAiForm({ multimodalMaxAttachmentMb: Number(event.target.value) })}
                 />
               </label>
               <label>
@@ -1914,7 +1867,7 @@ function SettingsPanel({
                   min="1"
                   max="64"
                   value={aiForm.multimodalMaxTotalMb}
-                  onChange={(event) => setAiForm({ ...aiForm, multimodalMaxTotalMb: Number(event.target.value) })}
+                  onChange={(event) => updateAiForm({ multimodalMaxTotalMb: Number(event.target.value) })}
                 />
               </label>
               <label className="full-span">
@@ -1923,7 +1876,7 @@ function SettingsPanel({
                   type="password"
                   value={aiForm.apiKey}
                   placeholder={aiForm.hasApiKey ? `已保存 ${aiForm.maskedApiKey}，留空不修改` : "输入 API Key"}
-                  onChange={(event) => setAiForm({ ...aiForm, apiKey: event.target.value })}
+                  onChange={(event) => updateAiForm({ apiKey: event.target.value })}
                 />
               </label>
               <div className="form-actions full-span">
@@ -2000,62 +1953,6 @@ function SettingsPanel({
               </button>
             </div>
           )}
-        </div>
-
-        <div className="settings-panel auth-settings-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">访问控制</p>
-              <h2>登录安全</h2>
-            </div>
-            <LockKey size={22} />
-          </div>
-          <div className="auth-settings-summary">
-            <span>登录状态</span>
-            <strong>保存 {dashboard?.settings.auth.sessionDays ?? 7} 天</strong>
-            <small>
-              {dashboard?.settings.auth.passwordUpdatedAt
-                ? `密码更新时间：${formatTime(dashboard.settings.auth.passwordUpdatedAt)}`
-                : "使用默认管理员密码，建议上线后立即修改。"}
-            </small>
-          </div>
-          <div className="form-grid auth-password-grid">
-            <label>
-              当前密码
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={authForm.currentPassword}
-                onChange={(event) => setAuthForm({ ...authForm, currentPassword: event.target.value })}
-              />
-            </label>
-            <label>
-              新密码
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={authForm.newPassword}
-                onChange={(event) => setAuthForm({ ...authForm, newPassword: event.target.value })}
-              />
-            </label>
-            <label className="full-span">
-              确认新密码
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={authForm.confirmPassword}
-                onChange={(event) => setAuthForm({ ...authForm, confirmPassword: event.target.value })}
-              />
-            </label>
-            <button
-              className="secondary-button full-span"
-              disabled={saving || !authForm.currentPassword || !authForm.newPassword || !authForm.confirmPassword}
-              onClick={saveAuthPassword}
-            >
-              <FloppyDisk size={18} />
-              保存登录密码
-            </button>
-          </div>
         </div>
 
         <div className="settings-panel notification-settings-panel">
@@ -2180,7 +2077,7 @@ function SettingsPanel({
                   </div>
                   <div
                     className={`weclaw-qr-card${weclawQrDataUrl ? " ready" : ""}${
-                      weclawStatus?.apiReachable ? " connected" : ""
+                      weclawStatus?.apiReachable && !weclawAwaitingQr ? " connected" : ""
                     }${weclawSessionExpired ? " expired" : ""}`}
                   >
                     <div className="weclaw-qr-copy">
@@ -2189,13 +2086,13 @@ function SettingsPanel({
                         微信连接
                       </span>
                       <strong>
-                        {weclawStatus?.apiReachable
+                        {weclawAwaitingQr
+                          ? "扫码登录微信"
+                          : weclawStatus?.apiReachable
                           ? weclawSessionExpired
                             ? "扫码后会话过期"
                             : "已连接到微信"
-                          : weclawQrDataUrl
-                            ? "扫码登录微信"
-                            : weclawLoginSaved
+                          : weclawLoginSaved
                               ? "登录状态已保存"
                               : "等待二维码"}
                       </strong>

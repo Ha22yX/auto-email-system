@@ -1,17 +1,10 @@
 import type express from "express";
 
-type LoginAttempt = {
-  failures: number;
-  resetAt: number;
-  blockedUntil: number;
-};
-
 type RateBucket = {
   count: number;
   resetAt: number;
 };
 
-const loginAttempts = new Map<string, LoginAttempt>();
 const apiBuckets = new Map<string, RateBucket>();
 
 const trustedHosts = new Set([
@@ -154,45 +147,4 @@ export function apiRateLimit(req: express.Request, res: express.Response, next: 
   }
 
   next();
-}
-
-export function checkLoginAllowed(req: express.Request, res: express.Response) {
-  const key = clientKey(req);
-  const current = now();
-  const attempt = loginAttempts.get(key);
-  if (!attempt) return true;
-
-  if (attempt.blockedUntil > current) {
-    res.setHeader("Retry-After", Math.ceil((attempt.blockedUntil - current) / 1000));
-    res.status(429).json({ error: "登录尝试过于频繁，请稍后再试。" });
-    return false;
-  }
-
-  if (attempt.resetAt <= current) {
-    loginAttempts.delete(key);
-  }
-  return true;
-}
-
-export function registerLoginFailure(req: express.Request) {
-  const key = clientKey(req);
-  const current = now();
-  const windowMs = 10 * 60 * 1000;
-  const blockMs = 15 * 60 * 1000;
-  const maxFailures = 8;
-  const attempt = loginAttempts.get(key);
-
-  if (!attempt || attempt.resetAt <= current) {
-    loginAttempts.set(key, { failures: 1, resetAt: current + windowMs, blockedUntil: 0 });
-    return;
-  }
-
-  attempt.failures += 1;
-  if (attempt.failures >= maxFailures) {
-    attempt.blockedUntil = current + blockMs;
-  }
-}
-
-export function registerLoginSuccess(req: express.Request) {
-  loginAttempts.delete(clientKey(req));
 }
