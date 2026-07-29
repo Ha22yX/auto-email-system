@@ -939,8 +939,10 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                       </div>
                     )}
                     {emails.map((email, index) => {
+                    const CategoryIcon = categoryMeta[email.category].icon;
                     const rowClassName = [
                       "email-row",
+                      email.category,
                       selectedEmailId === email.id ? "active" : "",
                       email.panelRead ? "panel-read" : "panel-unread"
                     ]
@@ -959,6 +961,10 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                         <div className="email-row-top">
                           <div className="email-row-title">
                             <span className={email.panelRead ? "read-dot" : "read-dot unread"} />
+                            <span className={`email-category-chip ${email.category}`}>
+                              <CategoryIcon size={14} weight="duotone" />
+                              {categoryMeta[email.category].label}
+                            </span>
                             <strong>{email.subject}</strong>
                           </div>
                           <time>{formatTime(email.receivedAt || email.processedAt)}</time>

@@ -480,6 +480,29 @@ function buildContextTokenRefreshReminder(updatedAt: string) {
   ].join("\n");
 }
 
+export function buildContextTokenUpdatedMessage(updatedAt = new Date().toISOString()) {
+  return [
+    "✅ 微信通知会话已刷新",
+    "",
+    "系统已经收到你刚刚发给 ClawBot 的消息，并保存了新的通知 token。",
+    "",
+    `刷新时间：${formatReminderTime(new Date(updatedAt))}`,
+    "",
+    "接下来重要邮件、次重要邮件会继续按你的通知分类设置推送到这里。",
+    "无需重新扫码，也无需在面板里手动填写接收人。"
+  ].join("\n");
+}
+
+async function notifyWeclawContextTokenUpdated(userId: string, updatedAt: string) {
+  try {
+    await sendWeclawDirectText(userId, buildContextTokenUpdatedMessage(updatedAt), 12000);
+    appendLog("system", `context token refresh confirmation sent to ${userId}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    appendLog("system", `context token refresh confirmation failed for ${userId}: ${message}`);
+  }
+}
+
 function shouldThrottleReminderAttempt(attemptedAt?: string) {
   if (!attemptedAt) return false;
   const attempted = Date.parse(attemptedAt);
@@ -641,11 +664,15 @@ async function monitorAccount(account: WeclawCredentialRecord, signal: AbortSign
       for (const msg of messages) {
         if (!isUserFinishedMessage(msg)) continue;
         if (msg.context_token && msg.from_user_id) {
-          writeWeclawContextToken(msg.from_user_id, msg.context_token);
+          const refreshedAt = new Date().toISOString();
+          const changed = writeWeclawContextToken(msg.from_user_id, msg.context_token);
           appendLog(
             "system",
             `recorded WeChat context for ${msg.from_user_id}; incoming text ignored: ${textFromIlinkMessage(msg).slice(0, 60)}`
           );
+          if (changed) {
+            void notifyWeclawContextTokenUpdated(msg.from_user_id, refreshedAt);
+          }
           notifyWeclawContextReady(msg.from_user_id);
         }
       }

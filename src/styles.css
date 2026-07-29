@@ -1026,11 +1026,13 @@ body.resizing-detail iframe {
 }
 
 .email-row {
+  position: relative;
   display: grid;
   align-content: start;
   gap: 9px;
   width: 100%;
-  padding: 15px;
+  overflow: hidden;
+  padding: 15px 15px 15px 18px;
   color: var(--ink);
   text-align: left;
   will-change: transform, opacity;
@@ -1039,6 +1041,28 @@ body.resizing-detail iframe {
     border-color 300ms var(--ease),
     background 300ms var(--ease),
     box-shadow 300ms var(--ease);
+}
+
+.email-row::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-radius: 8px 0 0 8px;
+  opacity: 0.86;
+}
+
+.email-row.important::before {
+  background: linear-gradient(180deg, #d55a37, var(--important));
+}
+
+.email-row.secondary::before {
+  background: linear-gradient(180deg, #877cc1, var(--secondary));
+}
+
+.email-row.ignore::before {
+  background: linear-gradient(180deg, #9aa59e, var(--ignore));
+  opacity: 0.42;
 }
 
 .email-list.ready .email-row {
@@ -1082,6 +1106,25 @@ body.resizing-detail iframe {
   border-color: rgb(32 90 75 / 0.2);
 }
 
+.email-row.important.panel-unread {
+  border-color: rgb(163 61 34 / 0.34);
+  background:
+    linear-gradient(90deg, rgb(163 61 34 / 0.075), transparent 48%),
+    var(--surface);
+}
+
+.email-row.secondary.panel-unread {
+  border-color: rgb(93 84 132 / 0.34);
+  background:
+    linear-gradient(90deg, rgb(93 84 132 / 0.075), transparent 48%),
+    var(--surface);
+}
+
+.email-row.important.panel-read::before,
+.email-row.secondary.panel-read::before {
+  opacity: 0.38;
+}
+
 .email-row-top,
 .email-row-meta,
 .email-row-bottom,
@@ -1102,7 +1145,7 @@ body.resizing-detail iframe {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 
 .email-row-title strong {
@@ -1112,6 +1155,43 @@ body.resizing-detail iframe {
   white-space: nowrap;
   font-size: 15px;
   font-weight: 720;
+}
+
+.email-category-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.email-category-chip.important {
+  border-color: rgb(163 61 34 / 0.18);
+  background: rgb(163 61 34 / 0.12);
+  color: var(--important);
+}
+
+.email-category-chip.secondary {
+  border-color: rgb(93 84 132 / 0.2);
+  background: rgb(93 84 132 / 0.12);
+  color: var(--secondary);
+}
+
+.email-category-chip.ignore {
+  border-color: rgb(83 100 95 / 0.14);
+  background: rgb(83 100 95 / 0.1);
+  color: var(--ignore);
+}
+
+.email-row.panel-read .email-category-chip {
+  filter: saturate(0.65);
+  opacity: 0.72;
 }
 
 .read-dot {
