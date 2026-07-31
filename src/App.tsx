@@ -34,6 +34,7 @@ import {
 import DOMPurify from "dompurify";
 import QRCode from "qrcode";
 import { api } from "./api";
+import { buildOptimisticPanelReadPatch } from "./read-state";
 import type {
   AiSettings,
   Dashboard,
@@ -365,6 +366,8 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const emailRequestSeqRef = useRef(0);
   const emailWindowLoadingRef = useRef<"newer" | "older" | null>(null);
   const detailRequestSeqRef = useRef(0);
+  const readStateRequestSeqRef = useRef(new Map<string, number>());
+  const dashboardRefreshTimerRef = useRef<number | null>(null);
 
   const clampDetailWidth = useCallback((nextWidth: number) => {
     const layoutWidth = mailLayoutRef.current?.getBoundingClientRect().width;
@@ -430,6 +433,15 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     emailWindowLoadingRef.current = emailWindowLoading;
   }, [emailWindowLoading]);
 
+  useEffect(
+    () => () => {
+      if (dashboardRefreshTimerRef.current) {
+        window.clearTimeout(dashboardRefreshTimerRef.current);
+      }
+    },
+    []
+  );
+
   const mailboxMap = useMemo(() => {
     const map = new Map<string, Mailbox>();
     dashboard?.mailboxes.forEach((mailbox) => map.set(mailbox.id, mailbox));
@@ -440,6 +452,16 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     const next = await api.dashboard(selectedMailbox);
     setDashboard(next);
   }, [selectedMailbox]);
+
+  const scheduleDashboardRefresh = useCallback(() => {
+    if (dashboardRefreshTimerRef.current) {
+      window.clearTimeout(dashboardRefreshTimerRef.current);
+    }
+    dashboardRefreshTimerRef.current = window.setTimeout(() => {
+      dashboardRefreshTimerRef.current = null;
+      void loadDashboard().catch(() => undefined);
+    }, 250);
+  }, [loadDashboard]);
 
   const captureEmailScrollAnchor = useCallback(() => {
     const node = emailListRef.current;
@@ -577,22 +599,72 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     );
   }, []);
 
+  const patchEmailReadState = useCallback(
+    (id: string, patch: { panelRead: boolean; panelReadAt?: string }) => {
+      setEmails((current) =>
+        current.map((email) =>
+          email.id === id
+            ? { ...email, panelRead: patch.panelRead, panelReadAt: patch.panelReadAt }
+            : email
+        )
+      );
+      setDetail((current) =>
+        current?.id === id
+          ? { ...current, panelRead: patch.panelRead, panelReadAt: patch.panelReadAt }
+          : current
+      );
+    },
+    []
+  );
+
   const updateEmailReadState = useCallback(
     async (id: string, panelRead: boolean, options: { silent?: boolean; suppressAutoRead?: boolean } = {}) => {
-      const updated = await api.updateEmailReadState(id, panelRead);
-      applyEmailReadState(updated);
+      const requestSeq = (readStateRequestSeqRef.current.get(id) || 0) + 1;
+      readStateRequestSeqRef.current.set(id, requestSeq);
+      const previousListItem = emailsRef.current.find((email) => email.id === id);
+      const previousDetail =
+        detail?.id === id ? { panelRead: detail.panelRead, panelReadAt: detail.panelReadAt } : undefined;
+      let requestIsCurrent = false;
+
+      patchEmailReadState(id, buildOptimisticPanelReadPatch(panelRead));
+
+      try {
+        const updated = await api.updateEmailReadState(id, panelRead);
+        if (readStateRequestSeqRef.current.get(id) === requestSeq) {
+          applyEmailReadState(updated);
+        }
+      } catch (error) {
+        if (readStateRequestSeqRef.current.get(id) === requestSeq) {
+          const fallback = previousDetail ?? previousListItem;
+          if (fallback) {
+            patchEmailReadState(id, {
+              panelRead: fallback.panelRead,
+              panelReadAt: fallback.panelReadAt
+            });
+          }
+        }
+        throw error;
+      } finally {
+        requestIsCurrent = readStateRequestSeqRef.current.get(id) === requestSeq;
+        if (requestIsCurrent) {
+          readStateRequestSeqRef.current.delete(id);
+        }
+      }
+
+      if (!requestIsCurrent) return;
+
       if (!panelRead && options.suppressAutoRead) {
         setAutoReadSuppressedId(id);
       }
       if (panelRead) {
         setAutoReadSuppressedId((current) => (current === id ? null : current));
       }
-      void loadDashboard().catch(() => undefined);
+      scheduleDashboardRefresh();
       if (!options.silent) {
         setToast(panelRead ? "已标记为系统已读" : "已标记为系统未读");
       }
     },
-    [applyEmailReadState, loadDashboard]
+    [applyEmailReadState, detail, patchEmailReadState, scheduleDashboardRefresh]
   );
 
   const openEmailContextMenu = useCallback((event: ReactMouseEvent<HTMLButtonElement>, email: EmailListItem) => {
