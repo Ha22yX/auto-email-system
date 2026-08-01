@@ -28,17 +28,24 @@ const defaultNotifyCategories: Record<MailCategory, boolean> = {
   ignore: false
 };
 
+const aiProtocols = new Set(["auto", "openai-chat", "openai-responses", "anthropic", "gemini"]);
+const multimodalProtocols = new Set([...aiProtocols, "same"]);
+
 const defaultState: AppState = {
   settings: {
     ai: {
       providerName: "智谱 GLM Coding Plan",
+      providerPreset: "custom",
       baseUrl: "https://open.bigmodel.cn/api/anthropic",
       apiKey: "",
       model: "glm-5.2",
       temperature: 0.1,
+      protocol: "auto",
       multimodalEnabled: true,
       multimodalBaseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
       multimodalModel: "glm-5v-turbo",
+      multimodalProtocol: "auto",
+      multimodalApiKey: "",
       multimodalMaxAttachmentMb: 8,
       multimodalMaxTotalMb: 18
     },
@@ -189,6 +196,24 @@ function getMeta(key: string) {
   return row ? String(row.value) : undefined;
 }
 
+export function normalizeAiSettings(input: Partial<AiSettings> = {}): AiSettings {
+  const merged = { ...defaultState.settings.ai, ...input };
+
+  return {
+    ...merged,
+    providerPreset:
+      typeof merged.providerPreset === "string" && merged.providerPreset.trim() ? merged.providerPreset : "custom",
+    apiKey: typeof merged.apiKey === "string" ? merged.apiKey : "",
+    protocol: aiProtocols.has(merged.protocol ?? "")
+      ? (merged.protocol as NonNullable<AiSettings["protocol"]>)
+      : "auto",
+    multimodalProtocol: multimodalProtocols.has(merged.multimodalProtocol ?? "")
+      ? (merged.multimodalProtocol as NonNullable<AiSettings["multimodalProtocol"]>)
+      : "auto",
+    multimodalApiKey: typeof merged.multimodalApiKey === "string" ? merged.multimodalApiKey : ""
+  };
+}
+
 function normalizeState(parsed: Partial<AppState>): AppState {
   const parsedNotification = parsed.settings?.notification as Partial<NotificationSettings> | undefined;
   const parsedAuth = parsed.settings?.auth as Partial<AuthSettings> | undefined;
@@ -212,7 +237,7 @@ function normalizeState(parsed: Partial<AppState>): AppState {
 
   return {
     settings: {
-      ai: { ...defaultState.settings.ai, ...parsed.settings?.ai },
+      ai: normalizeAiSettings(parsed.settings?.ai),
       system: { ...defaultState.settings.system, ...parsed.settings?.system },
       notification: {
         ...defaultState.settings.notification,
@@ -237,7 +262,7 @@ function normalizeState(parsed: Partial<AppState>): AppState {
 
 function insertSettings(settings: AppState["settings"]) {
   const statement = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
-  statement.run("ai", JSON.stringify(settings.ai));
+  statement.run("ai", JSON.stringify(normalizeAiSettings(settings.ai)));
   statement.run("system", JSON.stringify(settings.system));
   statement.run("notification", JSON.stringify(settings.notification));
   statement.run("auth", JSON.stringify(settings.auth));
@@ -339,7 +364,7 @@ function getSetting<T>(key: keyof AppState["settings"], fallback: T): T {
 function getSettings(): AppState["settings"] {
   const notification = getSetting<NotificationSettings>("notification", defaultState.settings.notification);
   return {
-    ai: getSetting<AiSettings>("ai", defaultState.settings.ai),
+    ai: normalizeAiSettings(getSetting<AiSettings>("ai", defaultState.settings.ai)),
     system: getSetting<SystemSettings>("system", defaultState.settings.system),
     notification: {
       ...defaultState.settings.notification,
@@ -415,14 +440,15 @@ export function publicMailbox(mailbox: Mailbox) {
 }
 
 export function publicAiSettings(settings: AiSettings) {
+  const normalized = normalizeAiSettings(settings);
   return {
-    ...settings,
+    ...normalized,
     apiKey: "",
-    hasApiKey: Boolean(settings.apiKey),
-    maskedApiKey: maskSecret(settings.apiKey),
+    hasApiKey: Boolean(normalized.apiKey),
+    maskedApiKey: maskSecret(normalized.apiKey),
     multimodalApiKey: "",
-    hasMultimodalApiKey: Boolean(settings.multimodalApiKey),
-    maskedMultimodalApiKey: maskSecret(settings.multimodalApiKey || "")
+    hasMultimodalApiKey: Boolean(normalized.multimodalApiKey),
+    maskedMultimodalApiKey: maskSecret(normalized.multimodalApiKey ?? "")
   };
 }
 
@@ -476,11 +502,12 @@ export function removeMailbox(id: string) {
 
 export function updateAiSettings(input: Partial<AiSettings>) {
   const current = getSettings().ai;
-  const next = {
+  const next = normalizeAiSettings({
     ...current,
     ...input,
-    apiKey: input.apiKey || current.apiKey
-  };
+    apiKey: input.apiKey || current.apiKey,
+    multimodalApiKey: input.multimodalApiKey || current.multimodalApiKey
+  });
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run("ai", JSON.stringify(next));
   publishAppEvent("settings", { key: "ai" });
   return next;

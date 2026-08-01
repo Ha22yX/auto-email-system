@@ -57,13 +57,20 @@ const mailboxSchema = z.object({
 
 const aiSchema = z.object({
   providerName: z.string().min(1),
+  providerPreset: z.string().optional().default("custom"),
   baseUrl: z.string().url(),
   apiKey: z.string().optional().default(""),
   model: z.string().min(1),
   temperature: z.coerce.number().min(0).max(2),
+  protocol: z.enum(["auto", "openai-chat", "openai-responses", "anthropic", "gemini"]).optional().default("auto"),
   multimodalEnabled: z.coerce.boolean().optional().default(true),
   multimodalBaseUrl: z.string().url().optional().default("https://open.bigmodel.cn/api/paas/v4/chat/completions"),
   multimodalModel: z.string().min(1).optional().default("glm-5v-turbo"),
+  multimodalProtocol: z
+    .enum(["auto", "same", "openai-chat", "openai-responses", "anthropic", "gemini"])
+    .optional()
+    .default("auto"),
+  multimodalApiKey: z.string().optional().default(""),
   multimodalMaxAttachmentMb: z.coerce.number().min(1).max(32).optional().default(8),
   multimodalMaxTotalMb: z.coerce.number().min(1).max(64).optional().default(18)
 });
@@ -346,7 +353,8 @@ router.post(
     const saved = readState().settings.ai;
     const settings = {
       ...parsed,
-      apiKey: parsed.apiKey || saved.apiKey
+      apiKey: parsed.apiKey || saved.apiKey,
+      multimodalApiKey: parsed.multimodalApiKey || saved.multimodalApiKey
     };
 
     if (!settings.apiKey.trim()) {

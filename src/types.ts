@@ -20,6 +20,8 @@ export type AiSettings = {
   multimodalMaxTotalMb: number;
   hasApiKey?: boolean;
   maskedApiKey?: string;
+  hasMultimodalApiKey?: boolean;
+  maskedMultimodalApiKey?: string;
 };
 
 export type SystemSettings = {
