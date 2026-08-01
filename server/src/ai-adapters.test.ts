@@ -210,3 +210,16 @@ test("extracts text from every supported provider response shape", () => {
     "gemini one\ngemini two"
   );
 });
+
+test("concatenates string and text-part content from every OpenAI Chat choice", () => {
+  assert.equal(
+    extractProviderText("openai-chat", {
+      choices: [
+        { message: { content: "first choice" } },
+        { message: { content: [{ text: "second choice" }, { type: "refusal" }] } },
+        { message: { content: "third choice" } }
+      ]
+    }),
+    "first choice\nsecond choice\nthird choice"
+  );
+});

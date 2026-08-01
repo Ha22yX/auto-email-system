@@ -221,10 +221,14 @@ export function extractProviderText(protocol: AiProtocol, payload: unknown): str
   switch (protocol) {
     case "openai-chat": {
       const choices = Array.isArray(item.choices) ? item.choices : [];
-      const message = choices[0] && typeof choices[0] === "object"
-        ? (choices[0] as { message?: { content?: unknown } }).message
-        : undefined;
-      return typeof message?.content === "string" ? message.content : textParts(message?.content);
+      return choices
+        .flatMap((choice) => {
+          if (!choice || typeof choice !== "object") return [];
+          const content = (choice as { message?: { content?: unknown } }).message?.content;
+          const text = typeof content === "string" ? content : textParts(content);
+          return text ? [text] : [];
+        })
+        .join("\n");
     }
     case "openai-responses": {
       if (typeof item.output_text === "string" && item.output_text) return item.output_text;
