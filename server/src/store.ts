@@ -419,7 +419,10 @@ export function publicAiSettings(settings: AiSettings) {
     ...settings,
     apiKey: "",
     hasApiKey: Boolean(settings.apiKey),
-    maskedApiKey: maskSecret(settings.apiKey)
+    maskedApiKey: maskSecret(settings.apiKey),
+    multimodalApiKey: "",
+    hasMultimodalApiKey: Boolean(settings.multimodalApiKey),
+    maskedMultimodalApiKey: maskSecret(settings.multimodalApiKey || "")
   };
 }
 
