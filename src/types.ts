@@ -1,15 +1,21 @@
 export type MailCategory = "important" | "secondary" | "ignore";
 export type MailProtocol = "imap" | "pop3";
+export type AiProtocol = "auto" | "openai-chat" | "openai-responses" | "anthropic" | "gemini";
+export type MultimodalProtocol = AiProtocol | "same";
 
 export type AiSettings = {
   providerName: string;
+  providerPreset?: string;
   baseUrl: string;
   apiKey: string;
   model: string;
   temperature: number;
+  protocol?: AiProtocol;
   multimodalEnabled: boolean;
   multimodalBaseUrl: string;
   multimodalModel: string;
+  multimodalProtocol?: MultimodalProtocol;
+  multimodalApiKey?: string;
   multimodalMaxAttachmentMb: number;
   multimodalMaxTotalMb: number;
   hasApiKey?: boolean;

@@ -1,8 +1,4 @@
-export function resolveOpenAiChatUrl(baseUrl: string) {
-  const normalized = baseUrl.replace(/\/+$/, "");
-  if (/\/chat\/completions$/i.test(normalized)) return normalized;
-  return `${normalized}/chat/completions`;
-}
+export { resolveOpenAiChatUrl } from "./ai-protocol";
 
 function usesDefaultTemperature(model: string) {
   return /^gpt-5\.6(?:[-.]|$)/i.test(model.trim());
