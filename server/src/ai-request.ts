@@ -1,7 +1,11 @@
 export { resolveOpenAiChatUrl } from "./ai-protocol";
 
 function usesDefaultTemperature(model: string) {
-  return /^gpt-5\.6(?:[-.]|$)/i.test(model.trim());
+  const normalized = model.trim();
+  return (
+    /^gpt-5\.6(?:[-.]|$)/i.test(normalized) ||
+    /^claude-(?:sonnet|opus|haiku)-5(?:[-.]|$)/i.test(normalized)
+  );
 }
 
 export function buildTemperaturePayload(model: string, temperature: number) {

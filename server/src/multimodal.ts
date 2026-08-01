@@ -1,5 +1,6 @@
 import type { AiSettings, EmailAttachment, IncomingEmail, MailCategory, MultimodalAnalysis } from "./types";
-import { buildTemperaturePayload, resolveOpenAiChatUrl } from "./ai-request";
+import { buildProviderRequest, extractProviderText } from "./ai-adapters";
+import { resolveAiEndpoint, resolveAiProtocol } from "./ai-protocol";
 
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
 
@@ -167,7 +168,7 @@ export async function analyzeEmailAttachments(
   options: { timeoutMs?: number } = {}
 ): Promise<MultimodalAnalysis | undefined> {
   if (!settings.multimodalEnabled) return undefined;
-  if (!settings.apiKey.trim()) {
+  if (!settings.apiKey.trim() && !settings.multimodalApiKey?.trim()) {
     throw new Error("多模态识别需要 AI API Key，请先在管理设置中配置。");
   }
 
@@ -177,51 +178,39 @@ export async function analyzeEmailAttachments(
     throw new Error(`邮件包含图片/PDF，但全部超过多模态大小上限：${skippedNames || "未知附件"}`);
   }
 
-  const content: MultimodalContent[] = [];
-  for (const attachment of selected) {
-    const item = attachmentToContent(attachment);
-    if (item) content.push(item);
+  const apiKey = settings.multimodalApiKey?.trim() || settings.apiKey.trim();
+  if (!apiKey) {
+    throw new Error("多模态识别需要 AI API Key，请先在管理设置中配置。");
   }
-  content.push({ type: "text", text: buildPrompt(email, selected) });
 
-  const response = await fetchWithTimeout(resolveOpenAiChatUrl(settings.multimodalBaseUrl), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${settings.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: settings.multimodalModel,
-      ...buildTemperaturePayload(
-        settings.multimodalModel,
-        Math.min(settings.temperature ?? 0.1, 0.3)
-      ),
-      messages: [
-        {
-          role: "user",
-          content
-        }
-      ]
-    })
-  }, options.timeoutMs ?? 90000);
+  const protocol = resolveAiProtocol(settings, "multimodal");
+  const model = settings.multimodalModel || settings.model;
+  const { url, init } = buildProviderRequest({
+    protocol,
+    url: resolveAiEndpoint(settings, "multimodal"),
+    apiKey,
+    model,
+    temperature: Math.min(settings.temperature ?? 0.1, 0.3),
+    systemPrompt: "",
+    userPrompt: buildPrompt(email, selected),
+    attachments: selected.flatMap((attachment) =>
+      attachment.contentBase64
+        ? [{ filename: attachment.filename, contentType: attachment.contentType, contentBase64: attachment.contentBase64 }]
+        : []
+    )
+  });
+  const response = await fetchWithTimeout(url, init, options.timeoutMs ?? 90000);
 
   if (!response.ok) {
-    const detail = await response.text();
+    const detail = (await response.text()).replaceAll(apiKey, "[REDACTED]");
     throw new Error(`GLM-5V-Turbo 多模态识别失败 ${response.status}: ${detail.slice(0, 300)}`);
   }
 
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>;
-  };
-  const rawContent = payload.choices?.[0]?.message?.content;
-  const text = typeof rawContent === "string"
-    ? rawContent
-    : Array.isArray(rawContent)
-      ? rawContent.map((item) => item.text ?? "").join("\n")
-      : "";
+  const text = extractProviderText(protocol, await response.json());
   const jsonText = extractJson(text);
   if (!jsonText) {
-    throw new Error(`GLM-5V-Turbo 多模态返回内容不是 JSON: ${text.slice(0, 160) || "空响应"}`);
+    const safeText = text.replaceAll(apiKey, "[REDACTED]");
+    throw new Error(`GLM-5V-Turbo 多模态返回内容不是 JSON: ${safeText.slice(0, 160) || "空响应"}`);
   }
 
   return normalizeAnalysis(JSON.parse(jsonText), settings.multimodalModel, selected, skipped);

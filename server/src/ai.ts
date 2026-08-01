@@ -1,4 +1,6 @@
 import type { AiSettings, ClassificationResult, IncomingEmail, MailCategory } from "./types";
+import { buildProviderRequest, extractProviderText } from "./ai-adapters";
+import { resolveAiEndpoint, resolveAiProtocol } from "./ai-protocol";
 import { buildTemperaturePayload, resolveOpenAiChatUrl } from "./ai-request";
 
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
@@ -94,90 +96,6 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
-function isAnthropicEndpoint(baseUrl: string) {
-  return /\/anthropic(?:\/|$)/i.test(baseUrl) || /\/v1\/messages$/i.test(baseUrl);
-}
-
-function resolveAnthropicMessagesUrl(baseUrl: string) {
-  const normalized = baseUrl.replace(/\/+$/, "");
-  if (/\/v1\/messages$/i.test(normalized)) return normalized;
-  if (/\/v1$/i.test(normalized)) return `${normalized}/messages`;
-  return `${normalized}/v1/messages`;
-}
-
-async function requestOpenAiCompatible(
-  email: IncomingEmail,
-  settings: AiSettings,
-  timeoutMs: number
-) {
-  const response = await fetchWithTimeout(resolveOpenAiChatUrl(settings.baseUrl), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${settings.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      ...buildTemperaturePayload(settings.model, settings.temperature),
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt(email) }
-      ]
-    })
-  }, timeoutMs);
-
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`AI 请求失败 ${response.status}: ${detail.slice(0, 300)}`);
-  }
-
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>;
-  };
-  const content = payload.choices?.[0]?.message?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((item) => item.text ?? "").join("\n");
-  return "";
-}
-
-async function requestAnthropicCompatible(
-  email: IncomingEmail,
-  settings: AiSettings,
-  timeoutMs: number
-) {
-  const response = await fetchWithTimeout(resolveAnthropicMessagesUrl(settings.baseUrl), {
-    method: "POST",
-    headers: {
-      "x-api-key": settings.apiKey,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      max_tokens: 1200,
-      temperature: settings.temperature,
-      system: systemPrompt,
-      messages: [
-        {
-          role: "user",
-          content: userPrompt(email)
-        }
-      ]
-    })
-  }, timeoutMs);
-
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`AI 请求失败 ${response.status}: ${detail.slice(0, 300)}`);
-  }
-
-  const payload = (await response.json()) as {
-    content?: Array<{ type?: string; text?: string }>;
-  };
-  return payload.content?.map((item) => item.text ?? "").join("\n") ?? "";
-}
-
 export async function classifyEmail(
   email: IncomingEmail,
   settings: AiSettings,
@@ -187,14 +105,29 @@ export async function classifyEmail(
     throw new Error("AI API Key 未配置，无法进行 AI 分类。");
   }
 
-  const timeoutMs = options.timeoutMs ?? 90000;
-  const content = isAnthropicEndpoint(settings.baseUrl)
-    ? await requestAnthropicCompatible(email, settings, timeoutMs)
-    : await requestOpenAiCompatible(email, settings, timeoutMs);
+  const protocol = resolveAiProtocol(settings, "text");
+  const { url, init } = buildProviderRequest({
+    protocol,
+    url: resolveAiEndpoint(settings, "text"),
+    apiKey: settings.apiKey,
+    model: settings.model,
+    temperature: settings.temperature,
+    systemPrompt,
+    userPrompt: userPrompt(email)
+  });
+  const response = await fetchWithTimeout(url, init, options.timeoutMs ?? 90000);
+
+  if (!response.ok) {
+    const detail = (await response.text()).replaceAll(settings.apiKey, "[REDACTED]");
+    throw new Error(`AI 请求失败 ${response.status}: ${detail.slice(0, 300)}`);
+  }
+
+  const content = extractProviderText(protocol, await response.json());
 
   const jsonText = extractJson(content);
   if (!jsonText) {
-    throw new Error(`AI 返回内容不是 JSON: ${content.slice(0, 160) || "空响应"}`);
+    const safeContent = content.replaceAll(settings.apiKey, "[REDACTED]");
+    throw new Error(`AI 返回内容不是 JSON: ${safeContent.slice(0, 160) || "空响应"}`);
   }
 
   return normalizeResult(JSON.parse(jsonText));

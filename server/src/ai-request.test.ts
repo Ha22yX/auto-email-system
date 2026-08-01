@@ -14,6 +14,12 @@ test("omits temperature for named GPT-5.6 family variants", () => {
   assert.deepEqual(buildTemperaturePayload("gpt-5.6-terra", 0.1), {});
 });
 
+test("omits temperature for Claude 5 models but keeps it for older Claude models", () => {
+  assert.deepEqual(buildTemperaturePayload("claude-sonnet-5", 0.1), {});
+  assert.deepEqual(buildTemperaturePayload("claude-opus-5", 0.1), {});
+  assert.deepEqual(buildTemperaturePayload("claude-3-7-sonnet", 0.1), { temperature: 0.1 });
+});
+
 test("keeps configured temperature for OpenAI-compatible GLM models", () => {
   assert.deepEqual(
     buildTemperaturePayload("glm-5.2", 0.1),
