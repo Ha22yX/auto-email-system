@@ -24,6 +24,13 @@ export type AiSettings = {
   maskedMultimodalApiKey?: string;
 };
 
+export type ClassificationResult = {
+  category: MailCategory;
+  summaryZh: string;
+  reasonZh: string;
+  actionItemsZh: string[];
+};
+
 export type SystemSettings = {
   autoProcessEnabled: boolean;
   autoLoadRemoteImages: boolean;

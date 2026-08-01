@@ -14,10 +14,18 @@ test("omits temperature for named GPT-5.6 family variants", () => {
   assert.deepEqual(buildTemperaturePayload("gpt-5.6-terra", 0.1), {});
 });
 
-test("omits temperature for Claude 5 models but keeps it for older Claude models", () => {
+test("omits temperature for every Claude 5 model slug but keeps it for older Claude models", () => {
   assert.deepEqual(buildTemperaturePayload("claude-sonnet-5", 0.1), {});
   assert.deepEqual(buildTemperaturePayload("claude-opus-5", 0.1), {});
+  assert.deepEqual(buildTemperaturePayload("claude-fable-5", 0.1), {});
   assert.deepEqual(buildTemperaturePayload("claude-3-7-sonnet", 0.1), { temperature: 0.1 });
+});
+
+test("omits temperature for Gemini 3.5 Flash-Lite and Gemini 3.6+ families", () => {
+  assert.deepEqual(buildTemperaturePayload("gemini-3.5-flash-lite", 0.1), {});
+  assert.deepEqual(buildTemperaturePayload("gemini-3.6-flash", 0.1), {});
+  assert.deepEqual(buildTemperaturePayload("gemini-4.0-pro", 0.1), {});
+  assert.deepEqual(buildTemperaturePayload("gemini-3.0-flash", 0.1), { temperature: 0.1 });
 });
 
 test("keeps configured temperature for OpenAI-compatible GLM models", () => {

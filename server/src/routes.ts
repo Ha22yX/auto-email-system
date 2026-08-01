@@ -2,6 +2,7 @@ import express from "express";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { classifyEmail } from "./ai";
+import { resolveAiEndpoint, resolveAiProtocol } from "./ai-protocol";
 import { clearAuthCookie, isAuthenticated, requireAuth, setAuthCookie } from "./auth";
 import { handleAppEvents } from "./events";
 import { fetchRemoteEmailImage, findInlineEmailImage } from "./email/assets";
@@ -36,7 +37,7 @@ import {
   startWeclaw,
   stopWeclaw
 } from "./weclaw/manager";
-import type { MailCategory } from "./types";
+import type { AiSettings, ClassificationResult, MailCategory } from "./types";
 
 const router = express.Router();
 const EMAIL_ASSET_TOKEN_TTL_SECONDS = 6 * 60 * 60;
@@ -74,6 +75,34 @@ const aiSchema = z.object({
   multimodalMaxAttachmentMb: z.coerce.number().min(1).max(32).optional().default(8),
   multimodalMaxTotalMb: z.coerce.number().min(1).max(64).optional().default(18)
 });
+
+export function withSavedAiTestKeys(submitted: AiSettings, saved: AiSettings): AiSettings {
+  return {
+    ...submitted,
+    apiKey: submitted.apiKey.trim() ? submitted.apiKey : saved.apiKey,
+    multimodalApiKey: submitted.multimodalApiKey?.trim()
+      ? submitted.multimodalApiKey
+      : saved.multimodalApiKey
+  };
+}
+
+function sanitizeDiagnosticEndpoint(endpoint: string) {
+  const parsed = new URL(endpoint);
+  parsed.username = "";
+  parsed.password = "";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+export function buildAiTestDiagnostics(settings: AiSettings, result: ClassificationResult) {
+  return {
+    protocol: resolveAiProtocol(settings, "text"),
+    endpoint: sanitizeDiagnosticEndpoint(resolveAiEndpoint(settings, "text")),
+    model: settings.model,
+    category: result.category
+  };
+}
 
 const systemSchema = z.object({
   autoProcessEnabled: z.coerce.boolean(),
@@ -351,11 +380,7 @@ router.post(
   asyncRoute(async (req, res) => {
     const parsed = aiSchema.parse(req.body);
     const saved = readState().settings.ai;
-    const settings = {
-      ...parsed,
-      apiKey: parsed.apiKey || saved.apiKey,
-      multimodalApiKey: parsed.multimodalApiKey || saved.multimodalApiKey
-    };
+    const settings = withSavedAiTestKeys(parsed, saved);
 
     if (!settings.apiKey.trim()) {
       res.status(400).json({ error: "请输入 API Key 后再测试。" });
@@ -378,9 +403,11 @@ router.post(
       { timeoutMs: 20000 }
     );
 
+    const diagnostics = buildAiTestDiagnostics(settings, result);
     res.json({
       ok: true,
       message: `AI API 测试成功，模型返回分类：${result.category}`,
+      ...diagnostics,
       result
     });
   })

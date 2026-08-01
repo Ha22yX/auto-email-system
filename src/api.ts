@@ -1,6 +1,7 @@
 import type {
   AiSettings,
   AuthSettings,
+  ClassificationResult,
   Dashboard,
   EmailListPage,
   MailCategory,
@@ -89,7 +90,15 @@ export const api = {
     });
   },
   testAi(settings: AiSettings) {
-    return request<{ ok: boolean; message: string }>("/api/settings/ai/test", {
+    return request<{
+      ok: boolean;
+      message: string;
+      protocol: AiSettings["protocol"];
+      endpoint: string;
+      model: string;
+      category: MailCategory;
+      result?: ClassificationResult;
+    }>("/api/settings/ai/test", {
       method: "POST",
       body: JSON.stringify(settings)
     });

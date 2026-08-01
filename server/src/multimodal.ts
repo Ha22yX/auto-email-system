@@ -94,7 +94,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("多模态识别请求超时，请检查 GLM-5V-Turbo Base URL、网络或附件大小。");
+      throw new Error("多模态 AI 请求超时，请检查 Base URL、网络、模型名称或附件大小。");
     }
     throw error;
   } finally {
@@ -203,15 +203,15 @@ export async function analyzeEmailAttachments(
 
   if (!response.ok) {
     const detail = (await response.text()).replaceAll(apiKey, "[REDACTED]");
-    throw new Error(`GLM-5V-Turbo 多模态识别失败 ${response.status}: ${detail.slice(0, 300)}`);
+    throw new Error(`多模态 AI 请求失败 ${response.status}: ${detail.slice(0, 300)}`);
   }
 
   const text = extractProviderText(protocol, await response.json());
   const jsonText = extractJson(text);
   if (!jsonText) {
     const safeText = text.replaceAll(apiKey, "[REDACTED]");
-    throw new Error(`GLM-5V-Turbo 多模态返回内容不是 JSON: ${safeText.slice(0, 160) || "空响应"}`);
+    throw new Error(`多模态 AI 返回内容不是 JSON: ${safeText.slice(0, 160) || "空响应"}`);
   }
 
-  return normalizeAnalysis(JSON.parse(jsonText), settings.multimodalModel, selected, skipped);
+  return normalizeAnalysis(JSON.parse(jsonText), model, selected, skipped);
 }

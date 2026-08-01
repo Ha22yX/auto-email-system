@@ -34,6 +34,12 @@ import {
 import DOMPurify from "dompurify";
 import QRCode from "qrcode";
 import { api } from "./api";
+import {
+  AI_PROVIDER_PRESETS,
+  AI_PROTOCOL_OPTIONS,
+  MULTIMODAL_PROTOCOL_OPTIONS,
+  applyAiPreset
+} from "./ai-presets";
 import { buildOptimisticPanelReadPatch } from "./read-state";
 import type {
   AiSettings,
@@ -1686,6 +1692,11 @@ function SettingsPanel({
     }
   }
 
+  function selectAiPreset(presetId: string) {
+    if (!aiForm) return;
+    setAiForm(applyAiPreset(aiForm, presetId));
+  }
+
   async function saveSystem() {
     if (!systemForm) return;
     setSaving(true);
@@ -1913,12 +1924,22 @@ function SettingsPanel({
           <div className="panel-heading">
             <div>
               <p className="section-kicker">AI API</p>
-              <h2>智谱 GLM Coding Plan</h2>
+              <h2>AI API Settings</h2>
             </div>
             <Plugs size={22} />
           </div>
           {aiForm && (
             <div className="form-grid">
+              <label>
+                API 提供商
+                <select value={aiForm.providerPreset || "custom"} onChange={(event) => selectAiPreset(event.target.value)}>
+                  {AI_PROVIDER_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label>
                 服务名称
                 <input
@@ -1932,6 +1953,21 @@ function SettingsPanel({
                   value={aiForm.baseUrl}
                   onChange={(event) => setAiForm({ ...aiForm, baseUrl: event.target.value })}
                 />
+              </label>
+              <label>
+                协议
+                <select
+                  value={aiForm.protocol || "auto"}
+                  onChange={(event) =>
+                    setAiForm({ ...aiForm, protocol: event.target.value as NonNullable<AiSettings["protocol"]> })
+                  }
+                >
+                  {AI_PROTOCOL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 模型
@@ -1951,7 +1987,7 @@ function SettingsPanel({
               <label className="switch-row full-span">
                 <span>
                   <strong>多模态附件识别</strong>
-                  <small>内嵌图片、图片附件和 PDF 会先交给 GLM-5V-Turbo 摘要，再参与邮件分类。</small>
+                  <small>内嵌图片、图片附件和 PDF 会先由所选多模态模型摘要，再参与邮件分类。</small>
                 </span>
                 <input
                   type="checkbox"
@@ -1967,10 +2003,41 @@ function SettingsPanel({
                 />
               </label>
               <label>
+                多模态协议
+                <select
+                  value={aiForm.multimodalProtocol || "same"}
+                  onChange={(event) =>
+                    setAiForm({
+                      ...aiForm,
+                      multimodalProtocol: event.target.value as NonNullable<AiSettings["multimodalProtocol"]>
+                    })
+                  }
+                >
+                  {MULTIMODAL_PROTOCOL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 多模态模型
                 <input
                   value={aiForm.multimodalModel}
                   onChange={(event) => setAiForm({ ...aiForm, multimodalModel: event.target.value })}
+                />
+              </label>
+              <label>
+                多模态 API Key（可选）
+                <input
+                  type="password"
+                  value={aiForm.multimodalApiKey || ""}
+                  placeholder={
+                    aiForm.hasMultimodalApiKey
+                      ? `已保存 ${aiForm.maskedMultimodalApiKey}，留空不修改`
+                      : "留空时继承主 API Key"
+                  }
+                  onChange={(event) => setAiForm({ ...aiForm, multimodalApiKey: event.target.value })}
                 />
               </label>
               <label>
