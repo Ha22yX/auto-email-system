@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AI_PROVIDER_PRESETS, applyAiPreset } from "./ai-presets";
+import { AI_PROVIDER_PRESETS, applyAiPreset, updateAiProviderField } from "./ai-presets";
 import type { AiSettings } from "./types";
 
 const current: AiSettings = {
@@ -75,15 +75,47 @@ test("Zhipu preset keeps its independent Anthropic and OpenAI-compatible endpoin
   assert.equal(settings.multimodalModel, "glm-5v-turbo");
 });
 
-test("DeepSeek preset disables multimodal analysis while Qwen provides its vision model", () => {
+test("DeepSeek and Qwen presets keep generic attachment analysis disabled by default", () => {
   const deepseek = applyAiPreset(current, "deepseek");
   const qwen = applyAiPreset(current, "qwen");
 
   assert.equal(deepseek.multimodalEnabled, false);
   assert.equal(deepseek.model, "deepseek-v4-flash");
-  assert.equal(qwen.multimodalEnabled, true);
+  assert.equal(qwen.multimodalEnabled, false);
   assert.equal(qwen.multimodalProtocol, "same");
   assert.equal(qwen.multimodalModel, "qwen3-vl-plus");
+});
+
+test("manual provider field changes switch the active preset to custom", () => {
+  const providerFields = [
+    ["providerName", "Manual provider"],
+    ["baseUrl", "https://manual.example/v1"],
+    ["protocol", "gemini"],
+    ["model", "manual-model"],
+    ["multimodalEnabled", false],
+    ["multimodalBaseUrl", "https://vision-manual.example/v1"],
+    ["multimodalProtocol", "openai-chat"],
+    ["multimodalModel", "manual-vision-model"]
+  ] as const;
+
+  for (const [field, value] of providerFields) {
+    const updated = updateAiProviderField(applyAiPreset(current, "openai"), field, value);
+    assert.equal(updated.providerPreset, "custom");
+    assert.equal(updated[field], value);
+  }
+});
+
+test("keys, temperature, and attachment limits keep the selected preset", () => {
+  const selected = applyAiPreset(current, "openai");
+  const nonProviderChanges = {
+    apiKey: "another-primary-key",
+    multimodalApiKey: "another-vision-key",
+    temperature: 1,
+    multimodalMaxAttachmentMb: 12,
+    multimodalMaxTotalMb: 24
+  };
+
+  assert.equal({ ...selected, ...nonProviderChanges }.providerPreset, "openai");
 });
 
 test("Custom preset preserves every existing setting", () => {

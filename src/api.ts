@@ -93,6 +93,7 @@ export const api = {
     return request<{
       ok: boolean;
       message: string;
+      provider: string;
       protocol: AiSettings["protocol"];
       endpoint: string;
       model: string;

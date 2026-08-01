@@ -56,7 +56,7 @@ const mailboxSchema = z.object({
   enabled: z.coerce.boolean()
 });
 
-const aiSchema = z.object({
+export const aiSchema = z.object({
   providerName: z.string().min(1),
   providerPreset: z.string().optional().default("custom"),
   baseUrl: z.string().url(),
@@ -66,7 +66,7 @@ const aiSchema = z.object({
   protocol: z.enum(["auto", "openai-chat", "openai-responses", "anthropic", "gemini"]).optional().default("auto"),
   multimodalEnabled: z.coerce.boolean().optional().default(true),
   multimodalBaseUrl: z.string().url().optional().default("https://open.bigmodel.cn/api/paas/v4/chat/completions"),
-  multimodalModel: z.string().min(1).optional().default("glm-5v-turbo"),
+  multimodalModel: z.string().optional().default("glm-5v-turbo"),
   multimodalProtocol: z
     .enum(["auto", "same", "openai-chat", "openai-responses", "anthropic", "gemini"])
     .optional()
@@ -86,19 +86,28 @@ export function withSavedAiTestKeys(submitted: AiSettings, saved: AiSettings): A
   };
 }
 
-function sanitizeDiagnosticEndpoint(endpoint: string) {
+function redactDiagnosticSecrets(value: string, apiKeys: Array<string | undefined>) {
+  const secrets = [...new Set(apiKeys.map((apiKey) => apiKey?.trim()).filter((apiKey): apiKey is string => Boolean(apiKey)))];
+  return secrets.reduce((safeValue, secret) => {
+    const encodedSecret = encodeURIComponent(secret);
+    return safeValue.replaceAll(secret, "[REDACTED]").replaceAll(encodedSecret, "[REDACTED]");
+  }, value);
+}
+
+function sanitizeDiagnosticEndpoint(endpoint: string, apiKeys: Array<string | undefined>) {
   const parsed = new URL(endpoint);
   parsed.username = "";
   parsed.password = "";
   parsed.search = "";
   parsed.hash = "";
-  return parsed.toString();
+  return redactDiagnosticSecrets(parsed.toString(), apiKeys);
 }
 
 export function buildAiTestDiagnostics(settings: AiSettings, result: ClassificationResult) {
   return {
+    provider: settings.providerName,
     protocol: resolveAiProtocol(settings, "text"),
-    endpoint: sanitizeDiagnosticEndpoint(resolveAiEndpoint(settings, "text")),
+    endpoint: sanitizeDiagnosticEndpoint(resolveAiEndpoint(settings, "text"), [settings.apiKey, settings.multimodalApiKey]),
     model: settings.model,
     category: result.category
   };

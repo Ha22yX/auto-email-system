@@ -38,7 +38,9 @@ import {
   AI_PROVIDER_PRESETS,
   AI_PROTOCOL_OPTIONS,
   MULTIMODAL_PROTOCOL_OPTIONS,
-  applyAiPreset
+  applyAiPreset,
+  type AiProviderEditableField,
+  updateAiProviderField as applyAiProviderFieldUpdate
 } from "./ai-presets";
 import { buildOptimisticPanelReadPatch } from "./read-state";
 import type {
@@ -1684,7 +1686,15 @@ function SettingsPanel({
     setSaving(true);
     try {
       const result = await api.testAi(aiForm);
-      setToast(result.message);
+      let endpointHost = result.endpoint;
+      try {
+        endpointHost = new URL(result.endpoint).host;
+      } catch {
+        // Keep the safe server-provided endpoint when the browser cannot parse it.
+      }
+      setToast(
+        `AI API 测试成功 · 提供商：${result.provider} · 协议：${result.protocol} · 模型：${result.model} · 地址：${endpointHost} · 分类：${result.category}`
+      );
     } catch (error) {
       setToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1695,6 +1705,14 @@ function SettingsPanel({
   function selectAiPreset(presetId: string) {
     if (!aiForm) return;
     setAiForm(applyAiPreset(aiForm, presetId));
+  }
+
+  function updateAiProviderField<K extends AiProviderEditableField>(
+    field: K,
+    value: AiSettings[K]
+  ) {
+    if (!aiForm) return;
+    setAiForm(applyAiProviderFieldUpdate(aiForm, field, value));
   }
 
   async function saveSystem() {
@@ -1944,14 +1962,14 @@ function SettingsPanel({
                 服务名称
                 <input
                   value={aiForm.providerName}
-                  onChange={(event) => setAiForm({ ...aiForm, providerName: event.target.value })}
+                  onChange={(event) => updateAiProviderField("providerName", event.target.value)}
                 />
               </label>
               <label>
                 Base URL
                 <input
                   value={aiForm.baseUrl}
-                  onChange={(event) => setAiForm({ ...aiForm, baseUrl: event.target.value })}
+                  onChange={(event) => updateAiProviderField("baseUrl", event.target.value)}
                 />
               </label>
               <label>
@@ -1959,7 +1977,7 @@ function SettingsPanel({
                 <select
                   value={aiForm.protocol || "auto"}
                   onChange={(event) =>
-                    setAiForm({ ...aiForm, protocol: event.target.value as NonNullable<AiSettings["protocol"]> })
+                    updateAiProviderField("protocol", event.target.value as NonNullable<AiSettings["protocol"]>)
                   }
                 >
                   {AI_PROTOCOL_OPTIONS.map((option) => (
@@ -1971,7 +1989,7 @@ function SettingsPanel({
               </label>
               <label>
                 模型
-                <input value={aiForm.model} onChange={(event) => setAiForm({ ...aiForm, model: event.target.value })} />
+                <input value={aiForm.model} onChange={(event) => updateAiProviderField("model", event.target.value)} />
               </label>
               <label>
                 Temperature
@@ -1992,14 +2010,14 @@ function SettingsPanel({
                 <input
                   type="checkbox"
                   checked={Boolean(aiForm.multimodalEnabled)}
-                  onChange={(event) => setAiForm({ ...aiForm, multimodalEnabled: event.target.checked })}
+                  onChange={(event) => updateAiProviderField("multimodalEnabled", event.target.checked)}
                 />
               </label>
               <label>
                 多模态 Base URL
                 <input
                   value={aiForm.multimodalBaseUrl}
-                  onChange={(event) => setAiForm({ ...aiForm, multimodalBaseUrl: event.target.value })}
+                  onChange={(event) => updateAiProviderField("multimodalBaseUrl", event.target.value)}
                 />
               </label>
               <label>
@@ -2007,10 +2025,10 @@ function SettingsPanel({
                 <select
                   value={aiForm.multimodalProtocol || "same"}
                   onChange={(event) =>
-                    setAiForm({
-                      ...aiForm,
-                      multimodalProtocol: event.target.value as NonNullable<AiSettings["multimodalProtocol"]>
-                    })
+                    updateAiProviderField(
+                      "multimodalProtocol",
+                      event.target.value as NonNullable<AiSettings["multimodalProtocol"]>
+                    )
                   }
                 >
                   {MULTIMODAL_PROTOCOL_OPTIONS.map((option) => (
@@ -2024,7 +2042,7 @@ function SettingsPanel({
                 多模态模型
                 <input
                   value={aiForm.multimodalModel}
-                  onChange={(event) => setAiForm({ ...aiForm, multimodalModel: event.target.value })}
+                  onChange={(event) => updateAiProviderField("multimodalModel", event.target.value)}
                 />
               </label>
               <label>

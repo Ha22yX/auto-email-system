@@ -11,6 +11,16 @@ export type AiProviderPresetId =
   | "openrouter"
   | "custom";
 
+export type AiProviderEditableField =
+  | "providerName"
+  | "baseUrl"
+  | "protocol"
+  | "model"
+  | "multimodalEnabled"
+  | "multimodalBaseUrl"
+  | "multimodalProtocol"
+  | "multimodalModel";
+
 type AiProviderPreset = {
   id: AiProviderPresetId;
   label: string;
@@ -93,7 +103,7 @@ export const AI_PROVIDER_PRESETS: readonly AiProviderPreset[] = [
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     protocol: "openai-chat",
     model: "qwen3.6-plus",
-    multimodalEnabled: true,
+    multimodalEnabled: false,
     multimodalBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     multimodalProtocol: "same",
     multimodalModel: "qwen3-vl-plus"
@@ -159,4 +169,12 @@ export function applyAiPreset(current: AiSettings, presetId: AiProviderPresetId 
     multimodalProtocol: preset.multimodalProtocol,
     multimodalModel: preset.multimodalModel
   };
+}
+
+export function updateAiProviderField<K extends AiProviderEditableField>(
+  current: AiSettings,
+  field: K,
+  value: AiSettings[K]
+): AiSettings {
+  return { ...current, [field]: value, providerPreset: "custom" } as AiSettings;
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AiSettings, ClassificationResult } from "./types";
 
-const { buildAiTestDiagnostics, withSavedAiTestKeys } = await import("./routes");
+const { aiSchema, buildAiTestDiagnostics, withSavedAiTestKeys } = await import("./routes");
 
 function settings(overrides: Partial<AiSettings> = {}): AiSettings {
   return {
@@ -31,11 +31,15 @@ const classification: ClassificationResult = {
   actionItemsZh: []
 };
 
-test("AI test diagnostics use the resolved protocol and remove endpoint credentials and query values", () => {
-  const queryValue = "not-visible-in-diagnostics";
+test("AI test diagnostics expose the provider and redact both submitted keys from path, query, and userinfo", () => {
+  const primaryKey = "primary-submitted-key";
+  const multimodalKey = "multimodal-submitted-key";
   const diagnostics = buildAiTestDiagnostics(
     settings({
-      baseUrl: `https://embedded-user:embedded-password@gateway.example.test/v1?key=${queryValue}`,
+      providerName: "Reviewed provider",
+      apiKey: primaryKey,
+      multimodalApiKey: multimodalKey,
+      baseUrl: `https://${primaryKey}:${multimodalKey}@gateway.example.test/${primaryKey}/v1?key=${multimodalKey}`,
       protocol: "openai-responses",
       model: "gpt-5.6"
     }),
@@ -43,14 +47,19 @@ test("AI test diagnostics use the resolved protocol and remove endpoint credenti
   );
 
   assert.deepEqual(diagnostics, {
+    provider: "Reviewed provider",
     protocol: "openai-responses",
-    endpoint: "https://gateway.example.test/v1/responses",
+    endpoint: "https://gateway.example.test/[REDACTED]/v1/responses",
     model: "gpt-5.6",
     category: "secondary"
   });
-  assert.equal(diagnostics.endpoint.includes(queryValue), false);
-  assert.equal(diagnostics.endpoint.includes("embedded-user"), false);
-  assert.equal(diagnostics.endpoint.includes("embedded-password"), false);
+  assert.equal(diagnostics.endpoint.includes(primaryKey), false);
+  assert.equal(diagnostics.endpoint.includes(multimodalKey), false);
+});
+
+test("AI settings schema accepts an empty multimodal model for primary model fallback", () => {
+  const parsed = aiSchema.parse(settings({ multimodalModel: "" }));
+  assert.equal(parsed.multimodalModel, "");
 });
 
 test("AI test requests retain primary and multimodal saved keys independently when fields are blank", () => {
