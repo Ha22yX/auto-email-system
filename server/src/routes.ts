@@ -89,8 +89,11 @@ export function withSavedAiTestKeys(submitted: AiSettings, saved: AiSettings): A
 function redactDiagnosticSecrets(value: string, apiKeys: Array<string | undefined>) {
   const secrets = [...new Set(apiKeys.map((apiKey) => apiKey?.trim()).filter((apiKey): apiKey is string => Boolean(apiKey)))];
   return secrets.reduce((safeValue, secret) => {
-    const encodedSecret = encodeURIComponent(secret);
-    return safeValue.replaceAll(secret, "[REDACTED]").replaceAll(encodedSecret, "[REDACTED]");
+    const representations = [...new Set([secret, encodeURIComponent(secret)])];
+    return representations.reduce((redactedValue, representation) => {
+      const escapedRepresentation = representation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return redactedValue.replace(new RegExp(escapedRepresentation, "gi"), "[REDACTED]");
+    }, safeValue);
   }, value);
 }
 
@@ -100,7 +103,7 @@ function sanitizeDiagnosticEndpoint(endpoint: string, apiKeys: Array<string | un
   parsed.password = "";
   parsed.search = "";
   parsed.hash = "";
-  return redactDiagnosticSecrets(parsed.toString(), apiKeys);
+  return redactDiagnosticSecrets(parsed.origin, apiKeys);
 }
 
 export function buildAiTestDiagnostics(settings: AiSettings, result: ClassificationResult) {

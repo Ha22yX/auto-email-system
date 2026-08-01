@@ -31,15 +31,16 @@ const classification: ClassificationResult = {
   actionItemsZh: []
 };
 
-test("AI test diagnostics expose the provider and redact both submitted keys from path, query, and userinfo", () => {
-  const primaryKey = "primary-submitted-key";
+test("AI test diagnostics expose the provider without returning user-controlled endpoint paths or credentials", () => {
+  const primaryKey = "primary/submitted-key";
   const multimodalKey = "multimodal-submitted-key";
+  const lowerCaseEncodedPrimaryKey = encodeURIComponent(primaryKey).replaceAll("%2F", "%2f");
   const diagnostics = buildAiTestDiagnostics(
     settings({
       providerName: "Reviewed provider",
       apiKey: primaryKey,
       multimodalApiKey: multimodalKey,
-      baseUrl: `https://${primaryKey}:${multimodalKey}@gateway.example.test/${primaryKey}/v1?key=${multimodalKey}`,
+      baseUrl: `https://${encodeURIComponent(primaryKey)}:${multimodalKey}@gateway.example.test/${lowerCaseEncodedPrimaryKey}/v1?key=${multimodalKey}`,
       protocol: "openai-responses",
       model: "gpt-5.6"
     }),
@@ -49,7 +50,7 @@ test("AI test diagnostics expose the provider and redact both submitted keys fro
   assert.deepEqual(diagnostics, {
     provider: "Reviewed provider",
     protocol: "openai-responses",
-    endpoint: "https://gateway.example.test/[REDACTED]/v1/responses",
+    endpoint: "https://gateway.example.test",
     model: "gpt-5.6",
     category: "secondary"
   });
