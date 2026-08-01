@@ -1,4 +1,5 @@
 import type { AiSettings, ClassificationResult, IncomingEmail, MailCategory } from "./types";
+import { buildTemperaturePayload, resolveOpenAiChatUrl } from "./ai-request";
 
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
 
@@ -97,12 +98,6 @@ function isAnthropicEndpoint(baseUrl: string) {
   return /\/anthropic(?:\/|$)/i.test(baseUrl) || /\/v1\/messages$/i.test(baseUrl);
 }
 
-function resolveOpenAiChatUrl(baseUrl: string) {
-  const normalized = baseUrl.replace(/\/+$/, "");
-  if (/\/chat\/completions$/i.test(normalized)) return normalized;
-  return `${normalized}/chat/completions`;
-}
-
 function resolveAnthropicMessagesUrl(baseUrl: string) {
   const normalized = baseUrl.replace(/\/+$/, "");
   if (/\/v1\/messages$/i.test(normalized)) return normalized;
@@ -123,7 +118,7 @@ async function requestOpenAiCompatible(
     },
     body: JSON.stringify({
       model: settings.model,
-      temperature: settings.temperature,
+      ...buildTemperaturePayload(settings.model, settings.temperature),
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },

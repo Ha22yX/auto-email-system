@@ -1,4 +1,5 @@
 import type { AiSettings, EmailAttachment, IncomingEmail, MailCategory, MultimodalAnalysis } from "./types";
+import { buildTemperaturePayload, resolveOpenAiChatUrl } from "./ai-request";
 
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
 
@@ -183,7 +184,7 @@ export async function analyzeEmailAttachments(
   }
   content.push({ type: "text", text: buildPrompt(email, selected) });
 
-  const response = await fetchWithTimeout(settings.multimodalBaseUrl, {
+  const response = await fetchWithTimeout(resolveOpenAiChatUrl(settings.multimodalBaseUrl), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${settings.apiKey}`,
@@ -191,7 +192,10 @@ export async function analyzeEmailAttachments(
     },
     body: JSON.stringify({
       model: settings.multimodalModel,
-      temperature: Math.min(settings.temperature ?? 0.1, 0.3),
+      ...buildTemperaturePayload(
+        settings.multimodalModel,
+        Math.min(settings.temperature ?? 0.1, 0.3)
+      ),
       messages: [
         {
           role: "user",
