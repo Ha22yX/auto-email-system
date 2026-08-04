@@ -199,6 +199,14 @@ export type WeclawStatus = {
   contextTokenPath?: string;
   contextReady?: boolean;
   contextUpdatedAt?: string;
+  tokenHealth?: "missing" | "unverified" | "healthy" | "refresh-soon" | "expired" | "invalid";
+  contextCapturedAt?: string;
+  contextObservedAt?: string;
+  contextVerifiedAt?: string;
+  contextFailedAt?: string;
+  contextEstimatedExpiresAt?: string;
+  contextReminderAt?: string;
+  contextLastError?: string;
   sessionExpired?: boolean;
   sessionExpiredAt?: string;
   missingContext?: boolean;

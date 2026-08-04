@@ -31,7 +31,7 @@ const qrStatusUrl = `${ilinkBaseUrl}/ilink/bot/get_qrcode_status?qrcode=`;
 const sessionExpiredCode = -14;
 const contextTokenTtlMs = Math.max(2, Number(process.env.WECLAW_CONTEXT_TOKEN_TTL_HOURS || 24)) * 60 * 60 * 1000;
 const contextTokenReminderLeadMs =
-  Math.max(0.1, Number(process.env.WECLAW_CONTEXT_TOKEN_REMINDER_LEAD_HOURS || 1)) * 60 * 60 * 1000;
+  Math.max(0.1, Number(process.env.WECLAW_CONTEXT_TOKEN_REMINDER_LEAD_HOURS || 4)) * 60 * 60 * 1000;
 const contextTokenReminderCheckMs = Math.max(
   60,
   Number(process.env.WECLAW_CONTEXT_TOKEN_REMINDER_CHECK_SECONDS || 600)
@@ -50,16 +50,147 @@ type WeclawContextTokenStore = {
   updated_at?: string;
   token_updated_at?: Record<string, string>;
   tokens?: Record<string, string>;
-  reminders?: Record<
-    string,
-    {
-      token_hash?: string;
-      reminded_at?: string;
-      attempted_at?: string;
-      last_error?: string;
-    }
-  >;
+  token_meta?: Record<string, WeclawTokenMetadata>;
+  reminders?: Record<string, WeclawTokenReminderMetadata>;
 };
+
+export type WeclawTokenReminderMetadata = {
+  token_hash?: string;
+  reminded_at?: string;
+  attempted_at?: string;
+  last_error?: string;
+};
+
+export type WeclawTokenMetadata = {
+  token_hash: string;
+  captured_at: string;
+  observed_at?: string;
+  verified_at?: string;
+  failed_at?: string;
+  last_error?: string;
+};
+
+export type WeclawTokenHealthStatus =
+  | "missing"
+  | "unverified"
+  | "healthy"
+  | "refresh-soon"
+  | "expired"
+  | "invalid";
+
+type WeclawTokenHealthInput = {
+  hasToken: boolean;
+  capturedAt?: string;
+  observedAt?: string;
+  verifiedAt?: string;
+  failedAt?: string;
+  lastError?: string;
+};
+
+export type WeclawTokenHealthSnapshot = {
+  status: WeclawTokenHealthStatus;
+  contextReady: boolean;
+  capturedAt?: string;
+  observedAt?: string;
+  verifiedAt?: string;
+  failedAt?: string;
+  estimatedExpiresAt?: string;
+  reminderAt?: string;
+  lastError?: string;
+};
+
+function parsedTime(value?: string) {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function deriveWeclawTokenHealth(
+  input: WeclawTokenHealthInput,
+  now = Date.now(),
+  ttlMs = contextTokenTtlMs,
+  reminderLeadMs = contextTokenReminderLeadMs
+): WeclawTokenHealthSnapshot {
+  if (!input.hasToken) return { status: "missing", contextReady: false };
+
+  const captured = parsedTime(input.capturedAt);
+  const verified = parsedTime(input.verifiedAt);
+  const failed = parsedTime(input.failedAt);
+  const base = {
+    capturedAt: input.capturedAt,
+    observedAt: input.observedAt || input.capturedAt,
+    verifiedAt: input.verifiedAt,
+    failedAt: input.failedAt,
+    lastError: input.lastError,
+    estimatedExpiresAt: captured ? new Date(captured + ttlMs).toISOString() : undefined,
+    reminderAt: captured ? new Date(captured + ttlMs - reminderLeadMs).toISOString() : undefined
+  };
+
+  if (failed && (!verified || failed >= verified)) {
+    return { ...base, status: "invalid", contextReady: false };
+  }
+  if (!captured || !verified) {
+    return { ...base, status: "unverified", contextReady: false };
+  }
+  if (now >= captured + ttlMs) {
+    return { ...base, status: "expired", contextReady: false };
+  }
+  if (now >= captured + ttlMs - reminderLeadMs) {
+    return { ...base, status: "refresh-soon", contextReady: true };
+  }
+  return { ...base, status: "healthy", contextReady: true };
+}
+
+export function captureWeclawTokenMetadata(
+  current: WeclawTokenMetadata | undefined,
+  nextTokenHash: string,
+  capturedAt: string
+): WeclawTokenMetadata {
+  if (current?.token_hash === nextTokenHash) {
+    return { ...current, observed_at: capturedAt };
+  }
+  return { token_hash: nextTokenHash, captured_at: capturedAt, observed_at: capturedAt };
+}
+
+export function captureWeclawTokenState(
+  current: {
+    metadata: WeclawTokenMetadata | undefined;
+    reminder: WeclawTokenReminderMetadata | undefined;
+  },
+  nextTokenHash: string,
+  capturedAt: string
+) {
+  const tokenChanged = current.metadata?.token_hash !== nextTokenHash;
+  return {
+    metadata: captureWeclawTokenMetadata(current.metadata, nextTokenHash, capturedAt),
+    reminder: tokenChanged ? undefined : current.reminder
+  };
+}
+
+export function recordWeclawTokenSendResult(
+  current: WeclawTokenMetadata,
+  result: { at: string; success: boolean; error?: string }
+): WeclawTokenMetadata {
+  if (result.success) {
+    const { failed_at: _failedAt, last_error: _lastError, ...rest } = current;
+    return { ...rest, verified_at: result.at };
+  }
+  return {
+    ...current,
+    failed_at: result.at,
+    last_error: (result.error || "iLink send rejected").slice(0, 240)
+  };
+}
+
+export function isWeclawTokenReminderDue(
+  capturedAt: string,
+  now = Date.now(),
+  ttlMs = contextTokenTtlMs,
+  reminderLeadMs = contextTokenReminderLeadMs
+) {
+  const captured = parsedTime(capturedAt);
+  return captured !== undefined && now >= captured + ttlMs - reminderLeadMs;
+}
 
 type WeclawCredentialRecord = {
   botToken: string;
@@ -139,6 +270,7 @@ function readWeclawContextTokens() {
       updatedAt: "",
       tokenUpdatedAt: {} as Record<string, string>,
       tokens: {} as Record<string, string>,
+      tokenMeta: {} as Record<string, WeclawTokenMetadata>,
       reminders: {} as NonNullable<WeclawContextTokenStore["reminders"]>
     };
   }
@@ -150,6 +282,7 @@ function readWeclawContextTokens() {
       updatedAt: raw.updated_at || "",
       tokenUpdatedAt: raw.token_updated_at || {},
       tokens: raw.tokens || {},
+      tokenMeta: raw.token_meta || {},
       reminders: raw.reminders || {}
     };
   } catch {
@@ -158,6 +291,7 @@ function readWeclawContextTokens() {
       updatedAt: "",
       tokenUpdatedAt: {} as Record<string, string>,
       tokens: {} as Record<string, string>,
+      tokenMeta: {} as Record<string, WeclawTokenMetadata>,
       reminders: {} as NonNullable<WeclawContextTokenStore["reminders"]>
     };
   }
@@ -165,6 +299,23 @@ function readWeclawContextTokens() {
 
 function tokenHash(token: string) {
   return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+function tokenMetadataFor(
+  store: ReturnType<typeof readWeclawContextTokens>,
+  userId: string,
+  token: string
+): WeclawTokenMetadata | undefined {
+  const existing = store.tokenMeta[userId];
+  if (existing) return existing;
+  const legacyUpdatedAt = store.tokenUpdatedAt[userId] || store.updatedAt;
+  if (!legacyUpdatedAt) return undefined;
+  return {
+    token_hash: tokenHash(token),
+    captured_at: legacyUpdatedAt,
+    observed_at: legacyUpdatedAt,
+    verified_at: legacyUpdatedAt
+  };
 }
 
 function writeWeclawContextTokenStore(store: WeclawContextTokenStore) {
@@ -185,24 +336,58 @@ function writeWeclawContextToken(userId: string, contextToken: string) {
   if (!userId || !contextToken) return false;
   const current = readWeclawContextTokens();
   const previous = current.tokens[userId];
+  const capturedAt = new Date().toISOString();
+  const nextTokenHash = tokenHash(contextToken);
+  const capturedState = captureWeclawTokenState(
+    {
+      metadata: previous ? tokenMetadataFor(current, userId, previous) : undefined,
+      reminder: current.reminders[userId]
+    },
+    nextTokenHash,
+    capturedAt
+  );
   const reminders = { ...current.reminders };
-  if (previous !== contextToken) {
-    delete reminders[userId];
-  }
+  if (capturedState.reminder) reminders[userId] = capturedState.reminder;
+  else delete reminders[userId];
   const next: WeclawContextTokenStore = {
-    updated_at: new Date().toISOString(),
+    updated_at: capturedAt,
     token_updated_at: {
       ...current.tokenUpdatedAt,
-      [userId]: new Date().toISOString()
+      [userId]: capturedAt
     },
     tokens: {
       ...current.tokens,
       [userId]: contextToken
     },
+    token_meta: {
+      ...current.tokenMeta,
+      [userId]: capturedState.metadata
+    },
     reminders
   };
   writeWeclawContextTokenStore(next);
   return previous !== contextToken;
+}
+
+function recordStoredWeclawTokenSendResult(
+  userId: string,
+  contextToken: string,
+  result: { at: string; success: boolean; error?: string }
+) {
+  const current = readWeclawContextTokens();
+  if (current.tokens[userId] !== contextToken) return;
+  const metadata = tokenMetadataFor(current, userId, contextToken);
+  if (!metadata) return;
+  writeWeclawContextTokenStore({
+    updated_at: current.updatedAt,
+    token_updated_at: current.tokenUpdatedAt,
+    tokens: current.tokens,
+    token_meta: {
+      ...current.tokenMeta,
+      [userId]: recordWeclawTokenSendResult(metadata, result)
+    },
+    reminders: current.reminders
+  });
 }
 
 function readWeclawCredentialRecords(): WeclawCredentialRecord[] {
@@ -450,9 +635,19 @@ export async function sendWeclawDirectText(recipientId: string, text: string, ti
   );
 
   if (response.ret && response.ret !== 0) {
-    throw new Error(`send message failed: ret=${response.ret} errmsg=${response.errmsg || ""}`);
+    const errorMessage = `send message failed: ret=${response.ret} errmsg=${response.errmsg || ""}`;
+    recordStoredWeclawTokenSendResult(recipientId, contextToken, {
+      at: new Date().toISOString(),
+      success: false,
+      error: errorMessage
+    });
+    throw new Error(errorMessage);
   }
 
+  recordStoredWeclawTokenSendResult(recipientId, contextToken, {
+    at: new Date().toISOString(),
+    success: true
+  });
   appendLog("system", `direct notification sent to ${recipientId}: ${text.slice(0, 80)}`);
   return JSON.stringify({ status: "ok", mode: "direct" });
 }
@@ -476,27 +671,31 @@ function buildContextTokenRefreshReminder(updatedAt: string) {
     "",
     "请现在打开微信里的 ClawBot 聊天，发送任意一条消息，例如：1",
     "",
-    "系统收到后会自动刷新 token，并重试之前失败的邮件通知。"
+    "系统收到后会验证当前 token，并重试之前失败的邮件通知。"
   ].join("\n");
 }
 
-export function buildContextTokenUpdatedMessage(updatedAt = new Date().toISOString()) {
+export function buildContextTokenUpdatedMessage(updatedAt = new Date().toISOString(), tokenChanged = true) {
   return [
-    "✅ 微信通知会话已刷新",
+    tokenChanged ? "✅ 微信通知令牌刷新并验证成功" : "✅ 微信通知当前令牌发送验证成功",
     "",
-    "系统已经收到你刚刚发给 ClawBot 的消息，并保存了新的通知 token。",
+    tokenChanged
+      ? "系统收到了新的 context token，并已完成主动发送验证；过期倒计时已重新开始。"
+      : "系统收到了你的消息并验证当前 token 仍可发送，但 token 值没有变化，因此不会重置过期倒计时。",
     "",
-    `刷新时间：${formatReminderTime(new Date(updatedAt))}`,
+    `验证时间：${formatReminderTime(new Date(updatedAt))}`,
     "",
     "接下来重要邮件、次重要邮件会继续按你的通知分类设置推送到这里。",
+    "iLink 不提供精确过期时间，系统会在预计失效前约 4 小时提醒你再次验证。",
     "无需重新扫码，也无需在面板里手动填写接收人。"
   ].join("\n");
 }
 
-async function notifyWeclawContextTokenUpdated(userId: string, updatedAt: string) {
+async function notifyWeclawContextTokenUpdated(userId: string, updatedAt: string, tokenChanged: boolean) {
   try {
-    await sendWeclawDirectText(userId, buildContextTokenUpdatedMessage(updatedAt), 12000);
+    await sendWeclawDirectText(userId, buildContextTokenUpdatedMessage(updatedAt, tokenChanged), 12000);
     appendLog("system", `context token refresh confirmation sent to ${userId}`);
+    notifyWeclawContextReady(userId);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     appendLog("system", `context token refresh confirmation failed for ${userId}: ${message}`);
@@ -523,13 +722,24 @@ export async function sendDueWeclawTokenRefreshReminders() {
     const token = store.tokens[recipientId];
     if (!token) continue;
 
-    const updatedAt = store.tokenUpdatedAt[recipientId] || store.updatedAt;
+    const metadata = tokenMetadataFor(store, recipientId, token);
+    const updatedAt = metadata?.captured_at || store.tokenUpdatedAt[recipientId] || store.updatedAt;
     const updated = Date.parse(updatedAt);
     if (!Number.isFinite(updated)) continue;
 
     checked += 1;
-    const remindAt = updated + contextTokenTtlMs - contextTokenReminderLeadMs;
-    if (now < remindAt) continue;
+    if (!isWeclawTokenReminderDue(updatedAt, now)) continue;
+    const health = deriveWeclawTokenHealth(
+      {
+        hasToken: true,
+        capturedAt: metadata?.captured_at || updatedAt,
+        verifiedAt: metadata?.verified_at || updatedAt,
+        failedAt: metadata?.failed_at,
+        lastError: metadata?.last_error
+      },
+      now
+    );
+    if (health.status === "invalid" || health.status === "expired") continue;
 
     const hash = tokenHash(token);
     const currentStore = readWeclawContextTokens();
@@ -542,6 +752,7 @@ export async function sendDueWeclawTokenRefreshReminders() {
       updated_at: currentStore.updatedAt,
       token_updated_at: currentStore.tokenUpdatedAt,
       tokens: currentStore.tokens,
+      token_meta: currentStore.tokenMeta,
       reminders: {
         ...currentStore.reminders,
         [recipientId]: {
@@ -559,6 +770,7 @@ export async function sendDueWeclawTokenRefreshReminders() {
         updated_at: latestStore.updatedAt,
         token_updated_at: latestStore.tokenUpdatedAt,
         tokens: latestStore.tokens,
+        token_meta: latestStore.tokenMeta,
         reminders: {
           ...latestStore.reminders,
           [recipientId]: {
@@ -578,6 +790,7 @@ export async function sendDueWeclawTokenRefreshReminders() {
         updated_at: latestStore.updatedAt,
         token_updated_at: latestStore.tokenUpdatedAt,
         tokens: latestStore.tokens,
+        token_meta: latestStore.tokenMeta,
         reminders: {
           ...latestStore.reminders,
           [recipientId]: {
@@ -668,12 +881,9 @@ async function monitorAccount(account: WeclawCredentialRecord, signal: AbortSign
           const changed = writeWeclawContextToken(msg.from_user_id, msg.context_token);
           appendLog(
             "system",
-            `recorded WeChat context for ${msg.from_user_id}; incoming text ignored: ${textFromIlinkMessage(msg).slice(0, 60)}`
+            `recorded WeChat context for ${msg.from_user_id} (${changed ? "new token" : "same token"}); incoming text ignored: ${textFromIlinkMessage(msg).slice(0, 60)}`
           );
-          if (changed) {
-            void notifyWeclawContextTokenUpdated(msg.from_user_id, refreshedAt);
-          }
-          notifyWeclawContextReady(msg.from_user_id);
+          void notifyWeclawContextTokenUpdated(msg.from_user_id, refreshedAt, changed);
         }
       }
     } catch (error) {
@@ -792,6 +1002,17 @@ export async function getWeclawStatus(apiUrl: string) {
   const activeAccount = accounts[0];
   const contextTokens = readWeclawContextTokens();
   const activeContextToken = activeAccount?.recipientId ? contextTokens.tokens[activeAccount.recipientId] : "";
+  const activeTokenMetadata = activeAccount?.recipientId && activeContextToken
+    ? tokenMetadataFor(contextTokens, activeAccount.recipientId, activeContextToken)
+    : undefined;
+  const tokenHealth = deriveWeclawTokenHealth({
+    hasToken: Boolean(activeContextToken),
+    capturedAt: activeTokenMetadata?.captured_at,
+    observedAt: activeTokenMetadata?.observed_at,
+    verifiedAt: activeTokenMetadata?.verified_at,
+    failedAt: activeTokenMetadata?.failed_at,
+    lastError: activeTokenMetadata?.last_error
+  });
   const logTail = readLogTail(220);
   const runtimeHealth = analyzeWeclawRuntime(logTail);
   const bridgeReady = managedRunning();
@@ -814,8 +1035,16 @@ export async function getWeclawStatus(apiUrl: string) {
     recipientId: activeAccount?.recipientId,
     botId: activeAccount?.botId,
     contextTokenPath: contextTokens.path,
-    contextReady: Boolean(activeContextToken),
-    contextUpdatedAt: contextTokens.updatedAt,
+    contextReady: tokenHealth.contextReady,
+    contextUpdatedAt: tokenHealth.capturedAt || contextTokens.updatedAt,
+    tokenHealth: tokenHealth.status,
+    contextCapturedAt: tokenHealth.capturedAt,
+    contextObservedAt: tokenHealth.observedAt,
+    contextVerifiedAt: tokenHealth.verifiedAt,
+    contextFailedAt: tokenHealth.failedAt,
+    contextEstimatedExpiresAt: tokenHealth.estimatedExpiresAt,
+    contextReminderAt: tokenHealth.reminderAt,
+    contextLastError: tokenHealth.lastError,
     ...runtimeHealth,
     lastExit: state.lastExit,
     logTail

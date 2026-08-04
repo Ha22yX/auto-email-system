@@ -39,7 +39,7 @@ Expected: FAIL because `deriveWeclawTokenHealth` does not exist.
 
 - [ ] **Step 3: Implement the minimal pure health derivation and migration-safe metadata reader**
 
-Use the current token hash only internally. Derive nominal expiry from `captured_at + 24h` and refresh threshold from `captured_at + 20h`.
+Use the current token hash only internally. Derive nominal expiry from `captured_at + 24h` and refresh threshold from `captured_at + 20h`. Preserve `captured_at` when the same token value is observed again, and store that activity separately as `observed_at`.
 
 - [ ] **Step 4: Run the focused test and verify GREEN**
 
@@ -59,7 +59,7 @@ Expected: PASS.
 
 - [ ] **Step 1: Write failing state-transition tests**
 
-Cover a same-token capture preserving a newer failure, a new-token capture clearing stale state, a successful send clearing failure, and a rejected send making the current token invalid.
+Cover a same-token capture preserving its original lifetime, reminder, and newer failure; a new-token capture clearing stale state; a successful send clearing failure; and a rejected send making the current token invalid.
 
 - [ ] **Step 2: Run the focused test and verify RED**
 
@@ -126,4 +126,3 @@ Commit the implementation and push to `origin/main` after tests pass.
 - [ ] **Step 3: Deploy through the existing Baota Node project**
 
 Fast-forward the server checkout, build, restart the project-specific process tree, and verify `GET /api/health` plus `https://mail.rosebeg.com/` return HTTP 200.
-

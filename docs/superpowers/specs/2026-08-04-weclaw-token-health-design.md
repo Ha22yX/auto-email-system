@@ -16,12 +16,13 @@ The current bridge treats every inbound WeChat message as a full 24-hour token r
 
 Each recipient stores metadata for the current token hash:
 
-- `captured_at`: last inbound message carrying this token.
+- `captured_at`: when this exact token value was first captured; this anchors the conservative expiry estimate.
+- `observed_at`: last inbound message carrying this token, even when the value is unchanged.
 - `verified_at`: last successful direct send using this token.
 - `failed_at`: last terminal send rejection using this token.
 - `last_error`: sanitized rejection summary.
 
-Legacy `token_updated_at` remains readable for migration. On first write, the new metadata is persisted next to existing token data. A new token clears reminder and failure state. The same token may update `captured_at`, but it does not silently clear a recorded send failure.
+Legacy `token_updated_at` remains readable for migration. On first write, the new metadata is persisted next to existing token data. A new token resets `captured_at` and clears reminder and failure state. The same token updates only `observed_at`: it neither extends the estimated lifetime nor clears a reminder or recorded send failure.
 
 ## Health Rules
 
@@ -38,7 +39,7 @@ Legacy `token_updated_at` remains readable for migration. On first write, the ne
 
 The default reminder lead changes from one hour to four hours. The reminder worker uses the current token's metadata and records both success and failure. A terminal failure immediately changes health to `invalid`; it is retried only after a new inbound context is captured or at the existing throttled interval for transient errors.
 
-The refresh confirmation is sent only after the captured token is accepted by a direct send. Successful confirmation records `verified_at`. Failed confirmation records `failed_at` and must not claim success.
+The confirmation is sent only after the captured token is accepted by a direct send. Successful confirmation records `verified_at`. Failed confirmation records `failed_at` and must not claim success. Its wording distinguishes a genuinely new token from a same-token liveness check, so the latter never claims that expiry was extended.
 
 ## UI
 
@@ -47,7 +48,6 @@ The management panel shows a status label and compact details: last capture, las
 ## Testing
 
 - Pure tests cover health derivation at healthy, refresh-soon, expired, invalid, and unverified boundaries.
-- Store tests cover same-token capture without clearing failure and successful verification clearing failure.
+- Store tests cover same-token capture without extending lifetime or clearing reminders/failures, plus successful verification clearing a send failure.
 - Reminder tests verify the four-hour default boundary without contacting iLink.
 - Existing notification retry tests and the full application test suite must remain green.
-

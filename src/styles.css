@@ -2198,6 +2198,95 @@ body.resizing-detail iframe {
   color: var(--accent);
 }
 
+.weclaw-status.danger {
+  border-color: rgb(194 84 51 / 0.24);
+  background: rgb(255 239 233 / 0.9);
+  color: #9a3e2b;
+}
+
+.weclaw-token-health {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(0, 2fr);
+  align-items: center;
+  gap: 12px 18px;
+  border: 1px solid rgb(32 90 75 / 0.12);
+  border-radius: 8px;
+  background: rgb(255 255 252 / 0.72);
+  padding: 12px;
+  transition:
+    border-color 220ms var(--ease),
+    background 220ms var(--ease);
+}
+
+.weclaw-token-health.refresh-soon {
+  border-color: rgb(184 125 36 / 0.24);
+  background: rgb(255 249 232 / 0.82);
+}
+
+.weclaw-token-health.invalid,
+.weclaw-token-health.expired {
+  border-color: rgb(194 84 51 / 0.25);
+  background: rgb(255 244 239 / 0.84);
+}
+
+.weclaw-token-health-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.weclaw-token-health-copy span,
+.weclaw-token-health-times dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.weclaw-token-health-copy strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.weclaw-token-health-copy small {
+  color: #68716a;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.weclaw-token-health-times {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.weclaw-token-health-times div {
+  min-width: 0;
+  border-left: 1px solid rgb(32 90 75 / 0.1);
+  padding-left: 10px;
+}
+
+.weclaw-token-health-times dd {
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: #35413a;
+  font-size: 12px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weclaw-token-health-error {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  margin: 0;
+  color: #9a3e2b;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .weclaw-console-actions {
   flex-wrap: wrap;
   gap: 8px;
@@ -2742,6 +2831,7 @@ body.resizing-detail iframe {
 
   .weclaw-console-head,
   .weclaw-console-actions,
+  .weclaw-token-health,
   .notification-hero,
   .notification-hero-actions,
   .notification-workspace,
@@ -2749,6 +2839,16 @@ body.resizing-detail iframe {
     align-items: stretch;
     flex-direction: column;
     grid-template-columns: 1fr;
+  }
+
+  .weclaw-token-health-times {
+    grid-template-columns: 1fr;
+  }
+
+  .weclaw-token-health-times div {
+    border-left: 0;
+    border-top: 1px solid rgb(32 90 75 / 0.1);
+    padding: 8px 0 0;
   }
 
   .weclaw-status,

@@ -1891,9 +1891,21 @@ function SettingsPanel({
   const weclawLoginSaved = Boolean(weclawStatus?.hasCredentials);
   const weclawContextReady = Boolean(weclawStatus?.contextReady);
   const weclawSessionExpired = Boolean(weclawStatus?.sessionExpired);
+  const weclawTokenHealth = weclawStatus?.tokenHealth || (weclawContextReady ? "healthy" : "missing");
+  const weclawTokenNeedsAction = ["invalid", "expired", "unverified"].includes(weclawTokenHealth);
+  const weclawTokenHealthMeta = {
+    missing: { label: "尚未获取令牌", helper: "请先给 ClawBot 发送一条消息" },
+    unverified: { label: "等待发送验证", helper: "已收到上下文，正在确认主动发送能力" },
+    healthy: { label: "令牌已验证", helper: "当前可以发送邮件通知" },
+    "refresh-soon": { label: "即将需要刷新", helper: "请尽快给 ClawBot 发送一条消息" },
+    expired: { label: "预计窗口已过期", helper: "邮件通知会排队，刷新后自动补发" },
+    invalid: { label: "令牌已失效", helper: "微信已拒绝发送，请立即刷新" }
+  }[weclawTokenHealth];
   const weclawQrHint = weclawStatus?.apiReachable
     ? weclawContextReady
       ? `微信桥接已经在线，通知会自动发送给扫码绑定的微信。`
+      : weclawTokenNeedsAction && !weclawSessionExpired
+        ? "微信桥接在线，但当前令牌没有通过发送验证。请在微信里给 ClawBot 发送任意一条消息；验证成功后，排队的邮件通知会自动补发。"
       : weclawSessionExpired
         ? "扫码确认已经完成，但微信侧随后返回 session expired，说明 ClawBot 聊天没有在微信里真正建立。请先确认微信已更新，并且“设置 > 插件”里能看到微信 ClawBot。"
         : "微信已登录并自动绑定扫码用户。首次通知前，请在微信里搜索并打开 ClawBot，对它发送任意一条消息来激活会话；如果找不到联系人，请重新绑定微信。"
@@ -1914,10 +1926,10 @@ function SettingsPanel({
   const weclawStatusLabel = weclawStatus?.apiReachable
     ? weclawStatus.managedRunning
       ? weclawContextReady
-        ? `会话已激活${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
+        ? `${weclawTokenHealthMeta.label}${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
         : weclawSessionExpired
           ? `微信侧会话过期${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
-          : `需要会话激活${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
+          : `${weclawTokenHealthMeta.label}${weclawStatus.managedPid ? ` · PID ${weclawStatus.managedPid}` : ""}`
       : "外部桥接在线"
     : weclawLoginSaved
       ? "已绑定微信"
@@ -2319,7 +2331,15 @@ function SettingsPanel({
                       <p className="section-kicker">项目内桥接</p>
                       <h3>{weclawHeading}</h3>
                     </div>
-                    <span className={weclawStatus?.apiReachable ? "weclaw-status online" : "weclaw-status"}>
+                    <span
+                      className={`weclaw-status${
+                        weclawStatus?.apiReachable && weclawContextReady
+                          ? " online"
+                          : weclawStatus?.apiReachable && weclawTokenNeedsAction
+                            ? " danger"
+                            : ""
+                      }`}
+                    >
                       {weclawStatusLabel}
                     </span>
                   </div>
@@ -2340,6 +2360,36 @@ function SettingsPanel({
                       <ClockCounterClockwise size={18} />
                       重新绑定
                     </button>
+                  </div>
+                  <div className={`weclaw-token-health ${weclawTokenHealth}`}>
+                    <div className="weclaw-token-health-copy">
+                      <span>通知令牌</span>
+                      <strong>{weclawTokenHealthMeta.label}</strong>
+                      <small>{weclawTokenHealthMeta.helper}</small>
+                    </div>
+                    <dl className="weclaw-token-health-times">
+                      <div>
+                        <dt>最后收到</dt>
+                        <dd>{formatTime(weclawStatus?.contextObservedAt || weclawStatus?.contextCapturedAt)}</dd>
+                      </div>
+                      <div>
+                        <dt>发送验证</dt>
+                        <dd>{weclawStatus?.contextVerifiedAt ? formatTime(weclawStatus.contextVerifiedAt) : "尚未通过"}</dd>
+                      </div>
+                      <div>
+                        <dt>预计失效</dt>
+                        <dd>
+                          {weclawStatus?.contextEstimatedExpiresAt
+                            ? formatTime(weclawStatus.contextEstimatedExpiresAt)
+                            : "等待令牌"}
+                        </dd>
+                      </div>
+                    </dl>
+                    {weclawStatus?.contextLastError && (
+                      <p className="weclaw-token-health-error" title={weclawStatus.contextLastError}>
+                        最后失败：{weclawStatus.contextLastError}
+                      </p>
+                    )}
                   </div>
                   <div
                     className={`weclaw-qr-card${weclawQrDataUrl ? " ready" : ""}${
