@@ -13,7 +13,8 @@ import {
   getMaxProcessedUid,
   getProcessedEmail,
   recordProcessingEvent,
-  readState,
+  readMailboxes,
+  readSettings,
   updateMailboxSync,
   updateProcessedEmailNotification,
   updateProcessedEmailReadMark,
@@ -89,7 +90,7 @@ export async function processMailboxes(options: {
   }
 
   running = true;
-  const state = readState();
+  const state = { settings: readSettings(), mailboxes: readMailboxes() };
   const run: ProcessingRun = {
     id: randomUUID(),
     startedAt: new Date().toISOString(),
@@ -492,7 +493,7 @@ export function startProcessingWorker(options: { recoverInterruptedOnFirstRun?: 
   let shouldRecoverInterrupted = Boolean(options.recoverInterruptedOnFirstRun);
 
   const tick = async () => {
-    const current = readState();
+    const current = { settings: readSettings(), mailboxes: readMailboxes() };
     if (!current.settings.system.autoProcessEnabled || running) return;
     if (!current.mailboxes.some((mailbox) => mailbox.enabled)) return;
 

@@ -5,7 +5,7 @@ import {
   SESSION_MAX_AGE_SECONDS,
   verifySessionToken
 } from "./auth-crypto";
-import { readState } from "./store";
+import { readSettings } from "./store";
 
 function parseCookies(header: string | undefined) {
   const cookies = new Map<string, string>();
@@ -38,11 +38,11 @@ export function getSessionToken(req: express.Request) {
 }
 
 export function isAuthenticated(req: express.Request) {
-  return verifySessionToken(getSessionToken(req), readState().settings.auth);
+  return verifySessionToken(getSessionToken(req), readSettings().auth);
 }
 
 export function setAuthCookie(req: express.Request, res: express.Response) {
-  const token = createSessionToken(readState().settings.auth);
+  const token = createSessionToken(readSettings().auth);
   res.setHeader(
     "Set-Cookie",
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; Max-Age=${SESSION_MAX_AGE_SECONDS}; ${cookieBase(req)}`

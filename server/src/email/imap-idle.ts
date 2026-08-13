@@ -1,5 +1,5 @@
 import type { ImapFlow } from "imapflow";
-import { readState, updateMailboxSync } from "../store";
+import { readMailboxes, readSettings, updateMailboxSync } from "../store";
 import type { Mailbox } from "../types";
 import { createImapClient } from "./imap";
 import { requestMailboxProcessing } from "./processor";
@@ -87,7 +87,7 @@ function scheduleReconnect(watcher: IdleWatcher, reason: string) {
 async function connectWatcher(watcher: IdleWatcher) {
   if (watcher.stopped) return;
 
-  const mailbox = readState().mailboxes.find((item) => item.id === watcher.mailboxId);
+  const mailbox = readMailboxes().find((item) => item.id === watcher.mailboxId);
   if (!mailbox || !mailbox.enabled || mailbox.protocol !== "imap") {
     await closeWatcher(watcher);
     watchers.delete(watcher.mailboxId);
@@ -167,9 +167,9 @@ async function replaceWatcher(existing: IdleWatcher, mailbox: Mailbox) {
 }
 
 async function reconcileWatchers() {
-  const state = readState();
-  const enabledImap = state.settings.system.autoProcessEnabled
-    ? state.mailboxes.filter((mailbox) => mailbox.enabled && mailbox.protocol === "imap")
+  const settings = readSettings();
+  const enabledImap = settings.system.autoProcessEnabled
+    ? readMailboxes().filter((mailbox) => mailbox.enabled && mailbox.protocol === "imap")
     : [];
   const wantedIds = new Set(enabledImap.map((mailbox) => mailbox.id));
 

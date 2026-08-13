@@ -4,10 +4,19 @@ import test from "node:test";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { resolveAiProtocol } from "./ai-protocol";
-import type { AiSettings } from "./types";
+import type { AiSettings, ProcessedEmail } from "./types";
 
 process.env.DATA_DIR ??= path.join(tmpdir(), `auto-email-system-store-test-${process.pid}`);
-const { normalizeAiSettings, publicAiSettings, readState, updateAiSettings } = await import("./store");
+const {
+  addProcessedEmail,
+  normalizeAiSettings,
+  publicAiSettings,
+  readMailboxes,
+  readProcessingRuns,
+  readSettings,
+  readState,
+  updateAiSettings
+} = await import("./store");
 
 const primaryApiKey = "primary-placeholder-secret";
 const multimodalApiKey = "multimodal-placeholder-secret";
@@ -87,4 +96,43 @@ test("retains both saved keys when an update submits blank key fields", () => {
 
   assert.equal(digest(saved.apiKey), digest("stored-primary-value"));
   assert.equal(digest(saved.multimodalApiKey ?? ""), digest("stored-multimodal-value"));
+});
+
+
+test("lightweight state readers never parse stored email bodies", () => {
+  const bodyMarker = "email-body-must-not-be-parsed-" + process.pid;
+  const email: ProcessedEmail = {
+    id: "memory-regression-" + process.pid,
+    mailboxId: "memory-regression-mailbox",
+    externalUid: "1",
+    subject: "Memory regression",
+    processedAt: new Date().toISOString(),
+    category: "ignore",
+    summaryZh: "memory regression",
+    reasonZh: "lightweight reader verification",
+    actionItemsZh: [],
+    originalText: bodyMarker,
+    readMarked: true
+  };
+  addProcessedEmail(email);
+
+  const originalParse = JSON.parse;
+  let parsedStoredEmail = false;
+  JSON.parse = ((value: string, reviver?: Parameters<typeof JSON.parse>[1]) => {
+    if (String(value).includes(bodyMarker)) {
+      parsedStoredEmail = true;
+      throw new Error("lightweight reader parsed an email body");
+    }
+    return originalParse(value, reviver);
+  }) as typeof JSON.parse;
+
+  try {
+    assert.doesNotThrow(() => readSettings());
+    assert.doesNotThrow(() => readMailboxes());
+    assert.doesNotThrow(() => readProcessingRuns(10));
+  } finally {
+    JSON.parse = originalParse;
+  }
+
+  assert.equal(parsedStoredEmail, false);
 });

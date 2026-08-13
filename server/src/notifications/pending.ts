@@ -1,4 +1,4 @@
-import { getPendingNotificationEmails, getProcessedEmailById, readState, updateProcessedEmailNotification } from "../store";
+import { getPendingNotificationEmails, getProcessedEmailById, readMailboxes, readSettings, updateProcessedEmailNotification } from "../store";
 import { sendEmailNotification, shouldNotifyEmail } from "./clawbot";
 
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -23,20 +23,20 @@ export async function retryPendingEmailNotifications(limit = 20) {
   let failed = 0;
 
   try {
-    const state = readState();
-    const mailboxById = new Map(state.mailboxes.map((mailbox) => [mailbox.id, mailbox]));
+    const settings = readSettings();
+    const mailboxById = new Map(readMailboxes().map((mailbox) => [mailbox.id, mailbox]));
     const pending = getPendingNotificationEmails(limit).filter((email) =>
-      shouldNotifyEmail(state.settings.notification, email)
+      shouldNotifyEmail(settings.notification, email)
     );
 
     for (const email of pending) {
-      const current = readState();
+      const currentNotification = readSettings().notification;
       const latest = getProcessedEmailById(email.id);
-      if (!latest?.notificationError || !shouldNotifyEmail(current.settings.notification, latest)) continue;
+      if (!latest?.notificationError || !shouldNotifyEmail(currentNotification, latest)) continue;
 
       attempted += 1;
       try {
-        await sendEmailNotification(current.settings.notification, latest, mailboxById.get(latest.mailboxId));
+        await sendEmailNotification(currentNotification, latest, mailboxById.get(latest.mailboxId));
         updateProcessedEmailNotification(latest.id, {
           notifiedAt: new Date().toISOString(),
           notificationError: ""

@@ -408,6 +408,18 @@ function getRuns(limit = 100) {
   return (db.prepare("SELECT data FROM runs ORDER BY startedAt DESC LIMIT ?").all(limit) as SqlRow[]).map(rowToRun);
 }
 
+export function readSettings() {
+  return clone(getSettings());
+}
+
+export function readMailboxes() {
+  return clone(getAllMailboxes());
+}
+
+export function readProcessingRuns(limit = 100) {
+  return clone(getRuns(limit));
+}
+
 export function readState(): AppState {
   return {
     settings: clone(getSettings()),
@@ -482,7 +494,7 @@ export function upsertMailbox(input: Omit<Mailbox, "id" | "createdAt" | "updated
 
   insertMailbox(saved);
   publishAppEvent("mailboxes", { id: saved.id });
-  return getAllMailboxes();
+  return readMailboxes();
 }
 
 export function removeMailbox(id: string) {
@@ -497,7 +509,7 @@ export function removeMailbox(id: string) {
   }
   publishAppEvent("mailboxes", { id });
   publishAppEvent("emails", { mailboxId: id });
-  return readState();
+  return { mailboxes: readMailboxes() };
 }
 
 export function updateAiSettings(input: Partial<AiSettings>) {
@@ -694,11 +706,11 @@ export function markInterruptedRuns() {
 }
 
 export function hasInterruptedRecoveryRetry() {
-  return getAllMailboxes().some((mailbox) => mailbox.lastError?.includes("中断恢复扫描超时"));
+  return readMailboxes().some((mailbox) => mailbox.lastError?.includes("中断恢复扫描超时"));
 }
 
 export function updateMailboxSync(id: string, patch: Partial<Pick<Mailbox, "lastSyncAt" | "lastError">>) {
-  const mailbox = getAllMailboxes().find((item) => item.id === id);
+  const mailbox = readMailboxes().find((item) => item.id === id);
   if (!mailbox) return;
   insertMailbox({
     ...mailbox,

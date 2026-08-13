@@ -17,7 +17,9 @@ import {
   getDashboardData,
   getProcessedEmailById,
   queryProcessedEmails,
-  readState,
+  readMailboxes,
+  readProcessingRuns,
+  readSettings,
   removeMailbox,
   updateAuthPassword,
   updateAiSettings,
@@ -37,7 +39,7 @@ import {
   startWeclaw,
   stopWeclaw
 } from "./weclaw/manager";
-import type { AiSettings, ClassificationResult, MailCategory } from "./types";
+import type { AiSettings, ClassificationResult, MailCategory, ProcessedEmail } from "./types";
 
 const router = express.Router();
 const EMAIL_ASSET_TOKEN_TTL_SECONDS = 6 * 60 * 60;
@@ -166,7 +168,7 @@ function asyncRoute(
   };
 }
 
-function emailListItem(email: ReturnType<typeof readState>["emails"][number]) {
+function emailListItem(email: ProcessedEmail) {
   return {
     id: email.id,
     mailboxId: email.mailboxId,
@@ -186,7 +188,7 @@ function emailListItem(email: ReturnType<typeof readState>["emails"][number]) {
   };
 }
 
-function emailDetailItem(email: ReturnType<typeof readState>["emails"][number]) {
+function emailDetailItem(email: ProcessedEmail) {
   return {
     ...email,
     panelRead: email.panelRead ?? email.category === "ignore",
@@ -203,7 +205,7 @@ function fromBase64Url(value: string) {
 }
 
 function emailAssetSigningKey() {
-  const auth = readState().settings.auth;
+  const auth = readSettings().auth;
   return `${auth.passwordHash}.${auth.passwordSalt}.${auth.passwordIterations}`;
 }
 
@@ -289,7 +291,7 @@ router.get(
   asyncRoute((req, res) => {
     res.json({
       authenticated: isAuthenticated(req),
-      auth: publicAuthSettings(readState().settings.auth)
+      auth: publicAuthSettings(readSettings().auth)
     });
   })
 );
@@ -310,7 +312,7 @@ router.post(
     setAuthCookie(req, res);
     res.json({
       authenticated: true,
-      auth: publicAuthSettings(readState().settings.auth)
+      auth: publicAuthSettings(readSettings().auth)
     });
   })
 );
@@ -375,7 +377,7 @@ router.get(
 router.get(
   "/settings/ai",
   asyncRoute((_req, res) => {
-    res.json(publicAiSettings(readState().settings.ai));
+    res.json(publicAiSettings(readSettings().ai));
   })
 );
 
@@ -391,7 +393,7 @@ router.post(
   "/settings/ai/test",
   asyncRoute(async (req, res) => {
     const parsed = aiSchema.parse(req.body);
-    const saved = readState().settings.ai;
+    const saved = readSettings().ai;
     const settings = withSavedAiTestKeys(parsed, saved);
 
     if (!settings.apiKey.trim()) {
@@ -428,7 +430,7 @@ router.post(
 router.get(
   "/settings/system",
   asyncRoute((_req, res) => {
-    res.json(readState().settings.system);
+    res.json(readSettings().system);
   })
 );
 
@@ -443,7 +445,7 @@ router.put(
 router.get(
   "/settings/auth",
   asyncRoute((_req, res) => {
-    res.json(publicAuthSettings(readState().settings.auth));
+    res.json(publicAuthSettings(readSettings().auth));
   })
 );
 
@@ -458,7 +460,7 @@ router.put(
 router.get(
   "/settings/notification",
   asyncRoute((_req, res) => {
-    res.json(readState().settings.notification);
+    res.json(readSettings().notification);
   })
 );
 
@@ -525,7 +527,7 @@ router.get(
 router.get(
   "/mailboxes",
   asyncRoute((_req, res) => {
-    res.json(readState().mailboxes.map(publicMailbox));
+    res.json(readMailboxes().map(publicMailbox));
   })
 );
 
@@ -560,7 +562,7 @@ router.delete(
 router.post(
   "/mailboxes/:id/test",
   asyncRoute(async (req, res) => {
-    const mailbox = readState().mailboxes.find((item) => item.id === req.params.id);
+    const mailbox = readMailboxes().find((item) => item.id === req.params.id);
     if (!mailbox) {
       res.status(404).json({ error: "邮箱不存在" });
       return;
@@ -683,7 +685,7 @@ router.patch(
 router.get(
   "/runs",
   asyncRoute((_req, res) => {
-    res.json(readState().runs);
+    res.json(readProcessingRuns());
   })
 );
 
