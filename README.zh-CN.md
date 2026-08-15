@@ -132,7 +132,8 @@ docker run -d \
 | 安全原件预览 | 邮件 HTML 在 sandbox iframe 中渲染，危险行为被阻止。 |
 | 系统内已读/未读 | 重要邮件可保持系统未读，直到你真正停留查看。 |
 | 微信通知 | 集成 WeClaw / ClawBot 桥接，可将指定分类摘要推送到微信。 |
-| 自托管存储 | 单个 Node 应用运行，本地 JSON 存储在 `data/app.db.json`。 |
+| QQ 机器人通知 | 官方 WebSocket Gateway + REST API，支持指定单聊用户绑定。 |
+| 自托管存储 | 使用带索引和事务的 SQLite，数据库位于 `data/app.sqlite`。 |
 
 ## 优先级队列
 
@@ -153,8 +154,8 @@ flowchart LR
   E -->|重要| F["处理台：重要"]
   E -->|次重要| G["处理台：次重要"]
   E -->|不用管| H["自动归档"]
-  F --> I["微信通知"]
-  G --> J["可选通知"]
+  F --> I["微信 / QQ 通知"]
+  G --> J["可选微信 / QQ 通知"]
   F --> K["确认入库后标记邮箱已读"]
   G --> K
   H --> K
@@ -168,8 +169,8 @@ flowchart LR
 | 后端 | Express 5, TypeScript, tsx |
 | 邮件 | imapflow, mailparser, 自定义 POP3 读取 |
 | AI | 智谱 GLM Coding Plan / Anthropic-compatible API, GLM-5V-Turbo 多模态 |
-| 存储 | 本地 JSON 数据库：`data/app.db.json` |
-| 通知 | 项目内 WeClaw / ClawBot 桥接 |
+| 存储 | SQLite：`data/app.sqlite`，可从旧 JSON 数据自动迁移 |
+| 通知 | 项目内 WeClaw / ClawBot 桥接与官方 QQ Bot Gateway + REST API |
 
 ## AI 配置
 
@@ -202,6 +203,27 @@ flowchart LR
 
 WeClaw 来源：<https://github.com/fastclaw-ai/weclaw>  
 相关许可文件保存在 `tools/weclaw/LICENSE`。
+## 官方 QQ 机器人通知
+
+QQ 通知使用腾讯官方机器人接口：WebSocket Gateway 接收单聊事件，REST API 主动发送邮件通知，不依赖非官方 QQ 客户端或账号自动化。
+
+官方接口不会向机器人公开用户的普通 QQ 号。每个机器人只能获得一个仅对该机器人有效的 `user_openid`，所以管理面板不会要求填写 QQ 号。指定接收人的步骤如下：
+
+1. 在管理面板保存 QQ 机器人 AppID 和只写的 AppSecret。
+2. 连接 Gateway，并生成一次性绑定码。
+3. 使用需要接收通知的 QQ 与机器人单聊，发送该绑定码。
+4. 系统自动保存事件中的 `user_openid`，面板只显示脱敏后的接收人标识。
+
+运行与安全机制：
+
+- 绑定码 10 分钟后过期，只能使用一次，数据库只保存加盐哈希。
+- AppSecret 由 `QQ_CREDENTIAL_ENCRYPTION_KEY` 加密后保存，API 永远不会返回明文。
+- QQ 和微信可以分别配置重要、次重要、不用管三个分类是否通知。
+- 邮件事务提交后才创建通知任务。QQ 或微信暂时不可用，不会阻塞邮件入库或邮箱已读标记。
+- 每封邮件与每个通知渠道只有一条投递记录，可防止重复通知，并允许各渠道独立重试。
+- Gateway 支持心跳、会话恢复和退避重连，普通聊天消息不会触发 AI 自动回复。
+
+生产环境必须配置稳定且高强度的 `QQ_CREDENTIAL_ENCRYPTION_KEY`，并和 `data/app.sqlite` 一起备份。更换或丢失该密钥会导致已保存的 QQ AppSecret 无法解密。
 
 ## 安全设计
 
@@ -234,13 +256,13 @@ WeClaw 来源：<https://github.com/fastclaw-ai/weclaw>
 - 使用 HTTPS 域名访问。
 - 修改默认登录密码。
 - 限制服务器 SSH 登录方式。
-- 定期备份 `data/app.db.json`。
+- 定期备份 `data/app.sqlite` 和凭证加密环境变量。
 - 不要把应用直接暴露给不可信用户共同使用。
 
 ## 仓库结构
 
 ```text
-data/app.db.json      本地数据库，保存设置、邮箱、邮件和运行记录
+data/app.sqlite       本地 SQLite 数据库，保存设置、邮箱、邮件和通知投递状态
 public/robots.txt     搜索引擎屏蔽规则
 server/src/           Express API、邮件处理、AI、通知、安全逻辑
 src/                  React 管理控制台

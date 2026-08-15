@@ -140,7 +140,8 @@ Most providers require enabling IMAP/POP3 in mailbox settings and using an app p
 | Safe original preview | Email HTML is rendered in a sandboxed iframe with dangerous behavior blocked. |
 | Internal read state | Important mail can stay system-unread until you spend time in the detail view. |
 | WeChat alerts | Integrated WeClaw / ClawBot bridge can push selected email summaries to WeChat. |
-| Self-hosted storage | Runs as a Node app with local JSON storage in `data/app.db.json`. |
+| QQ Bot alerts | Official QQ Bot WebSocket Gateway + REST delivery with private-chat binding. |
+| Self-hosted storage | Indexed, transactional SQLite storage in `data/app.sqlite`. |
 
 ## Priority Queues
 
@@ -161,8 +162,8 @@ flowchart LR
   E -->|Important| F["Important queue"]
   E -->|Secondary| G["Secondary queue"]
   E -->|Ignore| H["Auto archive"]
-  F --> I["WeChat notification"]
-  G --> J["Optional notification"]
+  F --> I["WeChat / QQ notification"]
+  G --> J["Optional WeChat / QQ notification"]
   F --> K["Persist first, then mark mailbox read"]
   G --> K
   H --> K
@@ -176,8 +177,8 @@ flowchart LR
 | Backend | Express 5, TypeScript, tsx |
 | Email | imapflow, mailparser, custom POP3 reader |
 | AI | Zhipu GLM Coding Plan / Anthropic-compatible API, GLM-5V-Turbo multimodal |
-| Storage | Local JSON database: `data/app.db.json` |
-| Notifications | In-project WeClaw / ClawBot bridge |
+| Storage | SQLite: `data/app.sqlite`, with one-time migration from legacy JSON data |
+| Notifications | In-project WeClaw / ClawBot bridge and official QQ Bot Gateway + REST API |
 
 ## AI Configuration
 
@@ -210,6 +211,27 @@ Highlights:
 
 WeClaw source: <https://github.com/fastclaw-ai/weclaw>  
 Related license file: `tools/weclaw/LICENSE`.
+## Official QQ Bot Notifications
+
+The QQ channel uses Tencent's official Bot API: a WebSocket Gateway receives direct-message events, while the REST API sends active notifications. No unofficial QQ client or account automation is used.
+
+QQ does **not** expose the user's normal QQ number to bots. Each bot receives an opaque, bot-scoped `user_openid`, so the panel intentionally does not ask for a QQ number. To choose the notification recipient:
+
+1. Save the QQ Bot AppID and write-only AppSecret in the admin panel.
+2. Connect the Gateway and generate a one-time binding code.
+3. Open a direct chat with the bot from the target QQ account and send that code.
+4. The server stores the resulting `user_openid`; the panel only displays a masked recipient identifier.
+
+Operational details:
+
+- Binding codes expire after 10 minutes, are single-use, and are stored only as salted hashes.
+- The AppSecret is encrypted at rest with `QQ_CREDENTIAL_ENCRYPTION_KEY` and is never returned by the API.
+- Important, Secondary, and Ignore notifications can be enabled independently for QQ and WeChat.
+- Notification delivery is queued after the email transaction commits. A temporary QQ or WeChat outage never blocks database persistence or mailbox read marking.
+- Each email/channel pair has a unique delivery record, preventing duplicate sends while allowing isolated retries.
+- Gateway sessions heartbeat, resume when possible, reconnect with backoff, and never reply to ordinary chat messages.
+
+Use a stable, high-entropy `QQ_CREDENTIAL_ENCRYPTION_KEY` in production. Back it up with `data/app.sqlite`; losing or changing it makes the saved QQ AppSecret unreadable.
 
 ## Security Model
 
@@ -242,13 +264,13 @@ Production suggestions:
 - Use HTTPS.
 - Change the default login password.
 - Harden SSH access on the server.
-- Back up `data/app.db.json` regularly.
+- Back up `data/app.sqlite` and the credential-encryption environment key regularly.
 - Do not expose the app to untrusted shared users.
 
 ## Repository Layout
 
 ```text
-data/app.db.json      Local database for settings, mailboxes, emails, and run history
+data/app.sqlite       Local SQLite database for settings, mailboxes, emails, and delivery state
 public/robots.txt     Search engine blocking rule
 server/src/           Express API, email processing, AI, notifications, security
 src/                  React admin console
