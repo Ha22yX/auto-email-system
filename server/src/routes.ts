@@ -14,23 +14,37 @@ import {
   publicAiSettings,
   publicAuthSettings,
   publicMailbox,
+  publicQqBotSettings,
   getDashboardData,
   getProcessedEmailById,
   queryProcessedEmails,
   readMailboxes,
   readProcessingRuns,
+  readQqBotConfig,
   readSettings,
   removeMailbox,
+  resumePausedNotificationDeliveries,
   updateAuthPassword,
   updateAiSettings,
   updateNotificationSettings,
+  updateQqBotSettings,
   updateProcessedEmailPanelRead,
   updateSystemSettings,
   upsertMailbox,
   verifyAdminPassword
 } from "./store";
 import { sendClawbotTestNotification } from "./notifications/clawbot";
+import { scheduleNotificationDispatch } from "./notifications/dispatcher";
 import { schedulePendingEmailNotificationRetry } from "./notifications/pending";
+import {
+  createQqRebindChallenge,
+  getQqManagerStatus,
+  restartQqManager,
+  sendQqTestNotification,
+  startQqManager,
+  stopQqManager
+} from "./qq/manager";
+import type { QqBotPublicStatus } from "./qq/types";
 import {
   defaultWeclawApiUrl,
   getWeclawLogTail,
@@ -39,7 +53,14 @@ import {
   startWeclaw,
   stopWeclaw
 } from "./weclaw/manager";
-import type { AiSettings, ClassificationResult, MailCategory, ProcessedEmail } from "./types";
+import type {
+  AiSettings,
+  ClassificationResult,
+  MailCategory,
+  NotificationSettings,
+  ProcessedEmail,
+  PublicQqBotSettings
+} from "./types";
 
 const router = express.Router();
 const EMAIL_ASSET_TOKEN_TTL_SECONDS = 6 * 60 * 60;
@@ -143,6 +164,42 @@ const notificationSchema = z.object({
     })
 });
 
+export const qqNotificationSchema = z.object({
+  appId: z.string().trim().regex(/^(?:|[0-9]{5,20})$/, "QQ AppID 格式不正确"),
+  appSecret: z.string().optional().default(""),
+  enabled: z.coerce.boolean(),
+  notifyCategories: z.object({
+    important: z.coerce.boolean().default(true),
+    secondary: z.coerce.boolean().default(true),
+    ignore: z.coerce.boolean().default(false)
+  })
+});
+
+const notificationChannelsSchema = z.object({
+  wechat: notificationSchema.optional(),
+  qq: qqNotificationSchema.optional()
+});
+
+export function buildNotificationSettingsResponse(
+  wechat: NotificationSettings,
+  qq: PublicQqBotSettings,
+  qqStatus: QqBotPublicStatus
+) {
+  return {
+    ...wechat,
+    wechat,
+    qq,
+    qqStatus
+  };
+}
+
+function currentNotificationSettingsResponse() {
+  return buildNotificationSettingsResponse(
+    readSettings().notification,
+    publicQqBotSettings(readQqBotConfig()),
+    getQqManagerStatus()
+  );
+}
 const panelReadSchema = z.object({
   panelRead: z.coerce.boolean()
 });
@@ -460,15 +517,34 @@ router.put(
 router.get(
   "/settings/notification",
   asyncRoute((_req, res) => {
-    res.json(readSettings().notification);
+    res.json(currentNotificationSettingsResponse());
   })
 );
 
 router.put(
   "/settings/notification",
-  asyncRoute((req, res) => {
-    const parsed = notificationSchema.parse(req.body);
-    res.json(updateNotificationSettings(parsed));
+  asyncRoute(async (req, res) => {
+    const isChannelPayload = Boolean(
+      req.body &&
+      typeof req.body === "object" &&
+      ("wechat" in req.body || "qq" in req.body)
+    );
+    if (!isChannelPayload) {
+      const parsed = notificationSchema.parse(req.body);
+      updateNotificationSettings(parsed);
+      res.json(currentNotificationSettingsResponse());
+      return;
+    }
+
+    const parsed = notificationChannelsSchema.parse(req.body);
+    if (parsed.wechat) updateNotificationSettings(parsed.wechat);
+    if (parsed.qq) {
+      updateQqBotSettings(parsed.qq);
+      resumePausedNotificationDeliveries("qq");
+      await restartQqManager().catch(() => undefined);
+      scheduleNotificationDispatch(0);
+    }
+    res.json(currentNotificationSettingsResponse());
   })
 );
 
@@ -485,6 +561,47 @@ router.post(
   })
 );
 
+router.get(
+  "/qq/status",
+  asyncRoute((_req, res) => {
+    res.json({
+      settings: publicQqBotSettings(readQqBotConfig()),
+      status: getQqManagerStatus()
+    });
+  })
+);
+
+router.post(
+  "/qq/start",
+  asyncRoute(async (_req, res) => {
+    await startQqManager();
+    res.status(202).json(getQqManagerStatus());
+  })
+);
+
+router.post(
+  "/qq/stop",
+  asyncRoute(async (_req, res) => {
+    await stopQqManager();
+    res.json(getQqManagerStatus());
+  })
+);
+
+router.post(
+  ["/qq/bind", "/qq/rebind"],
+  asyncRoute(async (_req, res) => {
+    const binding = await createQqRebindChallenge();
+    res.status(202).json({ binding, status: getQqManagerStatus() });
+  })
+);
+
+router.post(
+  "/qq/test",
+  asyncRoute(async (_req, res) => {
+    await sendQqTestNotification();
+    res.json({ ok: true, message: "QQ 测试通知已发送。", status: getQqManagerStatus() });
+  })
+);
 function notificationApiUrl() {
   return defaultWeclawApiUrl;
 }

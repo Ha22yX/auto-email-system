@@ -26,6 +26,37 @@ export type PublicQqBotSettings = NotificationChannelSettings & {
   maskedAppSecret: string;
 };
 
+export type QqGatewayStatus = {
+  state: "stopped" | "connecting" | "identifying" | "resuming" | "online" | "reconnecting" | "blocked";
+  reconnectAttempt: number;
+  connectedAt?: string;
+  lastHeartbeatAckAt?: string;
+  lastError?: { code: string; message: string };
+};
+
+export type QqBotPublicStatus = {
+  enabled: boolean;
+  configured: boolean;
+  gateway: QqGatewayStatus;
+  bound: boolean;
+  maskedRecipient?: string;
+  friendshipStatus?: "unknown" | "friend" | "removed";
+  proactiveStatus?: "unknown" | "enabled" | "disabled";
+  boundAt?: string;
+  bindingChallenge?: { expiresAt: string };
+  lastError?: string;
+};
+
+export type NotificationSettingsResponse = NotificationSettings & {
+  wechat: NotificationSettings;
+  qq: PublicQqBotSettings;
+  qqStatus: QqBotPublicStatus;
+};
+
+export type QqBindingChallenge = {
+  code: string;
+  expiresAt: string;
+};
 export type NotificationDeliveryStatus = "pending" | "sending" | "sent" | "retry" | "paused";
 export type NotificationChannel = "wechat" | "qq";
 
@@ -52,8 +83,11 @@ export type QqGatewayState = {
 
 export type QqBotBinding = {
   id: string;
-  targetId: string;
-  targetType: "guild" | "group" | "direct";
+  userOpenId: string;
+  friendshipStatus: "unknown" | "friend" | "removed";
+  proactiveStatus: "unknown" | "enabled" | "disabled";
+  lastEventAt?: string;
+  lastError?: string;
   createdAt: string;
   updatedAt: string;
 };

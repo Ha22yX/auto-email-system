@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { createAuthSettings, verifyPassword } from "./auth-crypto";
@@ -26,7 +27,10 @@ import type {
   SystemSettings
 } from "./types";
 
-const DATA_DIR = path.resolve(process.env.DATA_DIR ?? "data");
+const DEFAULT_DATA_DIR = process.env.NODE_TEST_CONTEXT
+  ? path.join(tmpdir(), `auto-email-system-test-${process.pid}`)
+  : "data";
+const DATA_DIR = path.resolve(process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
 const JSON_DATA_FILE = path.join(DATA_DIR, "app.db.json");
 const SQLITE_FILE = path.join(DATA_DIR, "app.sqlite");
 const SCHEMA_VERSION = 2;
@@ -1147,6 +1151,17 @@ export function deleteExpiredQqEvents(now = new Date().toISOString()) {
   return db.prepare("DELETE FROM qq_event_dedupe WHERE expiresAt <= ?").run(now) as { changes?: number };
 }
 
+function publishNotificationDeliveryStatus(channel: NotificationChannel, status: NotificationDeliveryStatus) {
+  const row = db.prepare(
+    "SELECT COUNT(*) AS count FROM notification_deliveries WHERE channel = ? AND status IN ('pending', 'sending', 'retry')"
+  ).get(channel) as { count?: number } | undefined;
+  publishAppEvent("notification-delivery", {
+    channel,
+    status,
+    pendingCount: Number(row?.count ?? 0)
+  });
+}
+
 export function enqueueNotificationDelivery(emailId: string, channel: NotificationChannel): NotificationDelivery {
   const now = new Date().toISOString();
   db.prepare(
@@ -1154,7 +1169,9 @@ export function enqueueNotificationDelivery(emailId: string, channel: Notificati
       id, emailId, channel, status, attemptCount, nextAttemptAt, createdAt, updatedAt
     ) VALUES (?, ?, ?, 'pending', 0, ?, ?, ?)`
   ).run(randomUUID(), emailId, channel, now, now, now);
-  return getNotificationDelivery(emailId, channel)!;
+  const delivery = getNotificationDelivery(emailId, channel)!;
+  publishNotificationDeliveryStatus(channel, delivery.status);
+  return delivery;
 }
 
 export function getNotificationDelivery(emailId: string, channel: NotificationChannel) {
@@ -1221,6 +1238,15 @@ export function claimNotificationDeliveries(
   }
 }
 
+export function resumePausedNotificationDeliveries(channel: NotificationChannel) {
+  const now = new Date().toISOString();
+  const result = db.prepare(
+    "UPDATE notification_deliveries SET status = 'retry', nextAttemptAt = ?, lastError = NULL, updatedAt = ? WHERE channel = ? AND status = 'paused'"
+  ).run(now, now, channel) as { changes?: number };
+  if (Number(result.changes ?? 0) > 0) publishNotificationDeliveryStatus(channel, "retry");
+  return Number(result.changes ?? 0);
+}
+
 export function updateNotificationDelivery(
   id: string,
   patch: Partial<Pick<NotificationDelivery, "status" | "attemptCount" | "nextAttemptAt" | "sentAt" | "lastError">>
@@ -1242,5 +1268,6 @@ export function updateNotificationDelivery(
     next.updatedAt,
     id
   );
+  publishNotificationDeliveryStatus(next.channel, next.status);
   return next;
 }

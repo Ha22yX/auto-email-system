@@ -34,6 +34,7 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
   const handled: QqDispatchEvent[] = [];
   const sent: string[] = [];
   const statuses: unknown[] = [];
+  let bindingReady = 0;
   const manager = new QqManager({
     readConfig: () => overrides.config ?? config(),
     gateway: {
@@ -69,7 +70,10 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
         return { messageId: "test-message" };
       }
     },
-    onStatus: (status) => statuses.push(status)
+    onStatus: (status) => statuses.push(status),
+    onBindingReady: () => {
+      bindingReady += 1;
+    }
   });
   return {
     manager,
@@ -84,6 +88,9 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
     },
     get stops() {
       return stops;
+    },
+    get bindingReady() {
+      return bindingReady;
     }
   };
 }
@@ -108,6 +115,7 @@ test("enabled settings start one Gateway and forward dispatches to binding", asy
   target.emit({ id: "event-1", type: "C2C_MESSAGE_CREATE", sequence: 1, data: {} });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(target.handled.length, 1);
+  assert.equal(target.bindingReady, 1);
   assert.equal(target.statuses.length > 0, true);
 });
 

@@ -8,10 +8,25 @@ type AppEvent = {
 
 const clients = new Set<express.Response>();
 
+const SENSITIVE_EVENT_KEY = /(?:secret|token|user_?openid|userOpenId|codeHash|salt)/i;
+
+export function sanitizeAppEventPayload(value: unknown, depth = 0): unknown {
+  if (depth > 6) return undefined;
+  if (typeof value === "string") return value.slice(0, 1000);
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 50).map((item) => sanitizeAppEventPayload(item, depth + 1));
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !SENSITIVE_EVENT_KEY.test(key))
+      .map(([key, item]) => [key, sanitizeAppEventPayload(item, depth + 1)])
+  );
+}
 export function publishAppEvent(type: string, payload: unknown = {}) {
   const event: AppEvent = {
     type,
-    payload,
+    payload: sanitizeAppEventPayload(payload),
     at: new Date().toISOString()
   };
   const data = `event: app\ndata: ${JSON.stringify(event)}\n\n`;

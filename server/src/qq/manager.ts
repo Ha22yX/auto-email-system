@@ -1,4 +1,5 @@
-import { readQqBotConfig } from "../store";
+import { publishAppEvent } from "../events";
+import { readQqBotConfig, resumePausedNotificationDeliveries } from "../store";
 import type { QqBotBinding, QqBotConfig } from "../types";
 import { createQqBindingService, type QqBindingChallenge, type QqBindingService } from "./binding";
 import { createQqClient } from "./client";
@@ -34,6 +35,7 @@ export type QqManagerDependencies = {
   bindingService?: QqManagerBindingService;
   client?: QqManagerClient;
   onStatus?: (status: QqBotPublicStatus) => void;
+  onBindingReady?: () => void;
 };
 
 function maskRecipient(userOpenId: string) {
@@ -62,6 +64,7 @@ export class QqManager {
   private readonly bindingService: QqManagerBindingService;
   private readonly client: QqManagerClient;
   private readonly onStatusChange?: (status: QqBotPublicStatus) => void;
+  private readonly onBindingReady?: () => void;
   private started = false;
   private stopped = false;
   private unsubscribeDispatch?: () => void;
@@ -73,6 +76,7 @@ export class QqManager {
     this.bindingService = dependencies.bindingService ?? defaults.bindingService;
     this.client = dependencies.client ?? defaults.client;
     this.onStatusChange = dependencies.onStatus;
+    this.onBindingReady = dependencies.onBindingReady;
   }
 
   async start() {
@@ -150,7 +154,8 @@ export class QqManager {
 
   private async handleDispatch(event: QqDispatchEvent) {
     try {
-      await this.bindingService.handleDispatchEvent(event);
+      const result = await this.bindingService.handleDispatchEvent(event);
+      if (result.kind === "bound" || result.kind === "capability") this.onBindingReady?.();
     } finally {
       this.publishStatus();
     }
@@ -183,7 +188,16 @@ export class QqManager {
 let manager: QqManager | undefined;
 
 export function getQqManager() {
-  manager ??= new QqManager();
+  manager ??= new QqManager({
+    onStatus: (status) => publishAppEvent("qq-status", status),
+    onBindingReady: () => {
+      resumePausedNotificationDeliveries("qq");
+      void import("../notifications/dispatcher").then(({ scheduleNotificationDispatch }) => {
+        scheduleNotificationDispatch(0);
+      });
+      publishAppEvent("qq-binding", { bound: true });
+    }
+  });
   return manager;
 }
 
@@ -197,6 +211,13 @@ export function startQqManager() {
 
 export function stopQqManager() {
   return getQqManager().stop();
+}
+
+export async function restartQqManager() {
+  const current = manager;
+  manager = undefined;
+  if (current) await current.stop();
+  return startQqManager();
 }
 
 export function createQqRebindChallenge() {

@@ -5,7 +5,12 @@ import express from "express";
 import router from "./routes";
 import { startProcessingWorker } from "./email/processor";
 import { startImapIdleWatchers } from "./email/imap-idle";
+import {
+  scheduleNotificationDispatch,
+  stopNotificationDispatcher
+} from "./notifications/dispatcher";
 import { schedulePendingEmailNotificationRetry } from "./notifications/pending";
+import { startQqManager, stopQqManager } from "./qq/manager";
 import {
   defaultWeclawApiUrl,
   ensureWeclawStarted,
@@ -51,12 +56,35 @@ app.get(/.*/, (_req, res) => {
   res.sendFile(path.join(distDir, "index.html"));
 });
 
-app.listen(port, () => {
+const httpServer = app.listen(port, () => {
   const retryInterruptedRecovery = hasInterruptedRecoveryRetry();
   const interruptedCount = markInterruptedRuns();
   startProcessingWorker({ recoverInterruptedOnFirstRun: interruptedCount > 0 || retryInterruptedRecovery });
   startImapIdleWatchers();
   startWeclawTokenReminderWorker();
+  void startQqManager().catch(() => {
+    console.warn("QQ notification Gateway failed to start; mail processing remains available.");
+  });
+  scheduleNotificationDispatch(3000);
   void ensureWeclawStarted(defaultWeclawApiUrl).finally(() => schedulePendingEmailNotificationRetry(3000));
   console.log(`自动邮件系统已启动: http://127.0.0.1:${port}`);
 });
+let shuttingDown = false;
+
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log("Received " + signal + "; stopping notification workers.");
+  stopNotificationDispatcher();
+  await stopQqManager().catch(() => undefined);
+
+  const forceExit = setTimeout(() => process.exit(1), 10_000);
+  forceExit.unref();
+  httpServer.close(() => {
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
+}
+
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));

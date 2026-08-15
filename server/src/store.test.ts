@@ -21,6 +21,7 @@ const {
   readQqBotBindings,
   readQqBotConfig,
   readQqState,
+  resumePausedNotificationDeliveries,
   readSettings,
   readState,
   readStoredCredentialEnvelope,
@@ -233,6 +234,20 @@ test("delivery identity is unique per email and channel", () => {
   assert.equal(listNotificationDeliveries({ emailId }).length, 1);
 });
 
+test("resuming paused deliveries affects only the selected channel", () => {
+  const sqlite = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  sqlite.prepare("DELETE FROM notification_deliveries").run();
+  sqlite.close();
+  const qq = enqueueNotificationDelivery("resume-email", "qq");
+  const wechat = enqueueNotificationDelivery("resume-email", "wechat");
+  const database = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  database.prepare("UPDATE notification_deliveries SET status = 'paused' WHERE id IN (?, ?)").run(qq.id, wechat.id);
+  database.close();
+
+  assert.equal(resumePausedNotificationDeliveries("qq"), 1);
+  assert.equal(listNotificationDeliveries({ emailId: "resume-email" }).find((item) => item.channel === "qq")?.status, "retry");
+  assert.equal(listNotificationDeliveries({ emailId: "resume-email" }).find((item) => item.channel === "wechat")?.status, "paused");
+});
 test("notification delivery claims are exclusive and stale sends recover", () => {
   const sqlite = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
   sqlite.prepare("DELETE FROM notification_deliveries").run();

@@ -7,8 +7,13 @@ import type {
   MailCategory,
   Mailbox,
   NotificationSettings,
+  NotificationSettingsResponse,
   ProcessedEmail,
   ProcessingRun,
+  PublicQqBotSettings,
+  QqBindingChallenge,
+  QqBotPublicStatus,
+  QqBotSettingsInput,
   SystemSettings,
   WeclawStatus
 } from "./types";
@@ -120,6 +125,35 @@ export const api = {
     return request<NotificationSettings>("/api/settings/notification", {
       method: "PUT",
       body: JSON.stringify(settings)
+    });
+  },
+  notificationSettings() {
+    return request<NotificationSettingsResponse>("/api/settings/notification");
+  },
+  updateNotificationChannels(settings: { wechat?: NotificationSettings; qq?: QqBotSettingsInput }) {
+    return request<NotificationSettingsResponse>("/api/settings/notification", {
+      method: "PUT",
+      body: JSON.stringify(settings)
+    });
+  },
+  qqStatus() {
+    return request<{ settings: PublicQqBotSettings; status: QqBotPublicStatus }>("/api/qq/status");
+  },
+  startQq() {
+    return request<QqBotPublicStatus>("/api/qq/start", { method: "POST" });
+  },
+  stopQq() {
+    return request<QqBotPublicStatus>("/api/qq/stop", { method: "POST" });
+  },
+  bindQq(rebind = false) {
+    return request<{ binding: QqBindingChallenge; status: QqBotPublicStatus }>(
+      rebind ? "/api/qq/rebind" : "/api/qq/bind",
+      { method: "POST" }
+    );
+  },
+  testQq() {
+    return request<{ ok: boolean; message: string; status: QqBotPublicStatus }>("/api/qq/test", {
+      method: "POST"
     });
   },
   testNotification(settings: NotificationSettings) {
