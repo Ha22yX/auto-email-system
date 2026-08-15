@@ -1,5 +1,6 @@
 import type { Mailbox, NotificationSettings, ProcessedEmail } from "../types";
 import { defaultWeclawApiUrl, resolveWeclawRecipientId, sendWeclawDirectText } from "../weclaw/manager";
+import { buildEmailNotificationModel, renderWechatEmailNotification } from "./format";
 
 function formatDateTime(value?: string) {
   if (!value) return "未知时间";
@@ -67,35 +68,7 @@ export function shouldNotifyEmail(settings: NotificationSettings, email: Process
 }
 
 export function buildImportantEmailMessage(email: ProcessedEmail, mailbox?: Mailbox) {
-  const category = notificationCategoryMeta(email.category);
-  const actionItems = email.actionItemsZh?.length
-    ? email.actionItemsZh.slice(0, 5).map((item, index) => `${index + 1}. ${compactText(item, 80)}`)
-    : ["暂无明确动作，请打开面板确认。"];
-  const metadata = [
-    `发件人：${compactText(senderName(email), 90)}`,
-    `邮箱：${mailbox?.name || "未知邮箱"}`,
-    email.toText ? `收件人：${compactText(email.toText, 90)}` : "",
-    `时间：${formatDateTime(email.receivedAt || email.processedAt)}`
-  ].filter(Boolean);
-
-  return [
-    `${category.icon} 自动邮件系统`,
-    `【${category.label}】${category.helper}`,
-    "",
-    "主题",
-    compactText(email.subject || "无主题", 90),
-    "",
-    "关键信息",
-    metadata.join("\n"),
-    "",
-    "中文概况",
-    compactText(email.summaryZh || "暂无概况。", 220),
-    "",
-    "建议动作",
-    actionItems.join("\n"),
-    "",
-    "打开面板可查看邮件原文和完整判断。"
-  ].join("\n");
+  return renderWechatEmailNotification(buildEmailNotificationModel(email, mailbox));
 }
 
 class ClawbotSendError extends Error {

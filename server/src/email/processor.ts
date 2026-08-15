@@ -16,11 +16,10 @@ import {
   readMailboxes,
   readSettings,
   updateMailboxSync,
-  updateProcessedEmailNotification,
   updateProcessedEmailReadMark,
   updateRun
 } from "../store";
-import { sendEmailNotification, shouldNotifyEmail } from "../notifications/clawbot";
+import { enqueueEmailNotifications, scheduleNotificationDispatch } from "../notifications/dispatcher";
 import type { Mailbox, ProcessingRun } from "../types";
 import { countUnreadImap, fetchInterruptedImapRecovery, fetchUnreadImap, type FetchedEmail } from "./imap";
 import { countUnreadPop3, fetchUnreadPop3 } from "./pop3";
@@ -295,33 +294,8 @@ export async function processMailboxes(options: {
         currentEmailStepTotal: currentStepTotal
       });
 
-      if (insertedEmail && shouldNotifyEmail(state.settings.notification, insertedEmail)) {
-        try {
-          persistRun(run, {
-            currentStage: "重要邮件已入库，正在发送微信通知",
-            currentEmailStep: "微信通知",
-            currentEmailStepIndex: currentStepTotal === 5 ? 4 : 3,
-            currentEmailStepTotal: currentStepTotal
-          });
-          await withTimeout(
-            sendEmailNotification(state.settings.notification, insertedEmail, mailbox),
-            20000,
-            "微信 ClawBot 通知超时"
-          );
-          updateProcessedEmailNotification(insertedEmail.id, {
-            notifiedAt: new Date().toISOString(),
-            notificationError: ""
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          updateProcessedEmailNotification(insertedEmail.id, {
-            notifiedAt: undefined,
-            notificationError: message
-          });
-          run.errors.push(`${mailbox.name}: 重要邮件微信通知失败。${message}`);
-          persistRun(run);
-        }
-      }
+      enqueueEmailNotifications(insertedEmail);
+      scheduleNotificationDispatch(0);
 
       try {
         persistRun(run, {

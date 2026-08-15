@@ -1181,6 +1181,46 @@ export function listNotificationDeliveries(options: { emailId?: string; status?:
     .all(...params) as SqlRow[]).map(rowToNotificationDelivery);
 }
 
+export function claimNotificationDeliveries(
+  limit = 20,
+  now = new Date().toISOString(),
+  staleAfterMs = 5 * 60 * 1000
+) {
+  const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+  const staleBefore = new Date(Date.parse(now) - staleAfterMs).toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(
+      `UPDATE notification_deliveries
+       SET status = 'retry', nextAttemptAt = ?, lastError = 'recovered_stale_send', updatedAt = ?
+       WHERE status = 'sending' AND updatedAt <= ?`
+    ).run(now, now, staleBefore);
+    const rows = db.prepare(
+      `SELECT * FROM notification_deliveries
+       WHERE status IN ('pending', 'retry')
+         AND (nextAttemptAt IS NULL OR nextAttemptAt <= ?)
+       ORDER BY createdAt ASC
+       LIMIT ?`
+    ).all(now, safeLimit) as SqlRow[];
+    const claimed: NotificationDelivery[] = [];
+    const statement = db.prepare(
+      `UPDATE notification_deliveries
+       SET status = 'sending', updatedAt = ?
+       WHERE id = ? AND status IN ('pending', 'retry')`
+    );
+    for (const row of rows) {
+      const delivery = rowToNotificationDelivery(row);
+      const result = statement.run(now, delivery.id) as { changes?: number };
+      if (Number(result.changes ?? 0) > 0) claimed.push({ ...delivery, status: "sending", updatedAt: now });
+    }
+    db.exec("COMMIT");
+    return claimed;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export function updateNotificationDelivery(
   id: string,
   patch: Partial<Pick<NotificationDelivery, "status" | "attemptCount" | "nextAttemptAt" | "sentAt" | "lastError">>

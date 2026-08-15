@@ -11,6 +11,7 @@ process.env.DATA_DIR ??= path.join(tmpdir(), `auto-email-system-store-test-${pro
 process.env.QQ_CREDENTIAL_ENCRYPTION_KEY ??= "test-only-qq-credential-encryption-key";
 const {
   addProcessedEmail,
+  claimNotificationDeliveries,
   consumeQqBindingChallenge,
   normalizeAiSettings,
   publicAiSettings,
@@ -230,6 +231,36 @@ test("delivery identity is unique per email and channel", () => {
   enqueueNotificationDelivery(emailId, "qq");
 
   assert.equal(listNotificationDeliveries({ emailId }).length, 1);
+});
+
+test("notification delivery claims are exclusive and stale sends recover", () => {
+  const sqlite = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  sqlite.prepare("DELETE FROM notification_deliveries").run();
+  sqlite.close();
+  enqueueNotificationDelivery("claim-email-1", "wechat");
+  enqueueNotificationDelivery("claim-email-2", "qq");
+  const now = "2026-08-16T01:00:00.000Z";
+
+  const first = claimNotificationDeliveries(1, now);
+  const second = claimNotificationDeliveries(10, now);
+  assert.equal(first.length, 1);
+  assert.equal(first[0]?.status, "sending");
+  assert.equal(second.length, 1);
+  assert.notEqual(second[0]?.id, first[0]?.id);
+
+  const database = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  database.prepare(
+    "UPDATE notification_deliveries SET status = 'sending', updatedAt = ? WHERE id = ?"
+  ).run("2026-08-16T00:50:00.000Z", first[0]!.id);
+  database.prepare(
+    "UPDATE notification_deliveries SET status = 'sent', updatedAt = ? WHERE id = ?"
+  ).run(now, second[0]!.id);
+  database.close();
+
+  const recovered = claimNotificationDeliveries(10, "2026-08-16T01:06:00.000Z");
+  assert.deepEqual(recovered.map((item) => item.id), [first[0]!.id]);
+  assert.equal(recovered[0]?.lastError, "recovered_stale_send");
+  assert.equal(claimNotificationDeliveries(10, "2026-08-16T01:06:00.000Z").length, 0);
 });
 
 test("lightweight state readers never parse stored email bodies", () => {

@@ -119,13 +119,17 @@ export class QqManager {
     return challenge;
   }
 
-  async testNotification() {
+  async sendNotification(content: string) {
     const binding = this.bindingService.readBinding();
     if (!binding) throw new Error("QQ notification recipient is not bound");
-    const result = await this.client.sendDirectMessage({
+    return this.client.sendDirectMessage({
       userOpenId: binding.userOpenId,
-      content: "自动邮件系统 QQ 通知测试成功。"
+      content
     });
+  }
+
+  async testNotification() {
+    const result = await this.sendNotification("自动邮件系统 QQ 通知测试成功。");
     this.publishStatus();
     return result;
   }

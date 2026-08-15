@@ -1,0 +1,35 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { ProcessedEmail } from "../types";
+import { buildEmailNotificationModel, renderEmailNotification } from "./format";
+
+function email(category: ProcessedEmail["category"]): ProcessedEmail {
+  return {
+    id: `email-${category}`,
+    mailboxId: "mailbox-1",
+    externalUid: "1",
+    subject: "Please review",
+    processedAt: "2026-08-16T00:00:00.000Z",
+    category,
+    summaryZh: "这封邮件需要查看。",
+    reasonZh: "测试",
+    actionItemsZh: ["打开邮件"],
+    originalText: "Please review",
+    readMarked: true
+  };
+}
+
+test("important and secondary notifications have visibly distinct headers", () => {
+  const important = renderEmailNotification(buildEmailNotificationModel(email("important")));
+  const secondary = renderEmailNotification(buildEmailNotificationModel(email("secondary")));
+
+  assert.match(important, /^【重要邮件｜请尽快查看】/);
+  assert.match(secondary, /^【次重要邮件｜建议稍后阅读】/);
+  assert.notEqual(important.split("\n")[0], secondary.split("\n")[0]);
+});
+
+test("notification messages retain the Chinese summary and numbered actions", () => {
+  const message = renderEmailNotification(buildEmailNotificationModel(email("important")));
+  assert.match(message, /中文概况\n这封邮件需要查看。/);
+  assert.match(message, /建议动作\n1\. 打开邮件/);
+});
