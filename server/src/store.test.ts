@@ -11,17 +11,21 @@ process.env.DATA_DIR ??= path.join(tmpdir(), `auto-email-system-store-test-${pro
 process.env.QQ_CREDENTIAL_ENCRYPTION_KEY ??= "test-only-qq-credential-encryption-key";
 const {
   addProcessedEmail,
+  consumeQqBindingChallenge,
   normalizeAiSettings,
   publicAiSettings,
   publicQqBotSettings,
   readMailboxes,
   readProcessingRuns,
+  readQqBotBindings,
   readQqBotConfig,
+  readQqState,
   readSettings,
   readState,
   readStoredCredentialEnvelope,
   updateAiSettings,
   updateQqBotSettings,
+  updateQqState,
   enqueueNotificationDelivery,
   listNotificationDeliveries
 } = await import("./store");
@@ -165,6 +169,60 @@ test("QQ settings and AppSecret roll back together when settings persistence fai
 
   assert.deepEqual(readQqBotConfig(), before);
   assert.equal(readStoredCredentialEnvelope("qq-app-secret"), before.encryptedAppSecret);
+});
+
+test("QQ binding challenge is consumed atomically and only once", () => {
+  const challenge = {
+    id: `challenge-${process.pid}`,
+    salt: "test-salt",
+    codeHash: "a".repeat(64),
+    createdAt: "2026-08-16T00:00:00.000Z",
+    expiresAt: "2026-08-16T00:10:00.000Z"
+  };
+  updateQqState("binding-challenge", challenge);
+
+  const input = {
+    id: "primary",
+    userOpenId: "test-user-openid",
+    friendshipStatus: "friend" as const,
+    proactiveStatus: "unknown" as const,
+    lastEventAt: "2026-08-16T00:05:00.000Z"
+  };
+  const first = consumeQqBindingChallenge(
+    "binding-challenge",
+    challenge.id,
+    input,
+    "2026-08-16T00:05:00.000Z"
+  );
+  const second = consumeQqBindingChallenge(
+    "binding-challenge",
+    challenge.id,
+    { ...input, userOpenId: "should-not-replace" },
+    "2026-08-16T00:05:01.000Z"
+  );
+
+  assert.equal(first?.userOpenId, "test-user-openid");
+  assert.equal(second, undefined);
+  assert.equal(readQqBotBindings().find((binding) => binding.id === "primary")?.userOpenId, "test-user-openid");
+  assert.equal(
+    readQqState<{ consumedAt?: string }>("binding-challenge")?.consumedAt,
+    "2026-08-16T00:05:00.000Z"
+  );
+});
+
+test("expired QQ binding challenges cannot replace a recipient", () => {
+  updateQqState("binding-challenge", {
+    id: "expired-challenge",
+    expiresAt: "2026-08-16T00:00:00.000Z"
+  });
+  const result = consumeQqBindingChallenge(
+    "binding-challenge",
+    "expired-challenge",
+    { id: "primary", userOpenId: "expired-user", friendshipStatus: "friend", proactiveStatus: "unknown" },
+    "2026-08-16T00:00:01.000Z"
+  );
+  assert.equal(result, undefined);
+  assert.equal(readQqBotBindings().find((binding) => binding.id === "primary")?.userOpenId, "test-user-openid");
 });
 test("delivery identity is unique per email and channel", () => {
   const emailId = `email-delivery-${process.pid}`;

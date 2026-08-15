@@ -53,8 +53,11 @@ export type QqGatewayState = {
 
 export type QqBotBinding = {
   id: string;
-  targetId: string;
-  targetType: "guild" | "group" | "direct";
+  userOpenId: string;
+  friendshipStatus: "unknown" | "friend" | "removed";
+  proactiveStatus: "unknown" | "enabled" | "disabled";
+  lastEventAt?: string;
+  lastError?: string;
   createdAt: string;
   updatedAt: string;
 };

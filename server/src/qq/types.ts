@@ -73,3 +73,18 @@ export type QqDispatchEvent = {
   sequence: number;
   data: Record<string, unknown>;
 };
+
+export type QqBotPublicStatus = {
+  enabled: boolean;
+  configured: boolean;
+  gateway: QqGatewayStatus;
+  bound: boolean;
+  maskedRecipient?: string;
+  friendshipStatus?: "unknown" | "friend" | "removed";
+  proactiveStatus?: "unknown" | "enabled" | "disabled";
+  boundAt?: string;
+  bindingChallenge?: {
+    expiresAt: string;
+  };
+  lastError?: string;
+};

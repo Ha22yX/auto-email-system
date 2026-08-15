@@ -1,0 +1,204 @@
+import { readQqBotConfig } from "../store";
+import type { QqBotBinding, QqBotConfig } from "../types";
+import { createQqBindingService, type QqBindingChallenge, type QqBindingService } from "./binding";
+import { createQqClient } from "./client";
+import { createTokenProvider } from "./credentials";
+import { createQqGateway } from "./gateway";
+import type {
+  QqBotPublicStatus,
+  QqDirectMessageInput,
+  QqDispatchEvent,
+  QqGatewayStatus,
+  QqSendResult
+} from "./types";
+
+type QqManagerGateway = {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  status(): QqGatewayStatus;
+  onDispatch(listener: (event: QqDispatchEvent) => void): () => void;
+};
+
+type QqManagerBindingService = Pick<
+  QqBindingService,
+  "readBinding" | "readChallenge" | "createBindingCode" | "handleDispatchEvent"
+>;
+
+type QqManagerClient = {
+  sendDirectMessage(input: QqDirectMessageInput): Promise<QqSendResult>;
+};
+
+export type QqManagerDependencies = {
+  readConfig?: () => QqBotConfig;
+  gateway?: QqManagerGateway;
+  bindingService?: QqManagerBindingService;
+  client?: QqManagerClient;
+  onStatus?: (status: QqBotPublicStatus) => void;
+};
+
+function maskRecipient(userOpenId: string) {
+  if (userOpenId.length <= 8) return "****";
+  return `${userOpenId.slice(0, 4)}...${userOpenId.slice(-4)}`;
+}
+
+function validChallenge(challenge: QqBindingChallenge | undefined) {
+  if (!challenge || challenge.consumedAt || Date.parse(challenge.expiresAt) <= Date.now()) return undefined;
+  return { expiresAt: challenge.expiresAt };
+}
+
+function defaultDependencies() {
+  const tokenProvider = createTokenProvider();
+  const client = createQqClient({ tokenProvider });
+  return {
+    gateway: createQqGateway({ tokenProvider }),
+    client,
+    bindingService: createQqBindingService({ client })
+  };
+}
+
+export class QqManager {
+  private readonly readConfig: () => QqBotConfig;
+  private readonly gateway: QqManagerGateway;
+  private readonly bindingService: QqManagerBindingService;
+  private readonly client: QqManagerClient;
+  private readonly onStatusChange?: (status: QqBotPublicStatus) => void;
+  private started = false;
+  private stopped = false;
+  private unsubscribeDispatch?: () => void;
+
+  constructor(dependencies: QqManagerDependencies = {}) {
+    const defaults = defaultDependencies();
+    this.readConfig = dependencies.readConfig ?? readQqBotConfig;
+    this.gateway = dependencies.gateway ?? defaults.gateway;
+    this.bindingService = dependencies.bindingService ?? defaults.bindingService;
+    this.client = dependencies.client ?? defaults.client;
+    this.onStatusChange = dependencies.onStatus;
+  }
+
+  async start() {
+    if (this.started) return;
+    const config = this.readConfig();
+    if (!config.enabled || !this.isConfigured(config)) {
+      this.publishStatus();
+      return;
+    }
+
+    this.started = true;
+    this.stopped = false;
+    this.unsubscribeDispatch = this.gateway.onDispatch((event) => {
+      void this.handleDispatch(event);
+    });
+    try {
+      await this.gateway.start();
+    } catch (error) {
+      this.started = false;
+      this.unsubscribeDispatch?.();
+      this.unsubscribeDispatch = undefined;
+      this.publishStatus();
+      throw error;
+    }
+    this.publishStatus();
+  }
+
+  async stop() {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.started = false;
+    this.unsubscribeDispatch?.();
+    this.unsubscribeDispatch = undefined;
+    await this.gateway.stop();
+    this.publishStatus();
+  }
+
+  async rebind() {
+    await this.start();
+    const config = this.readConfig();
+    if (!config.enabled || !this.isConfigured(config)) throw new Error("QQ bot is not enabled and configured");
+    const challenge = this.bindingService.createBindingCode();
+    this.publishStatus();
+    return challenge;
+  }
+
+  async testNotification() {
+    const binding = this.bindingService.readBinding();
+    if (!binding) throw new Error("QQ notification recipient is not bound");
+    const result = await this.client.sendDirectMessage({
+      userOpenId: binding.userOpenId,
+      content: "自动邮件系统 QQ 通知测试成功。"
+    });
+    this.publishStatus();
+    return result;
+  }
+
+  status(): QqBotPublicStatus {
+    const config = this.readConfig();
+    const binding = this.bindingService.readBinding();
+    const challenge = validChallenge(this.bindingService.readChallenge());
+    return {
+      enabled: config.enabled,
+      configured: this.isConfigured(config),
+      gateway: this.gateway.status(),
+      bound: Boolean(binding),
+      ...(binding ? this.publicBinding(binding) : {}),
+      ...(challenge ? { bindingChallenge: challenge } : {})
+    };
+  }
+
+  private async handleDispatch(event: QqDispatchEvent) {
+    try {
+      await this.bindingService.handleDispatchEvent(event);
+    } finally {
+      this.publishStatus();
+    }
+  }
+
+  private isConfigured(config: QqBotConfig) {
+    return Boolean(config.appId.trim() && config.encryptedAppSecret);
+  }
+
+  private publicBinding(binding: QqBotBinding) {
+    return {
+      maskedRecipient: maskRecipient(binding.userOpenId),
+      friendshipStatus: binding.friendshipStatus,
+      proactiveStatus: binding.proactiveStatus,
+      boundAt: binding.createdAt,
+      ...(binding.lastError ? { lastError: binding.lastError } : {})
+    };
+  }
+
+  private publishStatus() {
+    if (!this.onStatusChange) return;
+    try {
+      this.onStatusChange(this.status());
+    } catch {
+      // Status observers do not own the QQ lifecycle.
+    }
+  }
+}
+
+let manager: QqManager | undefined;
+
+export function getQqManager() {
+  manager ??= new QqManager();
+  return manager;
+}
+
+export function getQqManagerStatus() {
+  return getQqManager().status();
+}
+
+export function startQqManager() {
+  return getQqManager().start();
+}
+
+export function stopQqManager() {
+  return getQqManager().stop();
+}
+
+export function createQqRebindChallenge() {
+  return getQqManager().rebind();
+}
+
+export function sendQqTestNotification() {
+  return getQqManager().testNotification();
+}

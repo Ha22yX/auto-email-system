@@ -1092,6 +1092,50 @@ export function upsertQqBotBinding(input: Omit<QqBotBinding, "createdAt" | "upda
   return next;
 }
 
+export function consumeQqBindingChallenge(
+  challengeKey: string,
+  challengeId: string,
+  input: Omit<QqBotBinding, "createdAt" | "updatedAt">,
+  consumedAt: string
+) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const challenge = readQqState<{
+      id: string;
+      expiresAt: string;
+      consumedAt?: string;
+      [key: string]: unknown;
+    }>(challengeKey);
+    if (!challenge || challenge.id !== challengeId || challenge.consumedAt || challenge.expiresAt <= consumedAt) {
+      db.exec("ROLLBACK");
+      return undefined;
+    }
+
+    const existing = readQqState<QqBotBinding>(`binding:${input.id}`);
+    const next: QqBotBinding = {
+      ...input,
+      createdAt: existing?.createdAt ?? consumedAt,
+      updatedAt: consumedAt
+    };
+    db.prepare("INSERT OR REPLACE INTO qq_state (key, value, updatedAt) VALUES (?, ?, ?)").run(
+      challengeKey,
+      JSON.stringify({ ...challenge, consumedAt }),
+      consumedAt
+    );
+    db.prepare("INSERT OR REPLACE INTO qq_state (key, value, updatedAt) VALUES (?, ?, ?)").run(
+      `binding:${input.id}`,
+      JSON.stringify(next),
+      consumedAt
+    );
+    db.exec("COMMIT");
+    publishAppEvent("qq-binding", { bound: true, updatedAt: consumedAt });
+    return next;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export function rememberQqEvent(eventId: string, expiresAt: string) {
   const result = db.prepare(
     "INSERT OR IGNORE INTO qq_event_dedupe (eventId, receivedAt, expiresAt) VALUES (?, ?, ?)"
