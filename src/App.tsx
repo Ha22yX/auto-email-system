@@ -34,6 +34,7 @@ import {
 import DOMPurify from "dompurify";
 import QRCode from "qrcode";
 import { api } from "./api";
+import { QqNotificationPanel } from "./QqNotificationPanel";
 import {
   AI_PROVIDER_PRESETS,
   AI_PROTOCOL_OPTIONS,
@@ -2456,6 +2457,7 @@ function SettingsPanel({
             </div>
           )}
         </div>
+        <QqNotificationPanel setToast={setToast} />
       </div>
 
       <div className="settings-column mailbox-column wide">
