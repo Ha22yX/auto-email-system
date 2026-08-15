@@ -32,14 +32,12 @@ const AUTHENTICATION_ERROR_CODES = new Set(["11241", "11243"]);
 const RATE_LIMIT_ERROR_CODES = new Set(["20028", "1100100", "1100308"]);
 const TRANSIENT_ERROR_CODES = new Set(["11242", "11252", "11263", "11281", "1100300", "1100499"]);
 const PERMISSION_ERROR_CODES = new Set(["11253", "11254", "11282", "11264", "11274", "304004", "304014"]);
-const RELATIONSHIP_ERROR_CODES = new Set(["10001"]);
 
 function errorKindFor(status: number, code: string | undefined): QqApiErrorKind {
   if (code && AUTHENTICATION_ERROR_CODES.has(code)) return "authentication";
   if (code && RATE_LIMIT_ERROR_CODES.has(code)) return "rate_limited";
   if (code && TRANSIENT_ERROR_CODES.has(code)) return "transient";
   if (code && PERMISSION_ERROR_CODES.has(code)) return "permission";
-  if (code && RELATIONSHIP_ERROR_CODES.has(code)) return "relationship";
   if (status === 401) return "authentication";
   if (status === 429) return "rate_limited";
   if (status >= 500) return "transient";

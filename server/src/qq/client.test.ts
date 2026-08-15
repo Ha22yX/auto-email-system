@@ -134,12 +134,12 @@ test("a second authentication failure is surfaced without another refresh or mes
   assert.equal(fake.calls.length, 2);
 });
 
-test("documented QQ err_code mappings take precedence over conservative HTTP fallbacks", async () => {
+test("documented QQ err_code mappings take precedence and unknown account errors use conservative fallback", async () => {
   const fixtures: Array<{ errCode: number; status: number; kind: QqApiError["kind"] }> = [
     { errCode: 11252, status: 400, kind: "transient" },
     { errCode: 11253, status: 503, kind: "permission" },
     { errCode: 11254, status: 403, kind: "permission" },
-    { errCode: 10001, status: 400, kind: "relationship" }
+    { errCode: 10001, status: 400, kind: "invalid_request" }
   ];
 
   for (const fixture of fixtures) {
