@@ -46,3 +46,30 @@ export type QqTokenProviderLike = {
   getToken(options?: { force?: boolean }): Promise<string>;
   invalidate(token?: string): boolean | void;
 };
+
+export type QqGatewayConnectionState =
+  | "stopped"
+  | "connecting"
+  | "identifying"
+  | "resuming"
+  | "online"
+  | "reconnecting"
+  | "blocked";
+
+export type QqGatewayStatus = {
+  state: QqGatewayConnectionState;
+  reconnectAttempt: number;
+  connectedAt?: string;
+  lastHeartbeatAckAt?: string;
+  lastError?: {
+    code: string;
+    message: string;
+  };
+};
+
+export type QqDispatchEvent = {
+  id?: string;
+  type: string;
+  sequence: number;
+  data: Record<string, unknown>;
+};
