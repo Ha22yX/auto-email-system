@@ -3,6 +3,61 @@ export type MailProtocol = "imap" | "pop3";
 export type AiProtocol = "auto" | "openai-chat" | "openai-responses" | "anthropic" | "gemini";
 export type MultimodalProtocol = AiProtocol | "same";
 
+export type EncryptedCredential = `v1:${string}:${string}:${string}`;
+
+export type NotificationChannelSettings = {
+  enabled: boolean;
+  notifyCategories: Record<MailCategory, boolean>;
+};
+
+export type QqBotConfig = NotificationChannelSettings & {
+  appId: string;
+  encryptedAppSecret: string;
+};
+
+export type QqBotSettingsInput = Partial<NotificationChannelSettings> & {
+  appId?: string;
+  appSecret?: string;
+};
+
+export type PublicQqBotSettings = NotificationChannelSettings & {
+  appId: string;
+  hasAppSecret: boolean;
+  maskedAppSecret: string;
+};
+
+export type NotificationDeliveryStatus = "pending" | "sending" | "sent" | "retry" | "paused";
+export type NotificationChannel = "wechat" | "qq";
+
+export type NotificationDelivery = {
+  id: string;
+  emailId: string;
+  channel: NotificationChannel;
+  status: NotificationDeliveryStatus;
+  attemptCount: number;
+  nextAttemptAt?: string;
+  sentAt?: string;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type QqGatewayState = {
+  sessionId?: string;
+  resumeUrl?: string;
+  sequence?: number;
+  connectedAt?: string;
+  updatedAt: string;
+};
+
+export type QqBotBinding = {
+  id: string;
+  targetId: string;
+  targetType: "guild" | "group" | "direct";
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AiSettings = {
   providerName: string;
   providerPreset?: string;

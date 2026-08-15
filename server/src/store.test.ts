@@ -7,15 +7,22 @@ import { resolveAiProtocol } from "./ai-protocol";
 import type { AiSettings, ProcessedEmail } from "./types";
 
 process.env.DATA_DIR ??= path.join(tmpdir(), `auto-email-system-store-test-${process.pid}`);
+process.env.QQ_CREDENTIAL_ENCRYPTION_KEY ??= "test-only-qq-credential-encryption-key";
 const {
   addProcessedEmail,
   normalizeAiSettings,
   publicAiSettings,
+  publicQqBotSettings,
   readMailboxes,
   readProcessingRuns,
+  readQqBotConfig,
   readSettings,
   readState,
-  updateAiSettings
+  readStoredCredentialEnvelope,
+  updateAiSettings,
+  updateQqBotSettings,
+  enqueueNotificationDelivery,
+  listNotificationDeliveries
 } = await import("./store");
 
 const primaryApiKey = "primary-placeholder-secret";
@@ -98,6 +105,35 @@ test("retains both saved keys when an update submits blank key fields", () => {
   assert.equal(digest(saved.multimodalApiKey ?? ""), digest("stored-multimodal-value"));
 });
 
+
+test("QQ AppSecret is encrypted and never returned by public settings", () => {
+  updateQqBotSettings({ appId: "1900000000", appSecret: "test-secret", enabled: false });
+  const publicSettings = publicQqBotSettings(readQqBotConfig());
+
+  assert.equal(publicSettings.hasAppSecret, true);
+  assert.equal(JSON.stringify(publicSettings).includes("test-secret"), false);
+  assert.equal(readStoredCredentialEnvelope("qq-app-secret").includes("test-secret"), false);
+});
+
+test("blank QQ AppSecret updates retain the saved credential", () => {
+  updateQqBotSettings({ appId: "1900000000", appSecret: "retained-test-secret", enabled: false });
+  updateQqBotSettings({ appId: "1900000001", appSecret: "", enabled: true });
+
+  const config = readQqBotConfig();
+  const publicSettings = publicQqBotSettings(config);
+  assert.equal(config.appId, "1900000001");
+  assert.equal(publicSettings.enabled, true);
+  assert.equal(publicSettings.hasAppSecret, true);
+  assert.equal(JSON.stringify(publicSettings).includes("retained-test-secret"), false);
+});
+
+test("delivery identity is unique per email and channel", () => {
+  const emailId = `email-delivery-${process.pid}`;
+  enqueueNotificationDelivery(emailId, "qq");
+  enqueueNotificationDelivery(emailId, "qq");
+
+  assert.equal(listNotificationDeliveries({ emailId }).length, 1);
+});
 
 test("lightweight state readers never parse stored email bodies", () => {
   const bodyMarker = "email-body-must-not-be-parsed-" + process.pid;

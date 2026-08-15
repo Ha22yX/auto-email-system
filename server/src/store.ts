@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { createAuthSettings, verifyPassword } from "./auth-crypto";
+import { encryptCredential } from "./credential-crypto";
 import { publishAppEvent } from "./events";
 import type {
   AiSettings,
@@ -11,21 +12,36 @@ import type {
   IncomingEmail,
   MailCategory,
   Mailbox,
+  NotificationChannel,
+  NotificationDelivery,
+  NotificationDeliveryStatus,
   NotificationSettings,
   ProcessedEmail,
   ProcessingRun,
+  PublicQqBotSettings,
+  QqBotBinding,
+  QqBotConfig,
+  QqBotSettingsInput,
+  QqGatewayState,
   SystemSettings
 } from "./types";
 
 const DATA_DIR = path.resolve(process.env.DATA_DIR ?? "data");
 const JSON_DATA_FILE = path.join(DATA_DIR, "app.db.json");
 const SQLITE_FILE = path.join(DATA_DIR, "app.sqlite");
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const defaultNotifyCategories: Record<MailCategory, boolean> = {
   important: true,
   secondary: true,
   ignore: false
+};
+
+const defaultQqBotConfig: QqBotConfig = {
+  appId: "",
+  encryptedAppSecret: "",
+  enabled: false,
+  notifyCategories: defaultNotifyCategories
 };
 
 const aiProtocols = new Set(["auto", "openai-chat", "openai-responses", "anthropic", "gemini"]);
@@ -153,6 +169,43 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_processing_events_run ON processing_events(runId, createdAt DESC);
   CREATE INDEX IF NOT EXISTS idx_processing_events_mailbox ON processing_events(mailboxId, createdAt DESC);
+
+  CREATE TABLE IF NOT EXISTS credentials (
+    key TEXT PRIMARY KEY,
+    envelope TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS qq_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS qq_event_dedupe (
+    eventId TEXT PRIMARY KEY,
+    receivedAt TEXT NOT NULL,
+    expiresAt TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_qq_event_dedupe_expires ON qq_event_dedupe(expiresAt);
+
+  CREATE TABLE IF NOT EXISTS notification_deliveries (
+    id TEXT PRIMARY KEY,
+    emailId TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attemptCount INTEGER NOT NULL DEFAULT 0,
+    nextAttemptAt TEXT,
+    sentAt TEXT,
+    lastError TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    UNIQUE(emailId, channel)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status_next_attempt
+    ON notification_deliveries(status, nextAttemptAt);
 `);
 
 function clone<T>(value: T): T {
@@ -355,6 +408,48 @@ function ensureInitialized() {
 }
 
 ensureInitialized();
+
+function migrateQqNotificationState() {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const legacyNotification = db
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get("notification") as SqlRow | undefined;
+    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(
+      "notification.wechat",
+      legacyNotification ? String(legacyNotification.value) : JSON.stringify(defaultState.settings.notification)
+    );
+    db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(
+      "notification.qq",
+      JSON.stringify(defaultQqBotConfig)
+    );
+    db.exec(`
+      INSERT OR IGNORE INTO notification_deliveries (
+        id, emailId, channel, status, attemptCount, nextAttemptAt, sentAt, lastError, createdAt, updatedAt
+      )
+      SELECT
+        lower(hex(randomblob(16))),
+        id,
+        'wechat',
+        CASE WHEN notifiedAt IS NOT NULL THEN 'sent' ELSE 'retry' END,
+        0,
+        CASE WHEN notifiedAt IS NULL THEN processedAt ELSE NULL END,
+        notifiedAt,
+        notificationError,
+        processedAt,
+        COALESCE(notifiedAt, processedAt)
+      FROM emails
+      WHERE notifiedAt IS NOT NULL OR COALESCE(notificationError, '') <> ''
+    `);
+    setMeta("schemaVersion", String(SCHEMA_VERSION));
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+migrateQqNotificationState();
 
 function getSetting<T>(key: keyof AppState["settings"], fallback: T): T {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(String(key)) as SqlRow | undefined;
@@ -862,4 +957,192 @@ export function recordProcessingEvent(input: {
   );
   publishAppEvent("processing-event", event);
   return event;
+}
+
+function rowToNotificationDelivery(row: SqlRow): NotificationDelivery {
+  return {
+    id: String(row.id),
+    emailId: String(row.emailId),
+    channel: String(row.channel) as NotificationChannel,
+    status: String(row.status) as NotificationDeliveryStatus,
+    attemptCount: Number(row.attemptCount),
+    nextAttemptAt: row.nextAttemptAt ? String(row.nextAttemptAt) : undefined,
+    sentAt: row.sentAt ? String(row.sentAt) : undefined,
+    lastError: row.lastError ? String(row.lastError) : undefined,
+    createdAt: String(row.createdAt),
+    updatedAt: String(row.updatedAt)
+  };
+}
+
+export function readStoredCredentialEnvelope(key: string) {
+  const row = db.prepare("SELECT envelope FROM credentials WHERE key = ?").get(key) as SqlRow | undefined;
+  return row ? String(row.envelope) : "";
+}
+
+export function storeCredentialEnvelope(key: string, envelope: string) {
+  db.prepare("INSERT OR REPLACE INTO credentials (key, envelope, updatedAt) VALUES (?, ?, ?)").run(
+    key,
+    envelope,
+    new Date().toISOString()
+  );
+}
+
+function readStoredQqBotSettings(): QqBotConfig {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get("notification.qq") as SqlRow | undefined;
+  const saved = row ? parseJson<Partial<QqBotConfig>>(row.value) : {};
+  return {
+    ...defaultQqBotConfig,
+    ...saved,
+    encryptedAppSecret: readStoredCredentialEnvelope("qq-app-secret"),
+    notifyCategories: {
+      ...defaultNotifyCategories,
+      ...saved.notifyCategories
+    }
+  };
+}
+
+export function readQqBotConfig(): QqBotConfig {
+  return clone(readStoredQqBotSettings());
+}
+
+export function publicQqBotSettings(config: QqBotConfig): PublicQqBotSettings {
+  return {
+    appId: config.appId,
+    enabled: config.enabled,
+    notifyCategories: clone(config.notifyCategories),
+    hasAppSecret: Boolean(config.encryptedAppSecret),
+    maskedAppSecret: config.encryptedAppSecret ? "configured" : ""
+  };
+}
+
+export function updateQqBotSettings(input: QqBotSettingsInput): PublicQqBotSettings {
+  const current = readStoredQqBotSettings();
+  const notifyCategories = {
+    ...defaultNotifyCategories,
+    ...current.notifyCategories,
+    ...input.notifyCategories
+  };
+  let encryptedAppSecret = current.encryptedAppSecret;
+  if (typeof input.appSecret === "string" && input.appSecret.trim()) {
+    encryptedAppSecret = encryptCredential(input.appSecret);
+    storeCredentialEnvelope("qq-app-secret", encryptedAppSecret);
+  }
+  const next: QqBotConfig = {
+    appId: input.appId ?? current.appId,
+    enabled: input.enabled ?? current.enabled,
+    notifyCategories,
+    encryptedAppSecret
+  };
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
+    "notification.qq",
+    JSON.stringify({ ...next, encryptedAppSecret: "" })
+  );
+  publishAppEvent("settings", { key: "notification.qq" });
+  return publicQqBotSettings(next);
+}
+
+export function readQqState<T>(key: string): T | undefined {
+  const row = db.prepare("SELECT value FROM qq_state WHERE key = ?").get(key) as SqlRow | undefined;
+  return row ? clone(parseJson<T>(row.value)) : undefined;
+}
+
+export function updateQqState<T>(key: string, value: T) {
+  db.prepare("INSERT OR REPLACE INTO qq_state (key, value, updatedAt) VALUES (?, ?, ?)").run(
+    key,
+    JSON.stringify(value),
+    new Date().toISOString()
+  );
+}
+
+export function readQqGatewayState(): QqGatewayState | undefined {
+  return readQqState<QqGatewayState>("gateway");
+}
+
+export function updateQqGatewayState(state: Omit<QqGatewayState, "updatedAt">): QqGatewayState {
+  const next = { ...state, updatedAt: new Date().toISOString() };
+  updateQqState("gateway", next);
+  return next;
+}
+
+export function readQqBotBindings() {
+  return (db.prepare("SELECT value FROM qq_state WHERE key LIKE ? ORDER BY key ASC").all("binding:%") as SqlRow[]).map((row) =>
+    parseJson<QqBotBinding>(row.value)
+  );
+}
+
+export function upsertQqBotBinding(input: Omit<QqBotBinding, "createdAt" | "updatedAt">): QqBotBinding {
+  const existing = readQqState<QqBotBinding>(`binding:${input.id}`);
+  const now = new Date().toISOString();
+  const next: QqBotBinding = { ...input, createdAt: existing?.createdAt ?? now, updatedAt: now };
+  updateQqState(`binding:${input.id}`, next);
+  return next;
+}
+
+export function rememberQqEvent(eventId: string, expiresAt: string) {
+  const result = db.prepare(
+    "INSERT OR IGNORE INTO qq_event_dedupe (eventId, receivedAt, expiresAt) VALUES (?, ?, ?)"
+  ).run(eventId, new Date().toISOString(), expiresAt) as { changes?: number };
+  return Number(result.changes ?? 0) > 0;
+}
+
+export function deleteExpiredQqEvents(now = new Date().toISOString()) {
+  return db.prepare("DELETE FROM qq_event_dedupe WHERE expiresAt <= ?").run(now) as { changes?: number };
+}
+
+export function enqueueNotificationDelivery(emailId: string, channel: NotificationChannel): NotificationDelivery {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT OR IGNORE INTO notification_deliveries (
+      id, emailId, channel, status, attemptCount, nextAttemptAt, createdAt, updatedAt
+    ) VALUES (?, ?, ?, 'pending', 0, ?, ?, ?)`
+  ).run(randomUUID(), emailId, channel, now, now, now);
+  return getNotificationDelivery(emailId, channel)!;
+}
+
+export function getNotificationDelivery(emailId: string, channel: NotificationChannel) {
+  const row = db
+    .prepare("SELECT * FROM notification_deliveries WHERE emailId = ? AND channel = ?")
+    .get(emailId, channel) as SqlRow | undefined;
+  return row ? rowToNotificationDelivery(row) : undefined;
+}
+
+export function listNotificationDeliveries(options: { emailId?: string; status?: NotificationDeliveryStatus } = {}) {
+  const where: string[] = [];
+  const params: SQLInputValue[] = [];
+  if (options.emailId) {
+    where.push("emailId = ?");
+    params.push(options.emailId);
+  }
+  if (options.status) {
+    where.push("status = ?");
+    params.push(options.status);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  return (db
+    .prepare(`SELECT * FROM notification_deliveries ${whereSql} ORDER BY createdAt ASC`)
+    .all(...params) as SqlRow[]).map(rowToNotificationDelivery);
+}
+
+export function updateNotificationDelivery(
+  id: string,
+  patch: Partial<Pick<NotificationDelivery, "status" | "attemptCount" | "nextAttemptAt" | "sentAt" | "lastError">>
+) {
+  const row = db.prepare("SELECT * FROM notification_deliveries WHERE id = ?").get(id) as SqlRow | undefined;
+  if (!row) return undefined;
+  const current = rowToNotificationDelivery(row);
+  const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+  db.prepare(
+    `UPDATE notification_deliveries
+     SET status = ?, attemptCount = ?, nextAttemptAt = ?, sentAt = ?, lastError = ?, updatedAt = ?
+     WHERE id = ?`
+  ).run(
+    next.status,
+    next.attemptCount,
+    next.nextAttemptAt ?? null,
+    next.sentAt ?? null,
+    next.lastError ?? null,
+    next.updatedAt,
+    id
+  );
+  return next;
 }
