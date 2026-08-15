@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { resolveAiProtocol } from "./ai-protocol";
 import type { AiSettings, ProcessedEmail } from "./types";
 
@@ -108,11 +109,24 @@ test("retains both saved keys when an update submits blank key fields", () => {
 
 test("QQ AppSecret is encrypted and never returned by public settings", () => {
   updateQqBotSettings({ appId: "1900000000", appSecret: "test-secret", enabled: false });
-  const publicSettings = publicQqBotSettings(readQqBotConfig());
+  const config = readQqBotConfig();
+  const publicSettings = publicQqBotSettings(config);
+  const envelope = readStoredCredentialEnvelope("qq-app-secret");
 
   assert.equal(publicSettings.hasAppSecret, true);
+  assert.deepEqual(Object.keys(publicSettings).sort(), [
+    "appId",
+    "enabled",
+    "hasAppSecret",
+    "maskedAppSecret",
+    "notifyCategories"
+  ]);
   assert.equal(JSON.stringify(publicSettings).includes("test-secret"), false);
-  assert.equal(readStoredCredentialEnvelope("qq-app-secret").includes("test-secret"), false);
+  assert.equal(JSON.stringify(publicSettings).includes(envelope), false);
+  assert.equal("appSecret" in publicSettings, false);
+  assert.equal("encryptedAppSecret" in publicSettings, false);
+  assert.equal(config.encryptedAppSecret, envelope);
+  assert.equal(envelope.includes("test-secret"), false);
 });
 
 test("blank QQ AppSecret updates retain the saved credential", () => {
@@ -127,6 +141,31 @@ test("blank QQ AppSecret updates retain the saved credential", () => {
   assert.equal(JSON.stringify(publicSettings).includes("retained-test-secret"), false);
 });
 
+test("QQ settings and AppSecret roll back together when settings persistence fails", () => {
+  updateQqBotSettings({ appId: "1900000100", appSecret: "old-test-secret", enabled: false });
+  const before = readQqBotConfig();
+  const sqlite = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  sqlite.exec(`
+    CREATE TRIGGER reject_qq_settings_update
+    BEFORE INSERT ON settings
+    WHEN NEW.key = 'notification.qq'
+    BEGIN
+      SELECT RAISE(ABORT, 'forced QQ settings write failure');
+    END;
+  `);
+
+  try {
+    assert.throws(() =>
+      updateQqBotSettings({ appId: "1900000101", appSecret: "new-test-secret", enabled: true })
+    );
+  } finally {
+    sqlite.exec("DROP TRIGGER reject_qq_settings_update");
+    sqlite.close();
+  }
+
+  assert.deepEqual(readQqBotConfig(), before);
+  assert.equal(readStoredCredentialEnvelope("qq-app-secret"), before.encryptedAppSecret);
+});
 test("delivery identity is unique per email and channel", () => {
   const emailId = `email-delivery-${process.pid}`;
   enqueueNotificationDelivery(emailId, "qq");

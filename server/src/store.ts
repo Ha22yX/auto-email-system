@@ -1022,21 +1022,35 @@ export function updateQqBotSettings(input: QqBotSettingsInput): PublicQqBotSetti
     ...current.notifyCategories,
     ...input.notifyCategories
   };
-  let encryptedAppSecret = current.encryptedAppSecret;
-  if (typeof input.appSecret === "string" && input.appSecret.trim()) {
-    encryptedAppSecret = encryptCredential(input.appSecret);
-    storeCredentialEnvelope("qq-app-secret", encryptedAppSecret);
-  }
+  const hasNewAppSecret = typeof input.appSecret === "string" && Boolean(input.appSecret.trim());
+  const encryptedAppSecret = hasNewAppSecret ? encryptCredential(input.appSecret!) : current.encryptedAppSecret;
   const next: QqBotConfig = {
     appId: input.appId ?? current.appId,
     enabled: input.enabled ?? current.enabled,
     notifyCategories,
     encryptedAppSecret
   };
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
-    "notification.qq",
-    JSON.stringify({ ...next, encryptedAppSecret: "" })
-  );
+  const now = new Date().toISOString();
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (hasNewAppSecret) {
+      db.prepare("INSERT OR REPLACE INTO credentials (key, envelope, updatedAt) VALUES (?, ?, ?)").run(
+        "qq-app-secret",
+        encryptedAppSecret,
+        now
+      );
+    }
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
+      "notification.qq",
+      JSON.stringify({ ...next, encryptedAppSecret: "" })
+    );
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
   publishAppEvent("settings", { key: "notification.qq" });
   return publicQqBotSettings(next);
 }
