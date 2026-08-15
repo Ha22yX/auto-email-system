@@ -28,27 +28,24 @@ function readErrorCode(body: QqResponseBody): string | undefined {
   return undefined;
 }
 
-function readRemoteMessage(body: QqResponseBody): string {
-  const value = body?.message ?? body?.msg;
-  return typeof value === "string" ? value : "";
-}
+const AUTHENTICATION_ERROR_CODES = new Set(["11241", "11243"]);
+const RATE_LIMIT_ERROR_CODES = new Set(["20028", "1100100", "1100308"]);
+const TRANSIENT_ERROR_CODES = new Set(["11242", "11252", "11263", "11281", "1100300", "1100499"]);
+const PERMISSION_ERROR_CODES = new Set(["11253", "11254", "11282", "11264", "11274", "304004", "304014"]);
+const RELATIONSHIP_ERROR_CODES = new Set(["10001"]);
 
-function isRelationshipFailure(status: number, remoteMessage: string) {
-  return (
-    status === 404 ||
-    (status === 403 && /friend|relationship|not\s+friends?|好友|关系/i.test(remoteMessage))
-  );
-}
-
-function errorKindFor(status: number, remoteMessage: string): QqApiErrorKind {
+function errorKindFor(status: number, code: string | undefined): QqApiErrorKind {
+  if (code && AUTHENTICATION_ERROR_CODES.has(code)) return "authentication";
+  if (code && RATE_LIMIT_ERROR_CODES.has(code)) return "rate_limited";
+  if (code && TRANSIENT_ERROR_CODES.has(code)) return "transient";
+  if (code && PERMISSION_ERROR_CODES.has(code)) return "permission";
+  if (code && RELATIONSHIP_ERROR_CODES.has(code)) return "relationship";
   if (status === 401) return "authentication";
   if (status === 429) return "rate_limited";
   if (status >= 500) return "transient";
-  if (isRelationshipFailure(status, remoteMessage)) return "relationship";
   if (status === 403) return "permission";
   return "invalid_request";
 }
-
 function parseRetryAfterMs(headers: Headers, now: number): number | undefined {
   const retryAfter = headers.get("retry-after");
   if (!retryAfter) return undefined;
@@ -96,8 +93,9 @@ export class QqClient {
       if (!(error instanceof QqApiError) || error.kind !== "authentication") throw error;
     }
 
-    this.tokenProvider.invalidate();
-    const refreshedToken = await this.tokenProvider.getToken({ force: true });
+    const invalidated = this.tokenProvider.invalidate(token);
+    const refreshedToken =
+      invalidated === false ? await this.tokenProvider.getToken() : await this.tokenProvider.getToken({ force: true });
     return this.sendWithToken(input, refreshedToken);
   }
 
@@ -141,11 +139,11 @@ export class QqClient {
 
     const body = await readJson(response);
     if (!response.ok) {
-      const remoteMessage = readRemoteMessage(body);
+      const code = readErrorCode(body);
       throw new QqApiError({
-        kind: errorKindFor(response.status, remoteMessage),
+        kind: errorKindFor(response.status, code),
         status: response.status,
-        code: readErrorCode(body),
+        code,
         retryAfterMs: response.status === 429 ? parseRetryAfterMs(response.headers, this.now()) : undefined
       });
     }

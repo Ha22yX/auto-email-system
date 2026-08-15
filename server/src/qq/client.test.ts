@@ -102,39 +102,116 @@ test("rate limits expose the server retry delay without retrying", async () => {
   assert.equal(fake.calls.length, 1);
 });
 
-test("server failures are transient and relationship or permission failures are permanent", async () => {
-  const transient = createQqClient({
-    fetch: createMessageFetch([new Response(JSON.stringify({ code: 50001 }), { status: 503 })]).fetch,
+test("5xx responses use the conservative transient fallback", async () => {
+  const client = createQqClient({
+    fetch: createMessageFetch([new Response(JSON.stringify({ err_code: 12003 }), { status: 503 })]).fetch,
     tokenProvider: createTokenProvider()
   });
-  await assert.rejects(transient.sendDirectMessage({ userOpenId: "user-openid", content: "hello" }), (error: unknown) => {
+
+  await assert.rejects(client.sendDirectMessage({ userOpenId: "user-openid", content: "hello" }), (error: unknown) => {
     assert.ok(error instanceof QqApiError);
     assert.equal(error.kind, "transient");
     assert.equal(error.status, 503);
     return true;
   });
+});
+test("a second authentication failure is surfaced without another refresh or message request", async () => {
+  const tokenProvider = createTokenProvider();
+  const fake = createMessageFetch([
+    new Response(JSON.stringify({ err_code: 11243 }), { status: 401 }),
+    new Response(JSON.stringify({ err_code: 11243 }), { status: 401 }),
+    new Response(JSON.stringify({ id: "must-not-be-sent" }), { status: 200 })
+  ]);
+  const client = createQqClient({ fetch: fake.fetch, tokenProvider });
 
-  const relationship = createQqClient({
-    fetch: createMessageFetch([
-      new Response(JSON.stringify({ code: 40301, message: "not friends with this user" }), { status: 403 })
-    ]).fetch,
-    tokenProvider: createTokenProvider()
-  });
-  await assert.rejects(relationship.sendDirectMessage({ userOpenId: "user-openid", content: "hello" }), (error: unknown) => {
+  await assert.rejects(client.sendDirectMessage({ userOpenId: "user-openid", content: "hello" }), (error: unknown) => {
     assert.ok(error instanceof QqApiError);
-    assert.equal(error.kind, "relationship");
+    assert.equal(error.kind, "authentication");
     return true;
   });
+  assert.equal(tokenProvider.invalidations, 1);
+  assert.deepEqual(tokenProvider.calls, [undefined, { force: true }]);
+  assert.equal(fake.calls.length, 2);
+});
 
-  const permission = createQqClient({
-    fetch: createMessageFetch([
-      new Response(JSON.stringify({ code: 40302, message: "active message permission denied" }), { status: 403 })
-    ]).fetch,
+test("documented QQ err_code mappings take precedence over conservative HTTP fallbacks", async () => {
+  const fixtures: Array<{ errCode: number; status: number; kind: QqApiError["kind"] }> = [
+    { errCode: 11252, status: 400, kind: "transient" },
+    { errCode: 11253, status: 503, kind: "permission" },
+    { errCode: 11254, status: 403, kind: "permission" },
+    { errCode: 10001, status: 400, kind: "relationship" }
+  ];
+
+  for (const fixture of fixtures) {
+    const client = createQqClient({
+      fetch: createMessageFetch([new Response(JSON.stringify({ err_code: fixture.errCode }), { status: fixture.status })]).fetch,
+      tokenProvider: createTokenProvider()
+    });
+    await assert.rejects(client.sendDirectMessage({ userOpenId: "user-openid", content: "hello" }), (error: unknown) => {
+      assert.ok(error instanceof QqApiError);
+      assert.equal(error.kind, fixture.kind);
+      assert.equal(error.code, String(fixture.errCode));
+      return true;
+    });
+  }
+
+  const notFound = createQqClient({
+    fetch: createMessageFetch([new Response(JSON.stringify({ err_code: 12003 }), { status: 404 })]).fetch,
     tokenProvider: createTokenProvider()
   });
-  await assert.rejects(permission.sendDirectMessage({ userOpenId: "user-openid", content: "hello" }), (error: unknown) => {
+  await assert.rejects(notFound.sendDirectMessage({ userOpenId: "user-openid", content: "hello" }), (error: unknown) => {
     assert.ok(error instanceof QqApiError);
-    assert.equal(error.kind, "permission");
+    assert.equal(error.kind, "invalid_request");
     return true;
   });
+});
+
+test("a delayed 401 for token A does not discard a refreshed token B", async () => {
+  const { createTokenProvider: createRealTokenProvider } = await import("./credentials");
+  const tokens = [
+    { access_token: "fake-token-a", expires_in: "7200" },
+    { access_token: "fake-token-b", expires_in: "7200" }
+  ];
+  let tokenRequests = 0;
+  const tokenProvider = createRealTokenProvider({
+    fetch: async () => {
+      tokenRequests += 1;
+      const body = tokens.shift();
+      if (!body) throw new Error("unexpected token request");
+      return new Response(JSON.stringify(body), { status: 200 });
+    },
+    readConfig: () => ({
+      appId: "test-app-id",
+      encryptedAppSecret: "encrypted-test-secret",
+      enabled: true,
+      notifyCategories: { important: true, secondary: true, ignore: false }
+    }),
+    decryptCredential: () => "fake-app-secret"
+  });
+  const messageCalls: Array<{ init?: RequestInit }> = [];
+  const pending: Array<(response: Response) => void> = [];
+  const client = createQqClient({
+    tokenProvider,
+    fetch: async (_url, init) => {
+      messageCalls.push({ init });
+      if (messageCalls.length <= 2) return new Promise<Response>((resolve) => pending.push(resolve));
+      return new Response(JSON.stringify({ id: `message-${messageCalls.length}` }), { status: 200 });
+    }
+  });
+
+  const first = client.sendDirectMessage({ userOpenId: "user-openid", content: "first" });
+  const second = client.sendDirectMessage({ userOpenId: "user-openid", content: "second" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(pending.length, 2);
+
+  pending[0](new Response(JSON.stringify({ err_code: 11243 }), { status: 401 }));
+  await first;
+  pending[1](new Response(JSON.stringify({ err_code: 11243 }), { status: 401 }));
+  await second;
+
+  assert.equal(tokenRequests, 2);
+  assert.deepEqual(
+    messageCalls.map((call) => new Headers(call.init?.headers).get("authorization")),
+    ["QQBot fake-token-a", "QQBot fake-token-a", "QQBot fake-token-b", "QQBot fake-token-b"]
+  );
 });

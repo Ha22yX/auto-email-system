@@ -44,5 +44,5 @@ export type QqSendResult = {
 
 export type QqTokenProviderLike = {
   getToken(options?: { force?: boolean }): Promise<string>;
-  invalidate(): void;
+  invalidate(token?: string): boolean | void;
 };

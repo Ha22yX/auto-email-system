@@ -118,3 +118,48 @@ test("token failures are sanitized and never expose fake secrets", async () => {
     return true;
   });
 });
+
+test("accepts the documented QQ token wire shape with numeric-string expires_in", async () => {
+  let now = 0;
+  let requests = 0;
+  const provider = createTokenProvider({
+    fetch: async () => {
+      requests += 1;
+      return new Response(JSON.stringify({ access_token: `fake-token-${requests}`, expires_in: "7200" }), { status: 200 });
+    },
+    readConfig: () => TEST_CONFIG,
+    decryptCredential: () => "fake-app-secret",
+    now: () => now
+  });
+
+  assert.equal(await provider.getToken(), "fake-token-1");
+  now = 7_109_999;
+  assert.equal(await provider.getToken(), "fake-token-1");
+  now = 7_110_000;
+  assert.equal(await provider.getToken(), "fake-token-2");
+});
+
+test("configuration and decryption failures are sanitized", async () => {
+  const providers = [
+    createTokenProvider({
+      readConfig: () => {
+        throw new Error("read-config-sentinel-secret");
+      }
+    }),
+    createTokenProvider({
+      readConfig: () => TEST_CONFIG,
+      decryptCredential: () => {
+        throw new Error("decrypt-sentinel-secret");
+      }
+    })
+  ];
+
+  for (const provider of providers) {
+    await assert.rejects(provider.getToken(), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message.includes("read-config-sentinel-secret"), false);
+      assert.equal(error.message.includes("decrypt-sentinel-secret"), false);
+      return true;
+    });
+  }
+});

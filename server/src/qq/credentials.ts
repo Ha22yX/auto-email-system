@@ -40,6 +40,12 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
+function parseExpiresIn(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
 export class QqTokenProvider {
   private cache: TokenCache | undefined;
   private inFlight: Promise<string> | undefined;
@@ -75,8 +81,10 @@ export class QqTokenProvider {
     }
   }
 
-  invalidate() {
+  invalidate(token?: string) {
+    if (token && this.cache?.value !== token) return false;
     this.cache = undefined;
+    return true;
   }
 
   clear() {
@@ -84,13 +92,26 @@ export class QqTokenProvider {
   }
 
   private async requestToken(): Promise<string> {
-    const config = this.readConfig();
-    if (!config.appId.trim() || !config.encryptedAppSecret) {
+    let config: QqBotConfig;
+    let appSecret: string;
+    try {
+      config = this.readConfig();
+      if (!config.appId.trim() || !config.encryptedAppSecret) {
+        throw new QqApiError({
+          kind: "invalid_request",
+          status: 0,
+          code: "credentials_missing",
+          message: "QQ bot credentials are not configured"
+        });
+      }
+      appSecret = this.decryptCredential(config.encryptedAppSecret);
+    } catch (error) {
+      if (error instanceof QqApiError) throw error;
       throw new QqApiError({
         kind: "invalid_request",
         status: 0,
-        code: "credentials_missing",
-        message: "QQ bot credentials are not configured"
+        code: "credentials_unavailable",
+        message: "QQ bot credentials could not be read"
       });
     }
 
@@ -101,7 +122,7 @@ export class QqTokenProvider {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           appId: config.appId.trim(),
-          clientSecret: this.decryptCredential(config.encryptedAppSecret)
+          clientSecret: appSecret
         })
       });
     } catch (error) {
@@ -123,8 +144,8 @@ export class QqTokenProvider {
     }
 
     const token = body && typeof body === "object" ? (body as Record<string, unknown>).access_token : undefined;
-    const expiresIn = body && typeof body === "object" ? (body as Record<string, unknown>).expires_in : undefined;
-    if (typeof token !== "string" || !token || typeof expiresIn !== "number" || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+    const expiresIn = body && typeof body === "object" ? parseExpiresIn((body as Record<string, unknown>).expires_in) : undefined;
+    if (typeof token !== "string" || !token || expiresIn === undefined) {
       throw new QqApiError({
         kind: "transient",
         status: response.status,
