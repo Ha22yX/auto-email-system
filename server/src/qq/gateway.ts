@@ -398,6 +398,11 @@ export class QqGateway {
   }
 
   private handleInvalidSession() {
+    this.clearSession();
+    this.sendIdentify();
+  }
+
+  private clearSession() {
     this.session = {};
     try {
       this.updateState({});
@@ -406,7 +411,6 @@ export class QqGateway {
         lastError: { code: "state_write_failed", message: "QQ Gateway session state could not be cleared" }
       });
     }
-    this.sendIdentify();
   }
 
   private scheduleHeartbeat() {
@@ -444,6 +448,18 @@ export class QqGateway {
     this.clearHeartbeatTimer();
     this.awaitingHeartbeatAck = false;
     if (!this.started) return;
+    if (code === 4006) {
+      this.clearSession();
+      this.scheduleReconnect("session_invalid", "QQ Gateway session was invalid");
+      return;
+    }
+    if (code === 4004) {
+      this.tokenProvider.invalidate(this.token);
+      this.token = undefined;
+      this.clearSession();
+      this.scheduleReconnect("authentication_closed", "QQ Gateway authentication was rejected");
+      return;
+    }
     const safeCode = Number.isInteger(code) && code >= 1000 && code <= 4999 ? String(code) : "unknown";
     this.scheduleReconnect("socket_closed", `QQ Gateway socket closed (${safeCode})`);
   }

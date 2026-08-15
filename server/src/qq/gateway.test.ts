@@ -206,6 +206,66 @@ test("persisted sessions Resume and invalid sessions clear state before Identify
   assert.equal(harness.gateway.status().state, "identifying");
 });
 
+test("close code 4006 clears an invalid session before reconnecting with Identify", async (t) => {
+  const harness = createHarness({
+    state: { sessionId: "invalid-session", sequence: 31, updatedAt: "2026-08-16T00:00:00.000Z" }
+  });
+  t.after(() => harness.gateway.stop());
+
+  await harness.gateway.start();
+  const first = harness.sockets[0];
+  first.serverSend({ op: 10, d: { heartbeat_interval: 100 } });
+  assert.equal(first.sent[0].op, 6);
+
+  first.serverClose(4006);
+  assert.deepEqual(harness.writes, [{}]);
+  harness.clock.advance(100);
+  await flushAsync();
+
+  const second = harness.sockets[1];
+  second.serverSend({ op: 10, d: { heartbeat_interval: 100 } });
+  assert.equal(second.sent[0].op, 2);
+});
+
+test("authentication close invalidates only the failed token before reconnecting", async (t) => {
+  const clock = new FakeClock();
+  const sockets: FakeSocket[] = [];
+  const invalidated: Array<string | undefined> = [];
+  const tokens = ["failed-token", "fresh-token"];
+  const gateway = new QqGateway({
+    tokenProvider: {
+      async getToken() {
+        return tokens.shift() ?? "fresh-token";
+      },
+      invalidate(token) {
+        invalidated.push(token);
+        return true;
+      }
+    },
+    webSocketFactory: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket;
+    },
+    readState: () => undefined,
+    updateState: (state) => ({ ...state, updatedAt: new Date(clock.now).toISOString() }),
+    timers: clock,
+    reconnectBaseMs: 100,
+    random: () => 0.5
+  });
+  t.after(() => gateway.stop());
+
+  await gateway.start();
+  sockets[0].serverSend({ op: 10, d: { heartbeat_interval: 100 } });
+  sockets[0].serverClose(4004);
+  assert.deepEqual(invalidated, ["failed-token"]);
+
+  clock.advance(100);
+  await flushAsync();
+  sockets[1].serverSend({ op: 10, d: { heartbeat_interval: 100 } });
+  assert.equal((sockets[1].sent[0].d as Record<string, unknown>).token, "QQBot fresh-token");
+});
+
 test("server reconnect requests replace one socket after backoff without parallel ownership", async (t) => {
   const harness = createHarness();
   t.after(() => harness.gateway.stop());
