@@ -77,6 +77,31 @@ test("parses only valid mail-read callback interactions", () => {
   assert.equal(parseQqMailReadInteraction(unrelated), undefined);
 });
 
+test("accepts the bound user id from the interaction resolved payload", async () => {
+  const event = interaction();
+  delete event.data.user_openid;
+  let marked = false;
+  const service = new QqButtonReadService({
+    readBinding: binding,
+    findAction: () => action(),
+    readEmail: () => email(false),
+    markPanelRead: (_id, panelRead) => {
+      marked = panelRead;
+      return email(panelRead);
+    },
+    markActionUsed: () => "",
+    client: {
+      async acknowledgeInteraction() {},
+      async sendDirectMessage() {
+        return {};
+      }
+    }
+  });
+
+  assert.equal((await service.handleDispatchEvent(event)).kind, "marked-read");
+  assert.equal(marked, true);
+});
+
 test("button click ACKs, marks the email read, and references the original image", async () => {
   let current = email(false);
   const acknowledgements: string[] = [];
@@ -111,13 +136,41 @@ test("button click ACKs, marks the email read, and references the original image
     kind: "marked-read",
     emailId: "mail-1",
     acknowledgementFailed: false,
-    confirmationFailed: false
+    confirmationFailed: false,
+    confirmationReferenced: true
   });
   assert.deepEqual(acknowledgements, ["interaction-1"]);
   assert.deepEqual(marks, ["mail-1"]);
   assert.deepEqual(used, [TOKEN]);
   assert.equal(sent[0].messageReferenceId, "mail-image-message");
   assert.match(sent[0].content, /已标记为系统已读/);
+});
+
+test("confirmation falls back to an unreferenced message when QQ rejects the quote", async () => {
+  const sent: QqDirectMessageInput[] = [];
+  const service = new QqButtonReadService({
+    readBinding: binding,
+    findAction: () => action(),
+    readEmail: () => email(false),
+    markPanelRead: () => email(true),
+    markActionUsed: () => "",
+    client: {
+      async acknowledgeInteraction() {},
+      async sendDirectMessage(input) {
+        sent.push(input);
+        if (input.messageReferenceId) throw new Error("reference not supported");
+        return { messageId: "plain-confirmation" };
+      }
+    }
+  });
+
+  const result = await service.handleDispatchEvent(interaction());
+  assert.equal(result.kind, "marked-read");
+  assert.equal(result.confirmationFailed, false);
+  assert.equal(result.confirmationReferenced, false);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].messageReferenceId, "mail-image-message");
+  assert.equal(sent[1].messageReferenceId, undefined);
 });
 
 test("a different QQ user cannot use a captured button token", async () => {

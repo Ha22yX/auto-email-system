@@ -264,9 +264,19 @@ export class QqManager {
       const result = await this.bindingService.handleDispatchEvent(event);
       if (result.kind === "bound" || result.kind === "capability") this.onBindingReady?.();
       if (result.kind !== "duplicate") {
-        await this.buttonReadService.handleDispatchEvent(event);
+        const buttonResult = await this.buttonReadService.handleDispatchEvent(event);
+        if (buttonResult.kind !== "ignored") {
+          const details = "emailId" in buttonResult ? ` email=${buttonResult.emailId}` : "";
+          const confirmation = "confirmationFailed" in buttonResult && buttonResult.confirmationFailed
+            ? " confirmation=failed"
+            : "";
+          console.info(`[qq] mail-read interaction: ${buttonResult.kind}${details}${confirmation}`);
+        }
         await this.quoteReadService.handleDispatchEvent(event);
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[qq] dispatch handler failed for ${event.type}: ${message.slice(0, 180)}`);
     } finally {
       this.publishStatus();
     }

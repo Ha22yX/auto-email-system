@@ -42,10 +42,22 @@ function text(value: unknown) {
 }
 
 export function qqEventUserOpenId(data: Record<string, unknown>) {
-  const direct = text(data.user_openid) ?? text(data.openid);
+  const direct = text(data.user_openid)
+    ?? text(data.group_member_openid)
+    ?? text(data.openid);
   if (direct) return direct;
   const author = record(data.author);
-  return text(author?.user_openid) ?? text(author?.openid) ?? "";
+  const authorId = text(author?.user_openid)
+    ?? text(author?.member_openid)
+    ?? text(author?.openid);
+  if (authorId) return authorId;
+
+  const interactionData = record(data.data);
+  const resolved = record(interactionData?.resolved) ?? record(data.resolved);
+  return text(resolved?.user_id)
+    ?? text(resolved?.user_openid)
+    ?? text(resolved?.member_openid)
+    ?? "";
 }
 
 export function parseQqQuoteReference(event: QqDispatchEvent): QqQuoteReference | undefined {

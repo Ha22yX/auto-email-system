@@ -35,8 +35,13 @@ function text(value: unknown) {
 export function parseQqMailReadInteraction(event: QqDispatchEvent) {
   if (event.type !== "INTERACTION_CREATE") return undefined;
   const data = record(event.data.data);
-  const resolved = record(data?.resolved);
-  const buttonData = text(resolved?.button_data);
+  const nestedData = record(data?.data);
+  const resolved = record(data?.resolved)
+    ?? record(event.data.resolved)
+    ?? record(nestedData?.resolved);
+  const buttonData = text(resolved?.button_data)
+    ?? text(resolved?.callback_data)
+    ?? text(resolved?.buttonData);
   const match = buttonData?.match(/^mail-read:([a-f0-9]{32})$/i);
   if (!match) return undefined;
   const interactionId = text(event.data.id) ?? event.id;
@@ -95,20 +100,34 @@ export class QqButtonReadService {
     this.markActionUsed(action.token);
 
     let confirmationFailed = false;
+    let confirmationReferenced = false;
     try {
       await this.client.sendDirectMessage({
         userOpenId,
         content: confirmation(email, alreadyRead),
         ...(action.messageId ? { messageReferenceId: action.messageId } : {})
       });
+      confirmationReferenced = Boolean(action.messageId);
     } catch {
-      confirmationFailed = true;
+      if (action.messageId) {
+        try {
+          await this.client.sendDirectMessage({
+            userOpenId,
+            content: confirmation(email, alreadyRead)
+          });
+        } catch {
+          confirmationFailed = true;
+        }
+      } else {
+        confirmationFailed = true;
+      }
     }
     return {
       kind: alreadyRead ? "already-read" as const : "marked-read" as const,
       emailId: email.id,
       acknowledgementFailed,
-      confirmationFailed
+      confirmationFailed,
+      confirmationReferenced
     };
   }
 }
