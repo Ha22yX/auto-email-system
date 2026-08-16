@@ -26,6 +26,7 @@ export const QQ_OP = {
 const SOCKET_OPEN = 1;
 const DEFAULT_RECONNECT_BASE_MS = 1_000;
 const DEFAULT_RECONNECT_MAX_MS = 30_000;
+const DEFAULT_HANDSHAKE_TIMEOUT_MS = 15_000;
 const MAX_GATEWAY_FRAME_BYTES = 1_048_576;
 
 type GatewayFrame = {
@@ -58,6 +59,7 @@ export type QqGatewayDependencies = {
   random?: () => number;
   reconnectBaseMs?: number;
   reconnectMaxMs?: number;
+  handshakeTimeoutMs?: number;
   onStatus?: (status: QqGatewayStatus) => void;
 };
 
@@ -148,6 +150,7 @@ export class QqGateway {
   private readonly random: () => number;
   private readonly reconnectBaseMs: number;
   private readonly reconnectMaxMs: number;
+  private readonly handshakeTimeoutMs: number;
   private readonly onStatusChange?: (status: QqGatewayStatus) => void;
   private readonly dispatchListeners = new Set<(event: QqDispatchEvent) => void>();
 
@@ -157,6 +160,7 @@ export class QqGateway {
   private socketGeneration = 0;
   private connectionPromise?: Promise<void>;
   private heartbeatTimer?: unknown;
+  private handshakeTimer?: unknown;
   private reconnectTimer?: unknown;
   private heartbeatIntervalMs?: number;
   private awaitingHeartbeatAck = false;
@@ -174,6 +178,7 @@ export class QqGateway {
     random = Math.random,
     reconnectBaseMs = DEFAULT_RECONNECT_BASE_MS,
     reconnectMaxMs = DEFAULT_RECONNECT_MAX_MS,
+    handshakeTimeoutMs = DEFAULT_HANDSHAKE_TIMEOUT_MS,
     onStatus
   }: QqGatewayDependencies = {}) {
     this.tokenProvider = tokenProvider;
@@ -185,6 +190,7 @@ export class QqGateway {
     this.random = random;
     this.reconnectBaseMs = Math.max(1, reconnectBaseMs);
     this.reconnectMaxMs = Math.max(this.reconnectBaseMs, reconnectMaxMs);
+    this.handshakeTimeoutMs = Math.max(1, handshakeTimeoutMs);
     this.onStatusChange = onStatus;
   }
 
@@ -214,6 +220,7 @@ export class QqGateway {
     this.lifecycleGeneration += 1;
     this.socketGeneration += 1;
     this.clearHeartbeatTimer();
+    this.clearHandshakeTimer();
     this.clearReconnectTimer();
     this.connectionPromise = undefined;
     this.awaitingHeartbeatAck = false;
@@ -343,6 +350,7 @@ export class QqGateway {
         properties: { $os: process.platform, $browser: "auto-email-system", $device: "auto-email-system" }
       }
     });
+    this.scheduleHandshakeTimeout("identify");
   }
 
   private sendResume() {
@@ -359,6 +367,7 @@ export class QqGateway {
         seq: this.session.sequence
       }
     });
+    this.scheduleHandshakeTimeout("resume");
   }
 
   private handleDispatch(frame: GatewayFrame) {
@@ -385,6 +394,7 @@ export class QqGateway {
     }
 
     if (event.type === "READY" || event.type === "RESUMED") {
+      this.clearHandshakeTimer();
       this.currentStatus.reconnectAttempt = 0;
       this.setStatus({ state: "online", connectedAt: next.connectedAt, lastError: undefined });
     }
@@ -398,6 +408,7 @@ export class QqGateway {
   }
 
   private handleInvalidSession() {
+    this.clearHandshakeTimer();
     this.clearSession();
     this.sendIdentify();
   }
@@ -446,9 +457,10 @@ export class QqGateway {
     if (!this.isCurrentSocket(socket, generation)) return;
     this.socket = undefined;
     this.clearHeartbeatTimer();
+    this.clearHandshakeTimer();
     this.awaitingHeartbeatAck = false;
     if (!this.started) return;
-    if (code === 4006) {
+    if (code === 4006 || code === 4007 || code === 4009) {
       this.clearSession();
       this.scheduleReconnect("session_invalid", "QQ Gateway session was invalid");
       return;
@@ -472,6 +484,7 @@ export class QqGateway {
   private requestReconnect(code: string, message: string) {
     if (!this.started || this.reconnectTimer) return;
     this.clearHeartbeatTimer();
+    this.clearHandshakeTimer();
     this.awaitingHeartbeatAck = false;
     this.heartbeatIntervalMs = undefined;
 
@@ -508,6 +521,27 @@ export class QqGateway {
     if (this.heartbeatTimer === undefined) return;
     this.timers.clearTimeout(this.heartbeatTimer);
     this.heartbeatTimer = undefined;
+  }
+
+  private scheduleHandshakeTimeout(mode: "identify" | "resume") {
+    this.clearHandshakeTimer();
+    this.handshakeTimer = this.timers.setTimeout(() => {
+      this.handshakeTimer = undefined;
+      if (!this.started || !this.socket) return;
+      if (mode === "resume") this.clearSession();
+      this.requestReconnect(
+        mode + "_timeout",
+        mode === "resume"
+          ? "QQ Gateway Resume handshake timed out"
+          : "QQ Gateway Identify handshake timed out"
+      );
+    }, this.handshakeTimeoutMs);
+  }
+
+  private clearHandshakeTimer() {
+    if (this.handshakeTimer === undefined) return;
+    this.timers.clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = undefined;
   }
 
   private clearReconnectTimer() {

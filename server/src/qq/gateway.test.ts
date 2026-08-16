@@ -70,6 +70,7 @@ function createHarness(options: {
   tokenError?: Error;
   random?: () => number;
   reconnectMaxMs?: number;
+  handshakeTimeoutMs?: number;
 } = {}) {
   const clock = new FakeClock();
   const sockets: FakeSocket[] = [];
@@ -102,6 +103,7 @@ function createHarness(options: {
     random: options.random ?? (() => 0.5),
     reconnectBaseMs: 100,
     reconnectMaxMs: options.reconnectMaxMs ?? 400,
+    handshakeTimeoutMs: options.handshakeTimeoutMs,
     onStatus: (status) => statuses.push(status)
   });
 
@@ -227,6 +229,51 @@ test("close code 4006 clears an invalid session before reconnecting with Identif
   assert.equal(second.sent[0].op, 2);
 });
 
+test("expired Resume close codes clear the saved session before reconnecting with Identify", async () => {
+  for (const closeCode of [4007, 4009]) {
+    const harness = createHarness({
+      state: { sessionId: `expired-${closeCode}`, sequence: 41, updatedAt: "2026-08-16T00:00:00.000Z" }
+    });
+
+    await harness.gateway.start();
+    const first = harness.sockets[0];
+    first.serverSend({ op: 10, d: { heartbeat_interval: 1_000 } });
+    assert.equal(first.sent[0].op, 6);
+
+    first.serverClose(closeCode);
+    assert.deepEqual(harness.writes, [{}]);
+    harness.clock.advance(100);
+    await flushAsync();
+
+    const second = harness.sockets[1];
+    second.serverSend({ op: 10, d: { heartbeat_interval: 1_000 } });
+    assert.equal(second.sent[0].op, 2);
+    await harness.gateway.stop();
+  }
+});
+
+test("a Resume handshake timeout discards the stale session and falls back to Identify", async (t) => {
+  const harness = createHarness({
+    state: { sessionId: "stalled-session", sequence: 51, updatedAt: "2026-08-16T00:00:00.000Z" },
+    handshakeTimeoutMs: 250
+  });
+  t.after(() => harness.gateway.stop());
+
+  await harness.gateway.start();
+  const first = harness.sockets[0];
+  first.serverSend({ op: 10, d: { heartbeat_interval: 1_000 } });
+  assert.equal(first.sent[0].op, 6);
+
+  harness.clock.advance(250);
+  assert.deepEqual(harness.writes, [{}]);
+  assert.equal(harness.gateway.status().state, "reconnecting");
+
+  harness.clock.advance(100);
+  await flushAsync();
+  const second = harness.sockets[1];
+  second.serverSend({ op: 10, d: { heartbeat_interval: 1_000 } });
+  assert.equal(second.sent[0].op, 2);
+});
 test("authentication close invalidates only the failed token before reconnecting", async (t) => {
   const clock = new FakeClock();
   const sockets: FakeSocket[] = [];
@@ -380,7 +427,7 @@ test("stop closes the owned socket and cancels heartbeat plus reconnect timers",
   await harness.gateway.start();
   const socket = harness.sockets[0];
   socket.serverSend({ op: 10, d: { heartbeat_interval: 50 } });
-  assert.equal(harness.clock.pendingCount, 1);
+  assert.equal(harness.clock.pendingCount, 2);
 
   await harness.gateway.stop();
   assert.equal(socket.closeCalls, 1);
