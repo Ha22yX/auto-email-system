@@ -178,3 +178,73 @@
 @media (prefers-reduced-motion: reduce) {
   .qq-panel-loading span { animation: none; }
 }
+
+.qq-quote-read-section { padding: 14px 0; }
+.qq-quote-read-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 62px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(248, 250, 248, 0.76);
+  color: var(--muted);
+  text-align: left;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+.qq-quote-read-toggle:hover {
+  transform: translateY(-1px);
+  border-color: rgba(31, 105, 83, 0.28);
+}
+.qq-quote-read-toggle.active {
+  border-color: rgba(31, 105, 83, 0.32);
+  background: rgba(226, 239, 233, 0.58);
+}
+.qq-quote-read-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 6px;
+  background: #e4efe9;
+  color: var(--accent);
+}
+.qq-quote-read-copy { display: grid; gap: 3px; min-width: 0; }
+.qq-quote-read-copy strong { color: var(--ink); font-size: 14px; }
+.qq-quote-read-copy small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.qq-quote-read-toggle .switch-track {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #d8dfdb;
+  transition: background 180ms ease;
+}
+.qq-quote-read-toggle .switch-track > span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 38, 31, 0.2);
+  transition: transform 180ms ease;
+}
+.qq-quote-read-toggle .switch-track.on { background: var(--accent); }
+.qq-quote-read-toggle .switch-track.on > span { transform: translateX(18px); }
+
+@media (max-width: 560px) {
+  .qq-quote-read-toggle { grid-template-columns: auto minmax(0, 1fr); }
+  .qq-quote-read-toggle .switch-track { grid-column: 2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qq-quote-read-toggle,
+  .qq-quote-read-toggle .switch-track,
+  .qq-quote-read-toggle .switch-track > span { transition: none; }
+}

@@ -12,6 +12,7 @@ import {
 
 function model(overrides: Partial<EmailNotificationModel> = {}): EmailNotificationModel {
   return {
+    emailId: "email-card-test",
     category: "important",
     categoryLabel: "重要邮件",
     urgencyLabel: "请尽快查看",

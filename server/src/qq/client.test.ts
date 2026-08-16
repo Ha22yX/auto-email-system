@@ -184,7 +184,8 @@ test("a delayed 401 for token A does not discard a refreshed token B", async () 
       appId: "test-app-id",
       encryptedAppSecret: "encrypted-test-secret",
       enabled: true,
-      notifyCategories: { important: true, secondary: true, ignore: false }
+      quoteImageMarksRead: true,
+  notifyCategories: { important: true, secondary: true, ignore: false }
     }),
     decryptCredential: () => "fake-app-secret"
   });
@@ -220,7 +221,10 @@ test("direct images use the official rich-media upload and media message flow", 
   const image = Buffer.from("png-card");
   const fake = createMessageFetch([
     new Response(JSON.stringify({ file_info: "uploaded-file-reference" }), { status: 200 }),
-    new Response(JSON.stringify({ id: "image-message" }), { status: 200 })
+    new Response(JSON.stringify({
+      id: "image-message",
+      ext_info: { ref_idx: "REFIDX_IMAGE" }
+    }), { status: 200 })
   ]);
   const client = createQqClient({ fetch: fake.fetch, tokenProvider: createTokenProvider() });
 
@@ -228,7 +232,7 @@ test("direct images use the official rich-media upload and media message flow", 
     userOpenId: "user-openid",
     image,
     fileName: "mail-summary.png"
-  }), { messageId: "image-message" });
+  }), { messageId: "image-message", refIndex: "REFIDX_IMAGE" });
 
   assert.equal(fake.calls[0].url, "https://api.bot.qq.com/v2/users/user-openid/files");
   assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), {

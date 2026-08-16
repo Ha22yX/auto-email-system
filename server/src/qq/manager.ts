@@ -1,10 +1,15 @@
 import { publishAppEvent } from "../events";
-import { readQqBotConfig, resumePausedNotificationDeliveries } from "../store";
+import {
+  readQqBotConfig,
+  recordQqNotificationReference,
+  resumePausedNotificationDeliveries
+} from "../store";
 import type { QqBotBinding, QqBotConfig } from "../types";
 import { createQqBindingService, type QqBindingChallenge, type QqBindingService } from "./binding";
 import { createQqClient } from "./client";
 import { createTokenProvider } from "./credentials";
 import { createQqGateway } from "./gateway";
+import { createQqQuoteReadService, type QqQuoteReadService } from "./quote-read";
 import type {
   QqBotPublicStatus,
   QqDirectImageInput,
@@ -26,6 +31,8 @@ type QqManagerBindingService = Pick<
   "readBinding" | "readChallenge" | "createBindingCode" | "handleDispatchEvent"
 >;
 
+type QqManagerQuoteReadService = Pick<QqQuoteReadService, "handleDispatchEvent">;
+
 type QqManagerClient = {
   sendDirectMessage(input: QqDirectMessageInput): Promise<QqSendResult>;
   sendDirectImage(input: QqDirectImageInput): Promise<QqSendResult>;
@@ -35,7 +42,9 @@ export type QqManagerDependencies = {
   readConfig?: () => QqBotConfig;
   gateway?: QqManagerGateway;
   bindingService?: QqManagerBindingService;
+  quoteReadService?: QqManagerQuoteReadService;
   client?: QqManagerClient;
+  recordMessageReference?: typeof recordQqNotificationReference;
   onStatus?: (status: QqBotPublicStatus) => void;
   onBindingReady?: () => void;
 };
@@ -64,7 +73,9 @@ export class QqManager {
   private readonly readConfig: () => QqBotConfig;
   private readonly gateway: QqManagerGateway;
   private readonly bindingService: QqManagerBindingService;
+  private readonly quoteReadService: QqManagerQuoteReadService;
   private readonly client: QqManagerClient;
+  private readonly recordMessageReference: typeof recordQqNotificationReference;
   private readonly onStatusChange?: (status: QqBotPublicStatus) => void;
   private readonly onBindingReady?: () => void;
   private started = false;
@@ -77,6 +88,12 @@ export class QqManager {
     this.gateway = dependencies.gateway ?? defaults.gateway;
     this.bindingService = dependencies.bindingService ?? defaults.bindingService;
     this.client = dependencies.client ?? defaults.client;
+    this.quoteReadService = dependencies.quoteReadService ?? createQqQuoteReadService({
+      readConfig: this.readConfig,
+      readBinding: () => this.bindingService.readBinding(),
+      client: this.client
+    });
+    this.recordMessageReference = dependencies.recordMessageReference ?? recordQqNotificationReference;
     this.onStatusChange = dependencies.onStatus;
     this.onBindingReady = dependencies.onBindingReady;
   }
@@ -134,14 +151,27 @@ export class QqManager {
     });
   }
 
-  async sendImageNotification(image: Buffer) {
+  async sendImageNotification(image: Buffer, emailId?: string) {
     const binding = this.bindingService.readBinding();
     if (!binding) throw new Error("QQ notification recipient is not bound");
-    return this.client.sendDirectImage({
+    const result = await this.client.sendDirectImage({
       userOpenId: binding.userOpenId,
       image,
       fileName: "mail-summary.png"
     });
+    if (emailId && (result.messageId || result.refIndex)) {
+      try {
+        this.recordMessageReference({
+          emailId,
+          userOpenId: binding.userOpenId,
+          messageId: result.messageId,
+          refIndex: result.refIndex
+        });
+      } catch {
+        // The image was already delivered; mapping failure must not trigger a duplicate notification retry.
+      }
+    }
+    return result;
   }
   async testNotification() {
     const result = await this.sendNotification("自动邮件系统 QQ 通知测试成功。");
@@ -167,6 +197,7 @@ export class QqManager {
     try {
       const result = await this.bindingService.handleDispatchEvent(event);
       if (result.kind === "bound" || result.kind === "capability") this.onBindingReady?.();
+      if (result.kind !== "duplicate") await this.quoteReadService.handleDispatchEvent(event);
     } finally {
       this.publishStatus();
     }

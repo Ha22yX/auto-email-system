@@ -9,7 +9,8 @@ function config(overrides: Partial<QqBotConfig> = {}): QqBotConfig {
     appId: "1900000000",
     encryptedAppSecret: "v1:fake",
     enabled: true,
-    notifyCategories: { important: true, secondary: true, ignore: false },
+    quoteImageMarksRead: true,
+  notifyCategories: { important: true, secondary: true, ignore: false },
     ...overrides
   };
 }
@@ -33,6 +34,7 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
   let stops = 0;
   const handled: QqDispatchEvent[] = [];
   const sent: string[] = [];
+  const references: unknown[] = [];
   const statuses: unknown[] = [];
   let bindingReady = 0;
   const manager = new QqManager({
@@ -71,8 +73,12 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
       },
       async sendDirectImage(input) {
         sent.push(input.userOpenId);
-        return { messageId: "test-image" };
+        return { messageId: "test-image", refIndex: "REFIDX_TEST_IMAGE" };
       }
+    },
+    recordMessageReference: (input) => {
+      references.push(input);
+      return { ...input, createdAt: "2026-08-16T00:00:00.000Z" };
     },
     onStatus: (status) => statuses.push(status),
     onBindingReady: () => {
@@ -83,6 +89,7 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
     manager,
     handled,
     sent,
+    references,
     statuses,
     emit(event: QqDispatchEvent) {
       dispatchListener?.(event);
@@ -146,4 +153,17 @@ test("test notification targets the stored openid and stop is idempotent", async
   await target.manager.stop();
   await target.manager.stop();
   assert.equal(target.stops, 1);
+});
+
+
+test("sent QQ mail images persist message and ref-index mappings", async () => {
+  const target = harness({ currentBinding: binding() });
+  const result = await target.manager.sendImageNotification(Buffer.from("mail-card"), "email-42");
+  assert.deepEqual(result, { messageId: "test-image", refIndex: "REFIDX_TEST_IMAGE" });
+  assert.deepEqual(target.references, [{
+    emailId: "email-42",
+    userOpenId: "abcdefgh12345678",
+    messageId: "test-image",
+    refIndex: "REFIDX_TEST_IMAGE"
+  }]);
 });

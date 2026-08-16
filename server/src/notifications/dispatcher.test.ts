@@ -56,6 +56,7 @@ const qqSettings: QqBotConfig = {
   enabled: true,
   appId: "1900000000",
   encryptedAppSecret: "v1:fake",
+  quoteImageMarksRead: true,
   notifyCategories: { important: true, secondary: true, ignore: false }
 };
 

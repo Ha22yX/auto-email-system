@@ -46,6 +46,7 @@ export type QqDirectImageInput = {
 
 export type QqSendResult = {
   messageId?: string;
+  refIndex?: string;
 };
 
 export type QqTokenProviderLike = {

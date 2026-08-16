@@ -6,6 +6,7 @@ const TEST_CONFIG = {
   appId: "test-app-id",
   encryptedAppSecret: "encrypted-test-secret",
   enabled: true,
+  quoteImageMarksRead: true,
   notifyCategories: { important: true, secondary: true, ignore: false }
 };
 

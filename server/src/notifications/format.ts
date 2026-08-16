@@ -1,6 +1,7 @@
 import type { MailCategory, Mailbox, ProcessedEmail } from "../types";
 
 export type EmailNotificationModel = {
+  emailId: string;
   category: MailCategory;
   categoryLabel: string;
   urgencyLabel: string;
@@ -45,6 +46,7 @@ export function buildEmailNotificationModel(email: ProcessedEmail, mailbox?: Mai
     ? `${email.fromName} <${email.fromAddress}>`
     : email.fromName || email.fromAddress;
   return {
+    emailId: email.id,
     category: email.category,
     ...meta,
     subject: compact(email.subject, 100, "无主题"),

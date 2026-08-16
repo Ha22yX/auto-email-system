@@ -97,7 +97,7 @@ function defaultDependencies() {
     sendQq: (model: EmailNotificationModel) =>
       sendImageNotificationWithTextFallback({
         renderImage: () => renderEmailNotificationCard(model),
-        sendImage: (image) => getQqManager().sendImageNotification(image),
+        sendImage: (image) => getQqManager().sendImageNotification(image, model.emailId),
         sendText: () => getQqManager().sendNotification(renderQqEmailNotification(model))
       })
   };

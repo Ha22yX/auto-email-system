@@ -125,7 +125,7 @@ test("schema-v1 migration creates durable channel state idempotently", () => {
   const second = fixture.run(false);
 
   assert.deepEqual(first.wechat, { enabled: true, clawbotApiUrl: "http://127.0.0.1:18011/api/send", clawbotRecipientId: "", importantOnly: true, notifyCategories: { important: true, secondary: false, ignore: false } });
-  assert.deepEqual(first.qq, { enabled: false, appId: "", encryptedAppSecret: "", notifyCategories: { important: true, secondary: true, ignore: false } });
+  assert.deepEqual(first.qq, { enabled: false, appId: "", encryptedAppSecret: "", notifyCategories: { important: true, secondary: true, ignore: false }, quoteImageMarksRead: true });
   assert.deepEqual(first.beforeEnqueue, [
     { emailId: "legacy-retry", channel: "wechat", status: "retry" },
     { emailId: "legacy-sent", channel: "wechat", status: "sent" }
@@ -134,11 +134,11 @@ test("schema-v1 migration creates durable channel state idempotently", () => {
   assert.deepEqual(first.afterEnqueue, first.beforeEnqueue);
   assert.equal(first.uniqueDeliveryIndex, true);
   assert.deepEqual(
-    ["credentials", "qq_state", "qq_event_dedupe", "notification_deliveries"].every((table) => first.tableNames.includes(table)),
+    ["credentials", "qq_state", "qq_event_dedupe", "notification_deliveries", "qq_notification_refs"].every((table) => first.tableNames.includes(table)),
     true
   );
   assert.deepEqual(
-    ["idx_notification_deliveries_status_next_attempt", "idx_qq_event_dedupe_expires"].every((index) =>
+    ["idx_notification_deliveries_status_next_attempt", "idx_qq_event_dedupe_expires", "idx_qq_notification_refs_ref"].every((index) =>
       first.indexNames.includes(index)
     ),
     true

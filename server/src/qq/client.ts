@@ -170,7 +170,14 @@ export class QqClient {
 
   private sendResult(body: QqResponseBody): QqSendResult {
     const messageId = body?.id ?? body?.message_id;
-    return typeof messageId === "string" ? { messageId } : {};
+    const extInfo = body?.ext_info;
+    const refIndex = extInfo && typeof extInfo === "object" && !Array.isArray(extInfo)
+      ? (extInfo as Record<string, unknown>).ref_idx
+      : undefined;
+    return {
+      ...(typeof messageId === "string" && messageId ? { messageId } : {}),
+      ...(typeof refIndex === "string" && refIndex ? { refIndex } : {})
+    };
   }
 }
 

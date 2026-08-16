@@ -8,6 +8,7 @@ test("QQ notification settings accept a blank write-only secret and validate App
     appId: "1900000000",
     appSecret: "",
     enabled: true,
+    quoteImageMarksRead: true,
     notifyCategories: { important: true, secondary: true, ignore: false }
   });
   assert.equal(parsed.appSecret, "");
@@ -29,6 +30,7 @@ test("combined notification settings never serialize QQ secrets or full recipien
       enabled: true,
       hasAppSecret: true,
       maskedAppSecret: "test...cret",
+      quoteImageMarksRead: true,
       notifyCategories: { important: true, secondary: true, ignore: false }
     },
     {

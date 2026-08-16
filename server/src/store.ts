@@ -24,6 +24,7 @@ import type {
   QqBotConfig,
   QqBotSettingsInput,
   QqGatewayState,
+  QqNotificationReference,
   SystemSettings
 } from "./types";
 
@@ -53,7 +54,8 @@ const defaultQqBotConfig: QqBotConfig = {
   appId: "",
   encryptedAppSecret: "",
   enabled: false,
-  notifyCategories: defaultNotifyCategories
+  notifyCategories: defaultNotifyCategories,
+  quoteImageMarksRead: true
 };
 
 const aiProtocols = new Set(["auto", "openai-chat", "openai-responses", "anthropic", "gemini"]);
@@ -219,6 +221,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status_next_attempt
     ON notification_deliveries(status, nextAttemptAt);
 `);
+
+db.exec([
+  "CREATE TABLE IF NOT EXISTS qq_notification_refs (",
+  "  id TEXT PRIMARY KEY,",
+  "  emailId TEXT NOT NULL,",
+  "  userOpenId TEXT NOT NULL,",
+  "  messageId TEXT,",
+  "  refIndex TEXT,",
+  "  createdAt TEXT NOT NULL,",
+  "  FOREIGN KEY(emailId) REFERENCES emails(id) ON DELETE CASCADE",
+  ");",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_notification_refs_message",
+  "  ON qq_notification_refs(userOpenId, messageId) WHERE messageId IS NOT NULL;",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_notification_refs_ref",
+  "  ON qq_notification_refs(userOpenId, refIndex) WHERE refIndex IS NOT NULL;",
+  "CREATE INDEX IF NOT EXISTS idx_qq_notification_refs_created",
+  "  ON qq_notification_refs(createdAt DESC);"
+].join("\n"));
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -1112,6 +1132,7 @@ export function publicQqBotSettings(config: QqBotConfig): PublicQqBotSettings {
     appId: config.appId,
     enabled: config.enabled,
     notifyCategories: clone(config.notifyCategories),
+    quoteImageMarksRead: config.quoteImageMarksRead,
     hasAppSecret: Boolean(config.encryptedAppSecret),
     maskedAppSecret: config.encryptedAppSecret ? "configured" : ""
   };
@@ -1130,6 +1151,7 @@ export function updateQqBotSettings(input: QqBotSettingsInput): PublicQqBotSetti
     appId: input.appId ?? current.appId,
     enabled: input.enabled ?? current.enabled,
     notifyCategories,
+    quoteImageMarksRead: input.quoteImageMarksRead ?? current.quoteImageMarksRead,
     encryptedAppSecret
   };
   const now = new Date().toISOString();
@@ -1236,6 +1258,65 @@ export function consumeQqBindingChallenge(
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function rowToQqNotificationReference(row: SqlRow): QqNotificationReference {
+  return {
+    emailId: String(row.emailId),
+    userOpenId: String(row.userOpenId),
+    messageId: row.messageId ? String(row.messageId) : undefined,
+    refIndex: row.refIndex ? String(row.refIndex) : undefined,
+    createdAt: String(row.createdAt)
+  };
+}
+
+export function recordQqNotificationReference(input: {
+  emailId: string;
+  userOpenId: string;
+  messageId?: string;
+  refIndex?: string;
+}) {
+  const messageId = input.messageId?.trim() || undefined;
+  const refIndex = input.refIndex?.trim() || undefined;
+  if (!input.emailId.trim() || !input.userOpenId.trim() || (!messageId && !refIndex)) return undefined;
+  const reference: QqNotificationReference = {
+    emailId: input.emailId,
+    userOpenId: input.userOpenId,
+    ...(messageId ? { messageId } : {}),
+    ...(refIndex ? { refIndex } : {}),
+    createdAt: new Date().toISOString()
+  };
+  db.prepare(
+    "INSERT OR REPLACE INTO qq_notification_refs " +
+    "(id, emailId, userOpenId, messageId, refIndex, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(
+    randomUUID(),
+    reference.emailId,
+    reference.userOpenId,
+    reference.messageId ?? null,
+    reference.refIndex ?? null,
+    reference.createdAt
+  );
+  return reference;
+}
+
+export function findQqNotificationReference(input: {
+  userOpenId: string;
+  messageId?: string;
+  refIndex?: string;
+}) {
+  const userOpenId = input.userOpenId.trim();
+  if (!userOpenId) return undefined;
+  const candidates: Array<["refIndex" | "messageId", string]> = [];
+  if (input.refIndex?.trim()) candidates.push(["refIndex", input.refIndex.trim()]);
+  if (input.messageId?.trim()) candidates.push(["messageId", input.messageId.trim()]);
+  for (const [column, value] of candidates) {
+    const row = db.prepare(
+      "SELECT * FROM qq_notification_refs WHERE userOpenId = ? AND " + column + " = ? LIMIT 1"
+    ).get(userOpenId, value) as SqlRow | undefined;
+    if (row) return rowToQqNotificationReference(row);
+  }
+  return undefined;
 }
 
 export function rememberQqEvent(eventId: string, expiresAt: string) {

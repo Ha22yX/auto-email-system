@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive,
   BellRinging,
+  CheckCircle,
   FloppyDisk,
   LinkSimple,
   PaperPlaneTilt,
@@ -23,6 +24,7 @@ type QqForm = {
   appId: string;
   appSecret: string;
   enabled: boolean;
+  quoteImageMarksRead: boolean;
   notifyCategories: Record<MailCategory, boolean>;
 };
 
@@ -41,6 +43,7 @@ function formFromSettings(settings: PublicQqBotSettings): QqForm {
     appId: settings.appId,
     appSecret: "",
     enabled: settings.enabled,
+    quoteImageMarksRead: settings.quoteImageMarksRead ?? true,
     notifyCategories: {
       important: settings.notifyCategories?.important ?? true,
       secondary: settings.notifyCategories?.secondary ?? true,
@@ -256,6 +259,26 @@ export function QqNotificationPanel({ setToast }: { setToast: (message: string) 
                 );
               })}
             </div>
+          </section>
+
+          <section className="qq-section qq-quote-read-section">
+            <button
+              type="button"
+              className={"qq-quote-read-toggle" + (form.quoteImageMarksRead ? " active" : "")}
+              aria-pressed={form.quoteImageMarksRead}
+              onClick={() => setForm({ ...form, quoteImageMarksRead: !form.quoteImageMarksRead })}
+            >
+              <span className="qq-quote-read-icon">
+                <CheckCircle size={21} weight={form.quoteImageMarksRead ? "fill" : "regular"} />
+              </span>
+              <span className="qq-quote-read-copy">
+                <strong>引用图片标记已读</strong>
+                <small>在 QQ 引用邮件通知图片后，同步标记为系统已读并回复确认</small>
+              </span>
+              <span className={"switch-track" + (form.quoteImageMarksRead ? " on" : "")} aria-hidden="true">
+                <span />
+              </span>
+            </button>
           </section>
 
           <section className="qq-section qq-binding-section">

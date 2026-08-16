@@ -13,17 +13,20 @@ export type NotificationChannelSettings = {
 export type QqBotConfig = NotificationChannelSettings & {
   appId: string;
   encryptedAppSecret: string;
+  quoteImageMarksRead: boolean;
 };
 
 export type QqBotSettingsInput = Partial<NotificationChannelSettings> & {
   appId?: string;
   appSecret?: string;
+  quoteImageMarksRead?: boolean;
 };
 
 export type PublicQqBotSettings = NotificationChannelSettings & {
   appId: string;
   hasAppSecret: boolean;
   maskedAppSecret: string;
+  quoteImageMarksRead: boolean;
 };
 
 export type QqGatewayStatus = {

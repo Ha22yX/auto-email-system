@@ -13,9 +13,11 @@ const {
   addProcessedEmail,
   claimNotificationDeliveries,
   consumeQqBindingChallenge,
+  findQqNotificationReference,
   normalizeAiSettings,
   publicAiSettings,
   publicQqBotSettings,
+  recordQqNotificationReference,
   readMailboxes,
   readProcessingRuns,
   readQqBotBindings,
@@ -128,7 +130,8 @@ test("QQ AppSecret is encrypted and never returned by public settings", () => {
     "enabled",
     "hasAppSecret",
     "maskedAppSecret",
-    "notifyCategories"
+    "notifyCategories",
+    "quoteImageMarksRead"
   ]);
   assert.equal(JSON.stringify(publicSettings).includes("test-secret"), false);
   assert.equal(JSON.stringify(publicSettings).includes(envelope), false);
@@ -396,4 +399,43 @@ test("lightweight state readers never parse stored email bodies", () => {
   }
 
   assert.equal(parsedStoredEmail, false);
+});
+
+
+test("QQ notification references resolve sent images back to emails", () => {
+  const id = "qq-reference-email-" + process.pid;
+  addProcessedEmail({
+    id,
+    mailboxId: "qq-reference-mailbox",
+    externalUid: id,
+    subject: "Reference mapping",
+    processedAt: new Date().toISOString(),
+    category: "important",
+    summaryZh: "reference mapping",
+    reasonZh: "store test",
+    actionItemsZh: [],
+    originalText: "unique reference body " + id,
+    panelRead: false,
+    readMarked: true
+  });
+
+  const recorded = recordQqNotificationReference({
+    emailId: id,
+    userOpenId: "qq-reference-user",
+    messageId: "qq-message-id",
+    refIndex: "REFIDX_STORE_TEST"
+  });
+  assert.equal(recorded?.emailId, id);
+  assert.equal(findQqNotificationReference({
+    userOpenId: "qq-reference-user",
+    refIndex: "REFIDX_STORE_TEST"
+  })?.emailId, id);
+  assert.equal(findQqNotificationReference({
+    userOpenId: "qq-reference-user",
+    messageId: "qq-message-id"
+  })?.emailId, id);
+  assert.equal(findQqNotificationReference({
+    userOpenId: "another-user",
+    refIndex: "REFIDX_STORE_TEST"
+  }), undefined);
 });

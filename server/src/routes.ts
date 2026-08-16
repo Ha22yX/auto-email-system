@@ -170,6 +170,7 @@ export const qqNotificationSchema = z.object({
   appId: z.string().trim().regex(/^(?:|[0-9]{5,20})$/, "QQ AppID 格式不正确"),
   appSecret: z.string().optional().default(""),
   enabled: z.coerce.boolean(),
+  quoteImageMarksRead: z.coerce.boolean().optional().default(true),
   notifyCategories: z.object({
     important: z.coerce.boolean().default(true),
     secondary: z.coerce.boolean().default(true),
