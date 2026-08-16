@@ -178,7 +178,7 @@ flowchart LR
 | Email | imapflow, mailparser, custom POP3 reader |
 | AI | Zhipu GLM Coding Plan / Anthropic-compatible API, GLM-5V-Turbo multimodal |
 | Storage | SQLite: `data/app.sqlite`, with one-time migration from legacy JSON data |
-| Notifications | In-project WeClaw / ClawBot bridge and official QQ Bot Gateway + REST API |
+| Notifications | Sharp-rendered mail cards, in-project WeClaw / ClawBot bridge, official QQ Bot Gateway + REST API |
 
 ## AI Configuration
 
@@ -207,6 +207,8 @@ Highlights:
 - The notification bridge can start with the app.
 - QR-code binding stores session state and survives restarts.
 - Notification categories are configurable: Important, Secondary, Ignore.
+- Email alerts are rendered as mobile-readable image cards with category colors, Chinese summaries, highlighted codes/amounts/deadlines, and up to three actions.
+- Cards are rendered entirely in memory; if image rendering or rich-media upload fails, the complete text notification is sent automatically.
 - The bridge sends only the email summary produced by this system. It does not forward your WeChat chats to AI.
 
 WeClaw source: <https://github.com/fastclaw-ai/weclaw>  

@@ -7,6 +7,7 @@ import { createTokenProvider } from "./credentials";
 import { createQqGateway } from "./gateway";
 import type {
   QqBotPublicStatus,
+  QqDirectImageInput,
   QqDirectMessageInput,
   QqDispatchEvent,
   QqGatewayStatus,
@@ -27,6 +28,7 @@ type QqManagerBindingService = Pick<
 
 type QqManagerClient = {
   sendDirectMessage(input: QqDirectMessageInput): Promise<QqSendResult>;
+  sendDirectImage(input: QqDirectImageInput): Promise<QqSendResult>;
 };
 
 export type QqManagerDependencies = {
@@ -132,6 +134,15 @@ export class QqManager {
     });
   }
 
+  async sendImageNotification(image: Buffer) {
+    const binding = this.bindingService.readBinding();
+    if (!binding) throw new Error("QQ notification recipient is not bound");
+    return this.client.sendDirectImage({
+      userOpenId: binding.userOpenId,
+      image,
+      fileName: "mail-summary.png"
+    });
+  }
   async testNotification() {
     const result = await this.sendNotification("自动邮件系统 QQ 通知测试成功。");
     this.publishStatus();

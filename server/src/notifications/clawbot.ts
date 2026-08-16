@@ -1,6 +1,8 @@
 import type { Mailbox, NotificationSettings, ProcessedEmail } from "../types";
-import { defaultWeclawApiUrl, resolveWeclawRecipientId, sendWeclawDirectText } from "../weclaw/manager";
-import { buildEmailNotificationModel, renderWechatEmailNotification } from "./format";
+import { defaultWeclawApiUrl, resolveWeclawRecipientId, sendWeclawDirectImage, sendWeclawDirectText } from "../weclaw/manager";
+import { buildEmailNotificationModel, renderWechatEmailNotification, type EmailNotificationModel } from "./format";
+import { renderEmailNotificationCard } from "./card";
+import { sendImageNotificationWithTextFallback } from "./delivery";
 
 function formatDateTime(value?: string) {
   if (!value) return "未知时间";
@@ -121,6 +123,36 @@ export async function sendClawbotText(
   }
 }
 
+export async function sendClawbotImage(
+  settings: NotificationSettings,
+  image: Buffer,
+  timeoutMs = 20000,
+  options: { requireEnabled?: boolean } = {}
+) {
+  const { recipientId } = validateClawbotSettings(settings, options);
+  try {
+    return await sendWeclawDirectImage(recipientId, image, timeoutMs);
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("ClawBot 图片通知超时，请确认微信通知桥接正在运行。");
+    }
+    if (error instanceof Error && error.message.includes("missing context_token")) {
+      throw explainClawbotFailure(409, "missing context_token");
+    }
+    if (error instanceof Error && error.message.includes("ret=-2")) {
+      throw explainClawbotFailure(500, error.message);
+    }
+    throw error;
+  }
+}
+
+export async function sendClawbotEmailCard(settings: NotificationSettings, model: EmailNotificationModel) {
+  return sendImageNotificationWithTextFallback({
+    renderImage: () => renderEmailNotificationCard(model),
+    sendImage: (image) => sendClawbotImage(settings, image),
+    sendText: () => sendClawbotText(settings, renderWechatEmailNotification(model))
+  });
+}
 export async function sendEmailNotification(
   settings: NotificationSettings,
   email: ProcessedEmail,

@@ -334,7 +334,8 @@ test("notification delivery claims are exclusive and stale sends recover", () =>
   sqlite.close();
   enqueueNotificationDelivery("claim-email-1", "wechat");
   enqueueNotificationDelivery("claim-email-2", "qq");
-  const now = "2026-08-16T01:00:00.000Z";
+  const nowMs = Date.now() + 60_000;
+  const now = new Date(nowMs).toISOString();
 
   const first = claimNotificationDeliveries(1, now);
   const second = claimNotificationDeliveries(10, now);
@@ -346,16 +347,17 @@ test("notification delivery claims are exclusive and stale sends recover", () =>
   const database = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
   database.prepare(
     "UPDATE notification_deliveries SET status = 'sending', updatedAt = ? WHERE id = ?"
-  ).run("2026-08-16T00:50:00.000Z", first[0]!.id);
+  ).run(new Date(nowMs - 10 * 60_000).toISOString(), first[0]!.id);
   database.prepare(
     "UPDATE notification_deliveries SET status = 'sent', updatedAt = ? WHERE id = ?"
   ).run(now, second[0]!.id);
   database.close();
 
-  const recovered = claimNotificationDeliveries(10, "2026-08-16T01:06:00.000Z");
+  const recoveryTime = new Date(nowMs + 6 * 60_000).toISOString();
+  const recovered = claimNotificationDeliveries(10, recoveryTime);
   assert.deepEqual(recovered.map((item) => item.id), [first[0]!.id]);
   assert.equal(recovered[0]?.lastError, "recovered_stale_send");
-  assert.equal(claimNotificationDeliveries(10, "2026-08-16T01:06:00.000Z").length, 0);
+  assert.equal(claimNotificationDeliveries(10, recoveryTime).length, 0);
 });
 
 test("lightweight state readers never parse stored email bodies", () => {

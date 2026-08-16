@@ -170,7 +170,7 @@ flowchart LR
 | 邮件 | imapflow, mailparser, 自定义 POP3 读取 |
 | AI | 智谱 GLM Coding Plan / Anthropic-compatible API, GLM-5V-Turbo 多模态 |
 | 存储 | SQLite：`data/app.sqlite`，可从旧 JSON 数据自动迁移 |
-| 通知 | 项目内 WeClaw / ClawBot 桥接与官方 QQ Bot Gateway + REST API |
+| 通知 | Sharp 邮件卡片、项目内 WeClaw / ClawBot 桥接与官方 QQ Bot Gateway + REST API |
 
 ## AI 配置
 
@@ -199,6 +199,8 @@ flowchart LR
 - 项目启动时可自动启动通知桥接。
 - 扫码绑定后会保存会话状态，重启后继续使用。
 - 可分别控制重要、次重要、不用管是否通知。
+- 邮件会生成适合手机阅读的分类图片卡片，突出中文概况、验证码、金额、截止时间和最多三条建议动作。
+- 图片只在内存中生成；渲染或富媒体上传失败时会自动回退为完整文本通知，避免漏报。
 - 只发送系统整理后的邮件信息，不会把你的微信聊天内容交给 AI。
 
 WeClaw 来源：<https://github.com/fastclaw-ai/weclaw>  

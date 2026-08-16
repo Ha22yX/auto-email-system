@@ -3,6 +3,7 @@ import { createHash, randomInt, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { uploadIlinkImage } from "./media";
 
 type WeclawState = {
   bridgeAbort?: AbortController;
@@ -598,17 +599,24 @@ function latestAccountForRecipient(recipientId: string) {
   return accounts.find((account) => account.recipientId === recipientId) || accounts[0];
 }
 
-export async function sendWeclawDirectText(recipientId: string, text: string, timeoutMs = 15000) {
+function weclawDirectContext(recipientId: string) {
   const account = latestAccountForRecipient(recipientId);
-  if (!account) {
-    throw new Error("未找到微信登录凭据，请先在管理设置里重新绑定微信。");
-  }
-
+  if (!account) throw new Error("未找到微信登录凭据，请先在管理设置里重新绑定微信。");
   const contextToken = readWeclawContextTokens().tokens[recipientId];
   if (!contextToken) {
     throw new Error("missing context_token: 请先打开微信 ClawBot 聊天，发送任意一条消息用于激活通知会话。");
   }
+  return { account, contextToken };
+}
 
+async function sendWeclawDirectItem(
+  recipientId: string,
+  item: Record<string, unknown>,
+  description: string,
+  timeoutMs: number,
+  existing?: ReturnType<typeof weclawDirectContext>
+) {
+  const { account, contextToken } = existing ?? weclawDirectContext(recipientId);
   const response = await ilinkPost<{ ret?: number; errmsg?: string }>(
     account,
     "/ilink/bot/sendmessage",
@@ -619,14 +627,7 @@ export async function sendWeclawDirectText(recipientId: string, text: string, ti
         client_id: randomUUID(),
         message_type: 2,
         message_state: 2,
-        item_list: [
-          {
-            type: 1,
-            text_item: {
-              text
-            }
-          }
-        ],
+        item_list: [item],
         context_token: contextToken
       },
       base_info: {}
@@ -648,10 +649,26 @@ export async function sendWeclawDirectText(recipientId: string, text: string, ti
     at: new Date().toISOString(),
     success: true
   });
-  appendLog("system", `direct notification sent to ${recipientId}: ${text.slice(0, 80)}`);
-  return JSON.stringify({ status: "ok", mode: "direct" });
+  appendLog("system", `direct ${description} sent to ${recipientId}`);
+  return JSON.stringify({ status: "ok", mode: "direct", type: description });
 }
 
+export async function sendWeclawDirectText(recipientId: string, text: string, timeoutMs = 15000) {
+  return sendWeclawDirectItem(
+    recipientId,
+    { type: 1, text_item: { text } },
+    `text notification: ${text.slice(0, 80)}`,
+    timeoutMs
+  );
+}
+
+export async function sendWeclawDirectImage(recipientId: string, image: Buffer, timeoutMs = 20000) {
+  const context = weclawDirectContext(recipientId);
+  const imageItem = await uploadIlinkImage(image, recipientId, {
+    getUploadUrl: (body) => ilinkPost(context.account, "/ilink/bot/getuploadurl", { ...body, base_info: {} }, timeoutMs)
+  });
+  return sendWeclawDirectItem(recipientId, imageItem, "image notification", timeoutMs, context);
+}
 function formatReminderTime(value: Date) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",

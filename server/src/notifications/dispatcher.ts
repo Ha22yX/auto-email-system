@@ -18,11 +18,12 @@ import type {
 } from "../types";
 import { getQqManager } from "../qq/manager";
 import { QqApiError } from "../qq/types";
-import { sendClawbotText } from "./clawbot";
+import { sendClawbotEmailCard } from "./clawbot";
+import { renderEmailNotificationCard } from "./card";
+import { sendImageNotificationWithTextFallback } from "./delivery";
 import {
   buildEmailNotificationModel,
   renderQqEmailNotification,
-  renderWechatEmailNotification,
   type EmailNotificationModel
 } from "./format";
 
@@ -92,9 +93,13 @@ function defaultDependencies() {
     claimDeliveries: claimNotificationDeliveries,
     updateDelivery: updateNotificationDelivery,
     sendWechat: (model: EmailNotificationModel, settings: NotificationSettings) =>
-      sendClawbotText(settings, renderWechatEmailNotification(model)),
+      sendClawbotEmailCard(settings, model),
     sendQq: (model: EmailNotificationModel) =>
-      getQqManager().sendNotification(renderQqEmailNotification(model))
+      sendImageNotificationWithTextFallback({
+        renderImage: () => renderEmailNotificationCard(model),
+        sendImage: (image) => getQqManager().sendImageNotification(image),
+        sendText: () => getQqManager().sendNotification(renderQqEmailNotification(model))
+      })
   };
 }
 

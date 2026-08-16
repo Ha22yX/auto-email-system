@@ -38,6 +38,12 @@ export type QqDirectMessageInput = {
   msgId?: string;
 };
 
+export type QqDirectImageInput = {
+  userOpenId: string;
+  image: Buffer;
+  fileName?: string;
+};
+
 export type QqSendResult = {
   messageId?: string;
 };

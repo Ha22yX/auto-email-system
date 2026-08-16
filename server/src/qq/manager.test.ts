@@ -68,6 +68,10 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
       async sendDirectMessage(input) {
         sent.push(input.userOpenId);
         return { messageId: "test-message" };
+      },
+      async sendDirectImage(input) {
+        sent.push(input.userOpenId);
+        return { messageId: "test-image" };
       }
     },
     onStatus: (status) => statuses.push(status),

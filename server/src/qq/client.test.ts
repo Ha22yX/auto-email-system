@@ -215,3 +215,47 @@ test("a delayed 401 for token A does not discard a refreshed token B", async () 
     ["QQBot fake-token-a", "QQBot fake-token-a", "QQBot fake-token-b", "QQBot fake-token-b"]
   );
 });
+
+test("direct images use the official rich-media upload and media message flow", async () => {
+  const image = Buffer.from("png-card");
+  const fake = createMessageFetch([
+    new Response(JSON.stringify({ file_info: "uploaded-file-reference" }), { status: 200 }),
+    new Response(JSON.stringify({ id: "image-message" }), { status: 200 })
+  ]);
+  const client = createQqClient({ fetch: fake.fetch, tokenProvider: createTokenProvider() });
+
+  assert.deepEqual(await client.sendDirectImage({
+    userOpenId: "user-openid",
+    image,
+    fileName: "mail-summary.png"
+  }), { messageId: "image-message" });
+
+  assert.equal(fake.calls[0].url, "https://api.bot.qq.com/v2/users/user-openid/files");
+  assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), {
+    file_type: 1,
+    file_data: image.toString("base64"),
+    file_name: "mail-summary.png",
+    srv_send_msg: false
+  });
+  assert.equal(fake.calls[1].url, "https://api.bot.qq.com/v2/users/user-openid/messages");
+  assert.deepEqual(JSON.parse(String(fake.calls[1].init?.body)), {
+    msg_type: 7,
+    msg_seq: 1,
+    media: { file_info: "uploaded-file-reference" }
+  });
+});
+
+test("direct image validation rejects empty and oversized payloads before requesting QQ", async () => {
+  const fake = createMessageFetch([]);
+  const client = createQqClient({ fetch: fake.fetch, tokenProvider: createTokenProvider() });
+
+  await assert.rejects(
+    client.sendDirectImage({ userOpenId: "user-openid", image: Buffer.alloc(0) }),
+    (error: unknown) => error instanceof QqApiError && error.code === "invalid_image_input"
+  );
+  await assert.rejects(
+    client.sendDirectImage({ userOpenId: "user-openid", image: Buffer.alloc(5 * 1024 * 1024 + 1) }),
+    (error: unknown) => error instanceof QqApiError && error.code === "invalid_image_input"
+  );
+  assert.equal(fake.calls.length, 0);
+});
