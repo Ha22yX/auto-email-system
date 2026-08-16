@@ -778,6 +778,45 @@ export function updateProcessedEmailPanelRead(id: string, panelRead: boolean) {
   return email;
 }
 
+export function markProcessedEmailsPanelRead(options: { category: MailCategory; mailboxId?: string }) {
+  const where = ["category = ?", "panelRead = 0"];
+  const params: SQLInputValue[] = [options.category];
+  if (options.mailboxId && options.mailboxId !== "all") {
+    where.push("mailboxId = ?");
+    params.push(options.mailboxId);
+  }
+
+  const rows = db
+    .prepare("SELECT id, data FROM emails WHERE " + where.join(" AND "))
+    .all(...params) as SqlRow[];
+  const updatedAt = new Date().toISOString();
+  if (!rows.length) return { updatedCount: 0, updatedAt };
+
+  const update = db.prepare("UPDATE emails SET panelRead = 1, data = ? WHERE id = ? AND panelRead = 0");
+  let updatedCount = 0;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const row of rows) {
+      const email = rowToEmail(row);
+      email.panelRead = true;
+      email.panelReadAt = updatedAt;
+      const result = update.run(JSON.stringify(email), String(row.id));
+      updatedCount += Number(result.changes);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  publishAppEvent("email-bulk-read", {
+    category: options.category,
+    mailboxId: options.mailboxId ?? "all",
+    updatedCount
+  });
+  return { updatedCount, updatedAt };
+}
+
 export function addRun(run: ProcessingRun) {
   insertRun(run);
   const rows = db.prepare("SELECT id FROM runs ORDER BY startedAt DESC LIMIT -1 OFFSET 100").all() as SqlRow[];

@@ -29,7 +29,9 @@ const {
   updateQqBotSettings,
   updateQqState,
   enqueueNotificationDelivery,
-  listNotificationDeliveries
+  listNotificationDeliveries,
+  markProcessedEmailsPanelRead,
+  queryProcessedEmails
 } = await import("./store");
 
 const primaryApiKey = "primary-placeholder-secret";
@@ -225,6 +227,56 @@ test("expired QQ binding challenges cannot replace a recipient", () => {
   );
   assert.equal(result, undefined);
   assert.equal(readQqBotBindings().find((binding) => binding.id === "primary")?.userOpenId, "test-user-openid");
+});
+test("bulk panel read updates only the selected mailbox and category", () => {
+  const suffix = String(process.pid);
+  const targetMailbox = "bulk-target-" + suffix;
+  const otherMailbox = "bulk-other-" + suffix;
+  const makeEmail = (
+    id: string,
+    mailboxId: string,
+    category: ProcessedEmail["category"]
+  ): ProcessedEmail => ({
+    id,
+    mailboxId,
+    externalUid: id,
+    subject: id,
+    processedAt: new Date().toISOString(),
+    category,
+    summaryZh: id,
+    reasonZh: "bulk read test",
+    actionItemsZh: [],
+    originalText: "unique body " + id,
+    panelRead: false,
+    readMarked: true
+  });
+
+  addProcessedEmail(makeEmail("bulk-important-1-" + suffix, targetMailbox, "important"));
+  addProcessedEmail(makeEmail("bulk-important-2-" + suffix, targetMailbox, "important"));
+  addProcessedEmail(makeEmail("bulk-secondary-" + suffix, targetMailbox, "secondary"));
+  addProcessedEmail(makeEmail("bulk-other-mailbox-" + suffix, otherMailbox, "important"));
+
+  const result = markProcessedEmailsPanelRead({ category: "important", mailboxId: targetMailbox });
+  assert.equal(result.updatedCount, 2);
+
+  const targetImportant = queryProcessedEmails({
+    category: "important",
+    mailboxId: targetMailbox,
+    limit: 20
+  }).items;
+  assert.equal(targetImportant.every((email) => email.panelRead && email.panelReadAt === result.updatedAt), true);
+  assert.equal(
+    queryProcessedEmails({ category: "secondary", mailboxId: targetMailbox, limit: 20 }).items[0]?.panelRead,
+    false
+  );
+  assert.equal(
+    queryProcessedEmails({ category: "important", mailboxId: otherMailbox, limit: 20 }).items[0]?.panelRead,
+    false
+  );
+  assert.equal(
+    markProcessedEmailsPanelRead({ category: "important", mailboxId: targetMailbox }).updatedCount,
+    0
+  );
 });
 test("delivery identity is unique per email and channel", () => {
   const emailId = `email-delivery-${process.pid}`;

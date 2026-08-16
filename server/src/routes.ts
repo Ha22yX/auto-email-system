@@ -17,6 +17,7 @@ import {
   publicQqBotSettings,
   getDashboardData,
   getProcessedEmailById,
+  markProcessedEmailsPanelRead,
   queryProcessedEmails,
   readMailboxes,
   readProcessingRuns,
@@ -202,6 +203,11 @@ function currentNotificationSettingsResponse() {
 }
 const panelReadSchema = z.object({
   panelRead: z.coerce.boolean()
+});
+
+const bulkPanelReadSchema = z.object({
+  category: z.enum(["important", "secondary", "ignore"]),
+  mailboxId: z.string().trim().min(1).default("all")
 });
 
 const loginSchema = z.object({
@@ -786,6 +792,18 @@ router.get(
   })
 );
 
+router.patch(
+  "/emails/read-state",
+  asyncRoute((req, res) => {
+    const parsed = bulkPanelReadSchema.parse(req.body);
+    res.json(
+      markProcessedEmailsPanelRead({
+        category: parsed.category,
+        mailboxId: parsed.mailboxId
+      })
+    );
+  })
+);
 router.patch(
   "/emails/:id/read-state",
   asyncRoute((req, res) => {

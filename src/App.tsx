@@ -363,6 +363,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [bulkReadBusy, setBulkReadBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [detailWidth, setDetailWidth] = useState(720);
   const [contextMenu, setContextMenu] = useState<EmailContextMenu | null>(null);
@@ -676,6 +677,54 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     [applyEmailReadState, detail, patchEmailReadState, scheduleDashboardRefresh]
   );
 
+  async function markCurrentCategoryRead() {
+    const unreadCount = dashboard?.unreadCounts?.[activeCategory] ?? 0;
+    if (!unreadCount || bulkReadBusy) return;
+
+    const optimisticReadAt = new Date().toISOString();
+    setBulkReadBusy(true);
+    setEmails((current) =>
+      current.map((email) =>
+        email.panelRead ? email : { ...email, panelRead: true, panelReadAt: optimisticReadAt }
+      )
+    );
+    setDetail((current) =>
+      current && !current.panelRead
+        ? { ...current, panelRead: true, panelReadAt: optimisticReadAt }
+        : current
+    );
+    setDashboard((current) =>
+      current
+        ? {
+            ...current,
+            unreadCounts: {
+              ...current.unreadCounts,
+              [activeCategory]: 0
+            }
+          }
+        : current
+    );
+
+    try {
+      const result = await api.markEmailsRead(activeCategory, selectedMailbox);
+      setToast(
+        result.updatedCount > 0
+          ? "已将当前" +
+              categoryMeta[activeCategory].label +
+              "分类中的 " +
+              result.updatedCount +
+              " 封邮件标记为系统已读"
+          : "当前分类没有未读邮件"
+      );
+      await loadDashboard();
+    } catch (error) {
+      await Promise.allSettled([loadDashboard(), loadEmails(true)]);
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBulkReadBusy(false);
+    }
+  }
+
   const openEmailContextMenu = useCallback((event: ReactMouseEvent<HTMLButtonElement>, email: EmailListItem) => {
     event.preventDefault();
     setSelectedEmailId(email.id);
@@ -978,14 +1027,29 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                   <h2>{categoryMeta[activeCategory].label}邮件</h2>
                   <p>{categoryMeta[activeCategory].helper}</p>
                 </div>
-                <label className="search-box">
-                  <MagnifyingGlass size={18} />
-                  <input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="搜索主题、发件人、中文概况"
-                  />
-                </label>
+                <div className="list-toolbar-actions">
+                  <button
+                    type="button"
+                    className="ghost-button mark-all-read-button"
+                    disabled={bulkReadBusy || (dashboard?.unreadCounts?.[activeCategory] ?? 0) === 0}
+                    onClick={() => void markCurrentCategoryRead()}
+                    title={"将当前邮箱的" + categoryMeta[activeCategory].label + "邮件全部标记为系统已读"}
+                  >
+                    <CheckCircle size={18} weight="duotone" />
+                    <span>{bulkReadBusy ? "标记中..." : "全部已读"}</span>
+                    {(dashboard?.unreadCounts?.[activeCategory] ?? 0) > 0 && (
+                      <em>{dashboard?.unreadCounts?.[activeCategory]}</em>
+                    )}
+                  </button>
+                  <label className="search-box">
+                    <MagnifyingGlass size={18} />
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="搜索主题、发件人、中文概况"
+                    />
+                  </label>
+                </div>
               </div>
 
               {!loading && emailTotal > 0 && (

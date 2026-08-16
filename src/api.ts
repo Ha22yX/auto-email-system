@@ -82,6 +82,12 @@ export const api = {
   email(id: string) {
     return request<ProcessedEmail>(`/api/emails/${id}`);
   },
+  markEmailsRead(category: MailCategory, mailboxId: string) {
+    return request<{ updatedCount: number; updatedAt: string }>("/api/emails/read-state", {
+      method: "PATCH",
+      body: JSON.stringify({ category, mailboxId })
+    });
+  },
   updateEmailReadState(id: string, panelRead: boolean) {
     return request<ProcessedEmail>(`/api/emails/${id}/read-state`, {
       method: "PATCH",
