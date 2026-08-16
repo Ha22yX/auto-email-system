@@ -9,6 +9,7 @@ type IdleWatcher = {
   fingerprint: string;
   client?: ImapFlow;
   stopped: boolean;
+  connecting: boolean;
   reconnectAttempts: number;
   reconnectTimer?: ReturnType<typeof setTimeout>;
   debounceTimer?: ReturnType<typeof setTimeout>;
@@ -61,9 +62,8 @@ async function closeWatcher(watcher: IdleWatcher) {
   }
 }
 
-function scheduleMailboxScan(watcher: IdleWatcher, delayMs = 5000) {
-  if (watcher.stopped) return;
-  if (watcher.debounceTimer) clearTimeout(watcher.debounceTimer);
+function scheduleMailboxScan(watcher: IdleWatcher, delayMs = 500) {
+  if (watcher.stopped || watcher.debounceTimer) return;
   watcher.debounceTimer = setTimeout(() => {
     watcher.debounceTimer = undefined;
     requestMailboxProcessing(watcher.mailboxId, 0);
@@ -71,21 +71,45 @@ function scheduleMailboxScan(watcher: IdleWatcher, delayMs = 5000) {
 }
 
 function scheduleReconnect(watcher: IdleWatcher, reason: string) {
-  if (watcher.stopped) return;
+  if (watcher.stopped || watcher.reconnectTimer) return;
   const delayMs = Math.min(60000, 5000 * Math.max(1, watcher.reconnectAttempts + 1));
   watcher.reconnectAttempts += 1;
   updateMailboxSync(watcher.mailboxId, {
     lastError: `IMAP 实时监听中断，${Math.round(delayMs / 1000)} 秒后重连。${reason}`
   });
-  if (watcher.reconnectTimer) clearTimeout(watcher.reconnectTimer);
   watcher.reconnectTimer = setTimeout(() => {
     watcher.reconnectTimer = undefined;
     void connectWatcher(watcher);
   }, delayMs);
 }
 
+function reconnectClient(watcher: IdleWatcher, client: ImapFlow, reason: string) {
+  if (watcher.stopped || watcher.client !== client) return;
+  watcher.client = undefined;
+  try {
+    client.close();
+  } catch {
+    // The connection may already be closed.
+  }
+  scheduleReconnect(watcher, reason);
+}
+
+function maintainIdle(watcher: IdleWatcher, client: ImapFlow) {
+  void (async () => {
+    while (!watcher.stopped && watcher.client === client && client.usable) {
+      try {
+        await client.idle();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reconnectClient(watcher, client, `IDLE 中断：${message}`);
+        return;
+      }
+    }
+  })();
+}
+
 async function connectWatcher(watcher: IdleWatcher) {
-  if (watcher.stopped) return;
+  if (watcher.stopped || watcher.connecting || watcher.client?.usable) return;
 
   const mailbox = readMailboxes().find((item) => item.id === watcher.mailboxId);
   if (!mailbox || !mailbox.enabled || mailbox.protocol !== "imap") {
@@ -94,6 +118,7 @@ async function connectWatcher(watcher: IdleWatcher) {
     return;
   }
 
+  watcher.connecting = true;
   try {
     const client = createImapClient(mailbox, {
       socketTimeout: 8 * 60 * 1000,
@@ -103,21 +128,23 @@ async function connectWatcher(watcher: IdleWatcher) {
     watcher.client = client;
 
     client.on("exists", (event) => {
+      if (watcher.client !== client) return;
       const count = Number(event.count || 0);
-      const previous = watcher.lastExists ?? 0;
+      const previous = Number(event.prevCount ?? watcher.lastExists ?? 0);
       watcher.lastExists = count;
       if (count > previous) {
-        scheduleMailboxScan(watcher, 3000);
+        scheduleMailboxScan(watcher);
       }
     });
 
     client.on("error", (error) => {
-      if (!watcher.stopped) {
-        updateMailboxSync(watcher.mailboxId, { lastError: `IMAP 实时监听错误：${error.message}` });
-      }
+      if (watcher.stopped || watcher.client !== client) return;
+      updateMailboxSync(watcher.mailboxId, { lastError: `IMAP 实时监听错误：${error.message}` });
+      reconnectClient(watcher, client, error.message);
     });
 
     client.on("close", () => {
+      if (watcher.client !== client) return;
       watcher.client = undefined;
       scheduleReconnect(watcher, "连接已关闭。");
     });
@@ -125,27 +152,36 @@ async function connectWatcher(watcher: IdleWatcher) {
     await client.connect();
     const previousExists = watcher.lastExists;
     const opened = await client.mailboxOpen(mailbox.folder || "INBOX");
+    const unseen = (await client.search({ seen: false }, { uid: true })) || [];
+    if (watcher.stopped || watcher.client !== client) {
+      client.close();
+      return;
+    }
     watcher.lastExists = opened.exists;
     watcher.reconnectAttempts = 0;
     updateMailboxSync(watcher.mailboxId, {
       lastError: ""
     });
 
-    // Catch messages that arrived while reconnecting without creating empty progress runs.
-    if (previousExists !== undefined && opened.exists > previousExists) {
-      requestMailboxProcessing(watcher.mailboxId, 2000);
+    // Catch unread messages that arrived before the first IDLE session or during reconnect.
+    if (unseen.length > 0 || (previousExists !== undefined && opened.exists > previousExists)) {
+      requestMailboxProcessing(watcher.mailboxId, 0);
     }
+    maintainIdle(watcher, client);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (watcher.client) {
+      const client = watcher.client;
+      watcher.client = undefined;
       try {
-        watcher.client.close();
+        client.close();
       } catch {
         // Ignore close errors during failed connect.
       }
-      watcher.client = undefined;
     }
     scheduleReconnect(watcher, message);
+  } finally {
+    watcher.connecting = false;
   }
 }
 
@@ -154,6 +190,7 @@ function startWatcher(mailbox: Mailbox) {
     mailboxId: mailbox.id,
     fingerprint: mailboxFingerprint(mailbox),
     stopped: false,
+    connecting: false,
     reconnectAttempts: 0
   };
   watchers.set(mailbox.id, watcher);
@@ -189,6 +226,10 @@ async function reconcileWatchers() {
     }
     if (existing.fingerprint !== fingerprint) {
       await replaceWatcher(existing, mailbox);
+      continue;
+    }
+    if (!existing.connecting && !existing.reconnectTimer && !existing.client?.usable) {
+      scheduleReconnect(existing, "连接状态不可用。");
     }
   }
 }
