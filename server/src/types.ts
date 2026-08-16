@@ -38,6 +38,16 @@ export type QqNotificationReference = {
   createdAt: string;
 };
 
+export type QqEmailReadAction = {
+  token: string;
+  emailId: string;
+  userOpenId: string;
+  messageId?: string;
+  refIndex?: string;
+  usedAt?: string;
+  createdAt: string;
+};
+
 export type NotificationDeliveryStatus = "pending" | "sending" | "sent" | "retry" | "paused";
 export type NotificationChannel = "wechat" | "qq";
 
@@ -58,6 +68,7 @@ export type QqGatewayState = {
   sessionId?: string;
   resumeUrl?: string;
   sequence?: number;
+  intentMask?: number;
   connectedAt?: string;
   updatedAt: string;
 };

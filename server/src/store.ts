@@ -24,6 +24,7 @@ import type {
   QqBotConfig,
   QqBotSettingsInput,
   QqGatewayState,
+  QqEmailReadAction,
   QqNotificationReference,
   SystemSettings
 } from "./types";
@@ -239,6 +240,24 @@ db.exec([
   "CREATE INDEX IF NOT EXISTS idx_qq_notification_refs_created",
   "  ON qq_notification_refs(createdAt DESC);"
 ].join("\n"));
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS qq_email_read_actions (
+    token TEXT PRIMARY KEY,
+    emailId TEXT NOT NULL,
+    userOpenId TEXT NOT NULL,
+    messageId TEXT,
+    refIndex TEXT,
+    usedAt TEXT,
+    createdAt TEXT NOT NULL,
+    FOREIGN KEY(emailId) REFERENCES emails(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_qq_email_read_actions_user
+    ON qq_email_read_actions(userOpenId, createdAt DESC);
+  CREATE INDEX IF NOT EXISTS idx_qq_email_read_actions_created
+    ON qq_email_read_actions(createdAt DESC);
+`);
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -1317,6 +1336,61 @@ export function findQqNotificationReference(input: {
     if (row) return rowToQqNotificationReference(row);
   }
   return undefined;
+}
+
+function rowToQqEmailReadAction(row: SqlRow): QqEmailReadAction {
+  return {
+    token: String(row.token),
+    emailId: String(row.emailId),
+    userOpenId: String(row.userOpenId),
+    messageId: row.messageId ? String(row.messageId) : undefined,
+    refIndex: row.refIndex ? String(row.refIndex) : undefined,
+    usedAt: row.usedAt ? String(row.usedAt) : undefined,
+    createdAt: String(row.createdAt)
+  };
+}
+
+export function createQqEmailReadAction(input: { emailId: string; userOpenId: string }) {
+  const token = randomUUID().replaceAll("-", "");
+  const action: QqEmailReadAction = {
+    token,
+    emailId: input.emailId,
+    userOpenId: input.userOpenId,
+    createdAt: new Date().toISOString()
+  };
+  db.prepare("DELETE FROM qq_email_read_actions WHERE createdAt < ?").run(
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  );
+  db.prepare(
+    "INSERT INTO qq_email_read_actions (token, emailId, userOpenId, createdAt) VALUES (?, ?, ?, ?)"
+  ).run(action.token, action.emailId, action.userOpenId, action.createdAt);
+  return action;
+}
+
+export function finalizeQqEmailReadAction(
+  token: string,
+  input: { messageId?: string; refIndex?: string }
+) {
+  db.prepare(
+    "UPDATE qq_email_read_actions SET messageId = ?, refIndex = ? WHERE token = ?"
+  ).run(input.messageId ?? null, input.refIndex ?? null, token);
+}
+
+export function deleteQqEmailReadAction(token: string) {
+  db.prepare("DELETE FROM qq_email_read_actions WHERE token = ?").run(token);
+}
+
+export function findQqEmailReadAction(token: string, userOpenId: string) {
+  const row = db.prepare(
+    "SELECT * FROM qq_email_read_actions WHERE token = ? AND userOpenId = ? LIMIT 1"
+  ).get(token, userOpenId) as SqlRow | undefined;
+  return row ? rowToQqEmailReadAction(row) : undefined;
+}
+
+export function markQqEmailReadActionUsed(token: string) {
+  const usedAt = new Date().toISOString();
+  db.prepare("UPDATE qq_email_read_actions SET usedAt = COALESCE(usedAt, ?) WHERE token = ?").run(usedAt, token);
+  return usedAt;
 }
 
 export function rememberQqEvent(eventId: string, expiresAt: string) {

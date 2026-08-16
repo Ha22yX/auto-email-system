@@ -35,6 +35,7 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
   const handled: QqDispatchEvent[] = [];
   const sent: string[] = [];
   const references: unknown[] = [];
+  const actions: unknown[] = [];
   const statuses: unknown[] = [];
   let bindingReady = 0;
   const manager = new QqManager({
@@ -73,12 +74,25 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
       },
       async sendDirectImage(input) {
         sent.push(input.userOpenId);
+        actions.push({ kind: "image-input", input });
         return { messageId: "test-image", refIndex: "REFIDX_TEST_IMAGE" };
-      }
+      },
+      async acknowledgeInteraction() {}
     },
     recordMessageReference: (input) => {
       references.push(input);
       return { ...input, createdAt: "2026-08-16T00:00:00.000Z" };
+    },
+    createReadAction: (input) => {
+      const action = { ...input, token: "a".repeat(32), createdAt: "2026-08-16T00:00:00.000Z" };
+      actions.push({ kind: "created", action });
+      return action;
+    },
+    finalizeReadAction: (token, input) => {
+      actions.push({ kind: "finalized", token, input });
+    },
+    deleteReadAction: (token) => {
+      actions.push({ kind: "deleted", token });
     },
     onStatus: (status) => statuses.push(status),
     onBindingReady: () => {
@@ -90,6 +104,7 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
     handled,
     sent,
     references,
+    actions,
     statuses,
     emit(event: QqDispatchEvent) {
       dispatchListener?.(event);
@@ -166,4 +181,29 @@ test("sent QQ mail images persist message and ref-index mappings", async () => {
     messageId: "test-image",
     refIndex: "REFIDX_TEST_IMAGE"
   }]);
+  assert.deepEqual(target.actions, [
+    {
+      kind: "created",
+      action: {
+        emailId: "email-42",
+        userOpenId: "abcdefgh12345678",
+        token: "a".repeat(32),
+        createdAt: "2026-08-16T00:00:00.000Z"
+      }
+    },
+    {
+      kind: "image-input",
+      input: {
+        userOpenId: "abcdefgh12345678",
+        image: Buffer.from("mail-card"),
+        fileName: "mail-summary.png",
+        readActionToken: "a".repeat(32)
+      }
+    },
+    {
+      kind: "finalized",
+      token: "a".repeat(32),
+      input: { messageId: "test-image", refIndex: "REFIDX_TEST_IMAGE" }
+    }
+  ]);
 });

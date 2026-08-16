@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { QqGateway, type QqGatewaySocket, type QqGatewayTimers } from "./gateway";
+import { QQ_GATEWAY_INTENTS, QqGateway, type QqGatewaySocket, type QqGatewayTimers } from "./gateway";
 import type { QqGatewayState } from "../types";
 
 type TimerTask = { at: number; callback: () => void };
@@ -115,7 +115,7 @@ async function flushAsync() {
   await Promise.resolve();
 }
 
-test("Hello identifies with the official QQBot token and only GROUP_AND_C2C_EVENT", async (t) => {
+test("Hello identifies with C2C and interaction event intents", async (t) => {
   const harness = createHarness();
   t.after(() => harness.gateway.stop());
 
@@ -128,7 +128,7 @@ test("Hello identifies with the official QQBot token and only GROUP_AND_C2C_EVEN
     op: 2,
     d: {
       token: "QQBot fake-access-token",
-      intents: 1 << 25,
+      intents: (1 << 25) | (1 << 26),
       shard: [0, 1],
       properties: { $os: process.platform, $browser: "auto-email-system", $device: "auto-email-system" }
     }
@@ -151,7 +151,12 @@ test("heartbeats use the latest valid dispatch sequence and ACKs update status",
   socket.serverSend({ op: 0, s: 7, t: "READY", id: "event-ready", d: { session_id: "session-1" } });
   socket.serverSend({ op: 0, s: "bad", t: "C2C_MESSAGE_CREATE", d: { id: "must-not-persist" } });
 
-  assert.deepEqual(harness.writes, [{ sessionId: "session-1", sequence: 7, connectedAt: new Date(0).toISOString() }]);
+  assert.deepEqual(harness.writes, [{
+    sessionId: "session-1",
+    sequence: 7,
+    intentMask: QQ_GATEWAY_INTENTS,
+    connectedAt: new Date(0).toISOString()
+  }]);
   assert.deepEqual(dispatches, [
     { id: "event-ready", type: "READY", sequence: 7, data: { session_id: "session-1" } }
   ]);
@@ -189,7 +194,7 @@ test("a missing heartbeat ACK closes the socket and reconnects for Resume", asyn
 
 test("persisted sessions Resume and invalid sessions clear state before Identify", async (t) => {
   const harness = createHarness({
-    state: { sessionId: "persisted-session", sequence: 21, updatedAt: "2026-08-16T00:00:00.000Z" }
+    state: { sessionId: "persisted-session", sequence: 21, intentMask: QQ_GATEWAY_INTENTS, updatedAt: "2026-08-16T00:00:00.000Z" }
   });
   t.after(() => harness.gateway.stop());
 
@@ -208,9 +213,21 @@ test("persisted sessions Resume and invalid sessions clear state before Identify
   assert.equal(harness.gateway.status().state, "identifying");
 });
 
+test("persisted sessions with stale intents establish a fresh identified session", async (t) => {
+  const harness = createHarness({
+    state: { sessionId: "legacy-session", sequence: 22, intentMask: 1 << 25, updatedAt: "2026-08-16T00:00:00.000Z" }
+  });
+  t.after(() => harness.gateway.stop());
+
+  await harness.gateway.start();
+  const socket = harness.sockets[0];
+  socket.serverSend({ op: 10, d: { heartbeat_interval: 100 } });
+  assert.equal(socket.sent[0].op, 2);
+  assert.equal((socket.sent[0].d as Record<string, unknown>).intents, QQ_GATEWAY_INTENTS);
+});
 test("close code 4006 clears an invalid session before reconnecting with Identify", async (t) => {
   const harness = createHarness({
-    state: { sessionId: "invalid-session", sequence: 31, updatedAt: "2026-08-16T00:00:00.000Z" }
+    state: { sessionId: "invalid-session", sequence: 31, intentMask: QQ_GATEWAY_INTENTS, updatedAt: "2026-08-16T00:00:00.000Z" }
   });
   t.after(() => harness.gateway.stop());
 
@@ -232,7 +249,7 @@ test("close code 4006 clears an invalid session before reconnecting with Identif
 test("expired Resume close codes clear the saved session before reconnecting with Identify", async () => {
   for (const closeCode of [4007, 4009]) {
     const harness = createHarness({
-      state: { sessionId: `expired-${closeCode}`, sequence: 41, updatedAt: "2026-08-16T00:00:00.000Z" }
+      state: { sessionId: `expired-${closeCode}`, sequence: 41, intentMask: QQ_GATEWAY_INTENTS, updatedAt: "2026-08-16T00:00:00.000Z" }
     });
 
     await harness.gateway.start();
@@ -254,7 +271,7 @@ test("expired Resume close codes clear the saved session before reconnecting wit
 
 test("a Resume handshake timeout discards the stale session and falls back to Identify", async (t) => {
   const harness = createHarness({
-    state: { sessionId: "stalled-session", sequence: 51, updatedAt: "2026-08-16T00:00:00.000Z" },
+    state: { sessionId: "stalled-session", sequence: 51, intentMask: QQ_GATEWAY_INTENTS, updatedAt: "2026-08-16T00:00:00.000Z" },
     handshakeTimeoutMs: 250
   });
   t.after(() => harness.gateway.stop());

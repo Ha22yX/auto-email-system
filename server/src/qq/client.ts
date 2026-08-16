@@ -97,6 +97,20 @@ export class QqClient {
     return this.withTokenRefresh((token) => this.sendImageWithToken(input, token));
   }
 
+  async acknowledgeInteraction(interactionId: string): Promise<void> {
+    if (!interactionId.trim()) {
+      throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_interaction_id" });
+    }
+    await this.withTokenRefresh(async (token) => {
+      await this.requestJson(
+        `${QQ_API_ORIGIN}/interactions/${encodeURIComponent(interactionId)}`,
+        { code: 0 },
+        token,
+        "PUT"
+      );
+    });
+  }
+
   private async withTokenRefresh<T>(operation: (token: string) => Promise<T>): Promise<T> {
     const token = await this.tokenProvider.getToken();
     try {
@@ -111,13 +125,13 @@ export class QqClient {
     return operation(refreshedToken);
   }
 
-  private async requestJson(url: string, payload: Record<string, unknown>, token: string) {
+  private async requestJson(url: string, payload: Record<string, unknown>, token: string, method = "POST") {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     let response: Response;
     try {
       response = await this.fetch(url, {
-        method: "POST",
+        method,
         headers: { authorization: `QQBot ${token}`, "content-type": "application/json" },
         body: JSON.stringify(payload),
         signal: controller.signal
@@ -143,6 +157,7 @@ export class QqClient {
   private async sendTextWithToken(input: QqDirectMessageInput, token: string): Promise<QqSendResult> {
     const payload: Record<string, unknown> = { content: input.content, msg_type: 0 };
     if (input.msgId) payload.msg_id = input.msgId;
+    if (input.messageReferenceId) payload.message_reference = { message_id: input.messageReferenceId };
     const body = await this.requestJson(`${QQ_API_ORIGIN}/v2/users/${encodeURIComponent(input.userOpenId)}/messages`, payload, token);
     return this.sendResult(body);
   }
@@ -160,11 +175,31 @@ export class QqClient {
       throw new QqApiError({ kind: "invalid_request", status: 0, code: "missing_file_info", message: "QQ media upload returned no file_info" });
     }
     this.messageSequence = (this.messageSequence % 10_000) + 1;
-    const body = await this.requestJson(`${base}/messages`, {
+    const messagePayload: Record<string, unknown> = {
       msg_type: 7,
       msg_seq: this.messageSequence,
       media: { file_info: fileInfo }
-    }, token);
+    };
+    if (input.readActionToken) {
+      messagePayload.keyboard = {
+        content: {
+          rows: [{
+            buttons: [{
+              id: "mail-read",
+              render_data: { label: "标记为已阅", visited_label: "已标记为已阅", style: 1 },
+              action: {
+                type: 1,
+                permission: { type: 2 },
+                data: `mail-read:${input.readActionToken}`,
+                click_limit: 1
+              },
+              group_id: "mail-read"
+            }]
+          }]
+        }
+      };
+    }
+    const body = await this.requestJson(`${base}/messages`, messagePayload, token);
     return this.sendResult(body);
   }
 

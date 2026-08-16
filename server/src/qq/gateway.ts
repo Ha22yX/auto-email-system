@@ -11,6 +11,8 @@ import {
 
 export const QQ_GATEWAY_URL = "wss://api.bot.qq.com/websocket/";
 export const QQ_GROUP_AND_C2C_EVENT_INTENT = 1 << 25;
+export const QQ_INTERACTION_EVENT_INTENT = 1 << 26;
+export const QQ_GATEWAY_INTENTS = QQ_GROUP_AND_C2C_EVENT_INTENT | QQ_INTERACTION_EVENT_INTENT;
 
 export const QQ_OP = {
   DISPATCH: 0,
@@ -99,8 +101,8 @@ function parseFrame(raw: unknown): GatewayFrame | undefined {
 }
 
 function normalizeStoredState(state: QqGatewayState | undefined): Omit<QqGatewayState, "updatedAt"> {
-  if (!state) return {};
-  const normalized: Omit<QqGatewayState, "updatedAt"> = {};
+  if (!state || state.intentMask !== QQ_GATEWAY_INTENTS) return {};
+  const normalized: Omit<QqGatewayState, "updatedAt"> = { intentMask: QQ_GATEWAY_INTENTS };
   if (typeof state.sessionId === "string" && state.sessionId.length > 0) normalized.sessionId = state.sessionId;
   if (typeof state.resumeUrl === "string" && state.resumeUrl.length > 0) normalized.resumeUrl = state.resumeUrl;
   if (Number.isInteger(state.sequence) && Number(state.sequence) >= 0) normalized.sequence = state.sequence;
@@ -345,7 +347,7 @@ export class QqGateway {
       op: QQ_OP.IDENTIFY,
       d: {
         token: `QQBot ${this.token}`,
-        intents: QQ_GROUP_AND_C2C_EVENT_INTENT,
+        intents: QQ_GATEWAY_INTENTS,
         shard: [0, 1],
         properties: { $os: process.platform, $browser: "auto-email-system", $device: "auto-email-system" }
       }
@@ -374,7 +376,11 @@ export class QqGateway {
     const event = normalizeDispatch(frame);
     if (!event) return;
 
-    const next: Omit<QqGatewayState, "updatedAt"> = { ...this.session, sequence: event.sequence };
+    const next: Omit<QqGatewayState, "updatedAt"> = {
+      ...this.session,
+      sequence: event.sequence,
+      intentMask: QQ_GATEWAY_INTENTS
+    };
     if (event.type === "READY") {
       next.sessionId = String(event.data.session_id);
       next.connectedAt = this.isoNow();

@@ -231,7 +231,8 @@ test("direct images use the official rich-media upload and media message flow", 
   assert.deepEqual(await client.sendDirectImage({
     userOpenId: "user-openid",
     image,
-    fileName: "mail-summary.png"
+    fileName: "mail-summary.png",
+    readActionToken: "a".repeat(32)
   }), { messageId: "image-message", refIndex: "REFIDX_IMAGE" });
 
   assert.equal(fake.calls[0].url, "https://api.bot.qq.com/v2/users/user-openid/files");
@@ -245,7 +246,48 @@ test("direct images use the official rich-media upload and media message flow", 
   assert.deepEqual(JSON.parse(String(fake.calls[1].init?.body)), {
     msg_type: 7,
     msg_seq: 1,
-    media: { file_info: "uploaded-file-reference" }
+    media: { file_info: "uploaded-file-reference" },
+    keyboard: {
+      content: {
+        rows: [{
+          buttons: [{
+            id: "mail-read",
+            render_data: { label: "标记为已阅", visited_label: "已标记为已阅", style: 1 },
+            action: {
+              type: 1,
+              permission: { type: 2 },
+              data: `mail-read:${"a".repeat(32)}`,
+              click_limit: 1
+            },
+            group_id: "mail-read"
+          }]
+        }]
+      }
+    }
+  });
+});
+
+test("interaction ACK uses PUT and confirmations can reference the original image", async () => {
+  const fake = createMessageFetch([
+    new Response(null, { status: 204 }),
+    new Response(JSON.stringify({ id: "confirmation-message" }), { status: 200 })
+  ]);
+  const client = createQqClient({ fetch: fake.fetch, tokenProvider: createTokenProvider() });
+
+  await client.acknowledgeInteraction("interaction-1");
+  await client.sendDirectMessage({
+    userOpenId: "user-openid",
+    content: "已标记为系统已读。",
+    messageReferenceId: "image-message"
+  });
+
+  assert.equal(fake.calls[0].url, "https://api.bot.qq.com/interactions/interaction-1");
+  assert.equal(fake.calls[0].init?.method, "PUT");
+  assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), { code: 0 });
+  assert.deepEqual(JSON.parse(String(fake.calls[1].init?.body)), {
+    content: "已标记为系统已读。",
+    msg_type: 0,
+    message_reference: { message_id: "image-message" }
   });
 });
 

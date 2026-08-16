@@ -1,11 +1,15 @@
 import { publishAppEvent } from "../events";
 import {
+  createQqEmailReadAction,
+  deleteQqEmailReadAction,
+  finalizeQqEmailReadAction,
   readQqBotConfig,
   recordQqNotificationReference,
   resumePausedNotificationDeliveries
 } from "../store";
 import type { QqBotBinding, QqBotConfig } from "../types";
 import { createQqBindingService, type QqBindingChallenge, type QqBindingService } from "./binding";
+import { createQqButtonReadService, type QqButtonReadService } from "./button-read";
 import { createQqClient } from "./client";
 import { createTokenProvider } from "./credentials";
 import { createQqGateway } from "./gateway";
@@ -32,10 +36,12 @@ type QqManagerBindingService = Pick<
 >;
 
 type QqManagerQuoteReadService = Pick<QqQuoteReadService, "handleDispatchEvent">;
+type QqManagerButtonReadService = Pick<QqButtonReadService, "handleDispatchEvent">;
 
 type QqManagerClient = {
   sendDirectMessage(input: QqDirectMessageInput): Promise<QqSendResult>;
   sendDirectImage(input: QqDirectImageInput): Promise<QqSendResult>;
+  acknowledgeInteraction(interactionId: string): Promise<void>;
 };
 
 export type QqManagerDependencies = {
@@ -43,8 +49,12 @@ export type QqManagerDependencies = {
   gateway?: QqManagerGateway;
   bindingService?: QqManagerBindingService;
   quoteReadService?: QqManagerQuoteReadService;
+  buttonReadService?: QqManagerButtonReadService;
   client?: QqManagerClient;
   recordMessageReference?: typeof recordQqNotificationReference;
+  createReadAction?: typeof createQqEmailReadAction;
+  finalizeReadAction?: typeof finalizeQqEmailReadAction;
+  deleteReadAction?: typeof deleteQqEmailReadAction;
   onStatus?: (status: QqBotPublicStatus) => void;
   onBindingReady?: () => void;
 };
@@ -74,8 +84,12 @@ export class QqManager {
   private readonly gateway: QqManagerGateway;
   private readonly bindingService: QqManagerBindingService;
   private readonly quoteReadService: QqManagerQuoteReadService;
+  private readonly buttonReadService: QqManagerButtonReadService;
   private readonly client: QqManagerClient;
   private readonly recordMessageReference: typeof recordQqNotificationReference;
+  private readonly createReadAction: typeof createQqEmailReadAction;
+  private readonly finalizeReadAction: typeof finalizeQqEmailReadAction;
+  private readonly deleteReadAction: typeof deleteQqEmailReadAction;
   private readonly onStatusChange?: (status: QqBotPublicStatus) => void;
   private readonly onBindingReady?: () => void;
   private started = false;
@@ -93,7 +107,14 @@ export class QqManager {
       readBinding: () => this.bindingService.readBinding(),
       client: this.client
     });
+    this.buttonReadService = dependencies.buttonReadService ?? createQqButtonReadService({
+      readBinding: () => this.bindingService.readBinding(),
+      client: this.client
+    });
     this.recordMessageReference = dependencies.recordMessageReference ?? recordQqNotificationReference;
+    this.createReadAction = dependencies.createReadAction ?? createQqEmailReadAction;
+    this.finalizeReadAction = dependencies.finalizeReadAction ?? finalizeQqEmailReadAction;
+    this.deleteReadAction = dependencies.deleteReadAction ?? deleteQqEmailReadAction;
     this.onStatusChange = dependencies.onStatus;
     this.onBindingReady = dependencies.onBindingReady;
   }
@@ -154,11 +175,29 @@ export class QqManager {
   async sendImageNotification(image: Buffer, emailId?: string) {
     const binding = this.bindingService.readBinding();
     if (!binding) throw new Error("QQ notification recipient is not bound");
-    const result = await this.client.sendDirectImage({
-      userOpenId: binding.userOpenId,
-      image,
-      fileName: "mail-summary.png"
-    });
+    const action = emailId ? this.createReadAction({ emailId, userOpenId: binding.userOpenId }) : undefined;
+    let result: QqSendResult;
+    try {
+      result = await this.client.sendDirectImage({
+        userOpenId: binding.userOpenId,
+        image,
+        fileName: "mail-summary.png",
+        ...(action ? { readActionToken: action.token } : {})
+      });
+    } catch (error) {
+      if (action) this.deleteReadAction(action.token);
+      throw error;
+    }
+    if (action) {
+      try {
+        this.finalizeReadAction(action.token, {
+          messageId: result.messageId,
+          refIndex: result.refIndex
+        });
+      } catch {
+        // The image was delivered; action mapping failure must not trigger a duplicate notification retry.
+      }
+    }
     if (emailId && (result.messageId || result.refIndex)) {
       try {
         this.recordMessageReference({
@@ -197,7 +236,10 @@ export class QqManager {
     try {
       const result = await this.bindingService.handleDispatchEvent(event);
       if (result.kind === "bound" || result.kind === "capability") this.onBindingReady?.();
-      if (result.kind !== "duplicate") await this.quoteReadService.handleDispatchEvent(event);
+      if (result.kind !== "duplicate") {
+        await this.buttonReadService.handleDispatchEvent(event);
+        await this.quoteReadService.handleDispatchEvent(event);
+      }
     } finally {
       this.publishStatus();
     }

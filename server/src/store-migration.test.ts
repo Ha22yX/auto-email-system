@@ -134,7 +134,7 @@ test("schema-v1 migration creates durable channel state idempotently", () => {
   assert.deepEqual(first.afterEnqueue, first.beforeEnqueue);
   assert.equal(first.uniqueDeliveryIndex, true);
   assert.deepEqual(
-    ["credentials", "qq_state", "qq_event_dedupe", "notification_deliveries", "qq_notification_refs"].every((table) => first.tableNames.includes(table)),
+    ["credentials", "qq_state", "qq_event_dedupe", "notification_deliveries", "qq_notification_refs", "qq_email_read_actions"].every((table) => first.tableNames.includes(table)),
     true
   );
   assert.deepEqual(
