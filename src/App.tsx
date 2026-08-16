@@ -34,6 +34,7 @@ import {
 import DOMPurify from "dompurify";
 import QRCode from "qrcode";
 import { api } from "./api";
+import { parseEmailReadStateEvent } from "./app-events";
 import { QqNotificationPanel } from "./QqNotificationPanel";
 import {
   AI_PROVIDER_PRESETS,
@@ -657,6 +658,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
         detail?.id === id ? { panelRead: detail.panelRead, panelReadAt: detail.panelReadAt } : undefined;
       let requestIsCurrent = false;
 
+      emailRequestSeqRef.current += 1;
       patchEmailReadState(id, buildOptimisticPanelReadPatch(panelRead));
 
       try {
@@ -914,6 +916,10 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
     const scheduleRefresh = (event: MessageEvent<string>) => {
       if (closed) return;
+      const readState = parseEmailReadStateEvent(event.data);
+      if (readState) {
+        patchEmailReadState(readState.id, readState);
+      }
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
         void loadDashboard().catch(() => undefined);
@@ -946,7 +952,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
       source.removeEventListener("app", scheduleRefresh);
       source.close();
     };
-  }, [loadDashboard, loadEmails, selectedEmailId, view]);
+  }, [loadDashboard, loadEmails, patchEmailReadState, selectedEmailId, view]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {

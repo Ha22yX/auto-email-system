@@ -821,7 +821,13 @@ export function updateProcessedEmailPanelRead(id: string, panelRead: boolean) {
   email.panelRead = panelRead;
   email.panelReadAt = panelRead ? new Date().toISOString() : undefined;
   insertEmail(email);
-  publishAppEvent("email", { id, mailboxId: email.mailboxId, category: email.category });
+  publishAppEvent("email-read-state", {
+    id,
+    mailboxId: email.mailboxId,
+    category: email.category,
+    panelRead: email.panelRead,
+    panelReadAt: email.panelReadAt
+  });
   return email;
 }
 
