@@ -4,6 +4,7 @@ import {
   QqApiError,
   type QqApiErrorKind,
   type QqDirectImageInput,
+  type QqDirectMarkdownImageInput,
   type QqDirectMessageInput,
   type QqSendResult,
   type QqTokenProviderLike
@@ -27,6 +28,16 @@ function readErrorCode(body: QqResponseBody): string | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value)) return value;
   return undefined;
+}
+
+function readErrorMessage(body: QqResponseBody) {
+  const value = body?.message ?? body?.errmsg;
+  if (typeof value !== "string") return undefined;
+  const compact = value
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[A-Za-z0-9_=-]{24,}/g, "[redacted]")
+    .trim();
+  return compact ? compact.slice(0, 160) : undefined;
 }
 
 const AUTHENTICATION_ERROR_CODES = new Set(["11241", "11243"]);
@@ -97,6 +108,19 @@ export class QqClient {
     return this.withTokenRefresh((token) => this.sendImageWithToken(input, token));
   }
 
+  async sendDirectMarkdownImage(input: QqDirectMarkdownImageInput): Promise<QqSendResult> {
+    let imageUrl: URL;
+    try {
+      imageUrl = new URL(input.imageUrl);
+    } catch {
+      throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_markdown_image" });
+    }
+    if (!input.userOpenId.trim() || imageUrl.protocol !== "https:" || !/^[A-Fa-f0-9]{32}$/.test(input.readActionToken)) {
+      throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_markdown_image" });
+    }
+    return this.withTokenRefresh((token) => this.sendMarkdownImageWithToken(input, token));
+  }
+
   async acknowledgeInteraction(interactionId: string): Promise<void> {
     if (!interactionId.trim()) {
       throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_interaction_id" });
@@ -148,6 +172,7 @@ export class QqClient {
         kind: errorKindFor(response.status, code),
         status: response.status,
         code,
+        message: readErrorMessage(body),
         retryAfterMs: response.status === 429 ? parseRetryAfterMs(response.headers, this.now()) : undefined
       });
     }
@@ -155,7 +180,12 @@ export class QqClient {
   }
 
   private async sendTextWithToken(input: QqDirectMessageInput, token: string): Promise<QqSendResult> {
-    const payload: Record<string, unknown> = { content: input.content, msg_type: 0 };
+    this.messageSequence = (this.messageSequence % 10_000) + 1;
+    const payload: Record<string, unknown> = {
+      content: input.content,
+      msg_type: 0,
+      msg_seq: this.messageSequence
+    };
     if (input.msgId) payload.msg_id = input.msgId;
     if (input.messageReferenceId) payload.message_reference = { message_id: input.messageReferenceId };
     const body = await this.requestJson(`${QQ_API_ORIGIN}/v2/users/${encodeURIComponent(input.userOpenId)}/messages`, payload, token);
@@ -180,27 +210,45 @@ export class QqClient {
       msg_seq: this.messageSequence,
       media: { file_info: fileInfo }
     };
-    if (input.readActionToken) {
-      messagePayload.keyboard = {
-        content: {
-          rows: [{
-            buttons: [{
-              id: "mail-read",
-              render_data: { label: "标记为已阅", visited_label: "已标记为已阅", style: 1 },
-              action: {
-                type: 1,
-                permission: { type: 2 },
-                data: `mail-read:${input.readActionToken}`,
-                click_limit: 1
-              },
-              group_id: "mail-read"
-            }]
-          }]
-        }
-      };
-    }
+
     const body = await this.requestJson(`${base}/messages`, messagePayload, token);
     return this.sendResult(body);
+  }
+
+  private async sendMarkdownImageWithToken(input: QqDirectMarkdownImageInput, token: string): Promise<QqSendResult> {
+    this.messageSequence = (this.messageSequence % 10_000) + 1;
+    const payload: Record<string, unknown> = {
+      markdown: { content: `![邮件通知](${input.imageUrl})` },
+      msg_type: 2,
+      msg_seq: this.messageSequence,
+      keyboard: this.readActionKeyboard(input.readActionToken)
+    };
+    const body = await this.requestJson(
+      `${QQ_API_ORIGIN}/v2/users/${encodeURIComponent(input.userOpenId)}/messages`,
+      payload,
+      token
+    );
+    return this.sendResult(body);
+  }
+
+  private readActionKeyboard(token: string) {
+    return {
+      content: {
+        rows: [{
+          buttons: [{
+            id: "mail-read",
+            render_data: { label: "标记为已阅", visited_label: "已标记为已阅", style: 1 },
+            action: {
+              type: 1,
+              permission: { type: 2 },
+              data: `mail-read:${token}`,
+              click_limit: 1
+            },
+            group_id: "mail-read"
+          }]
+        }]
+      }
+    };
   }
 
   private sendResult(body: QqResponseBody): QqSendResult {

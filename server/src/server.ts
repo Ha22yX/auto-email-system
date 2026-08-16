@@ -12,6 +12,10 @@ import {
 import { schedulePendingEmailNotificationRetry } from "./notifications/pending";
 import { startQqManager, stopQqManager } from "./qq/manager";
 import {
+  startQqMarkdownAssetCleanupWorker,
+  stopQqMarkdownAssetCleanupWorker
+} from "./qq/markdown-assets";
+import {
   defaultWeclawApiUrl,
   ensureWeclawStarted,
   setWeclawContextReadyHandler,
@@ -62,6 +66,7 @@ const httpServer = app.listen(port, () => {
   startProcessingWorker({ recoverInterruptedOnFirstRun: interruptedCount > 0 || retryInterruptedRecovery });
   startImapIdleWatchers();
   startWeclawTokenReminderWorker();
+  startQqMarkdownAssetCleanupWorker();
   void startQqManager().catch(() => {
     console.warn("QQ notification Gateway failed to start; mail processing remains available.");
   });
@@ -76,6 +81,7 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   console.log("Received " + signal + "; stopping notification workers.");
   stopNotificationDispatcher();
+  stopQqMarkdownAssetCleanupWorker();
   await stopQqManager().catch(() => undefined);
 
   const forceExit = setTimeout(() => process.exit(1), 10_000);

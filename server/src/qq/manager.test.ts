@@ -77,6 +77,11 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
         actions.push({ kind: "image-input", input });
         return { messageId: "test-image", refIndex: "REFIDX_TEST_IMAGE" };
       },
+      async sendDirectMarkdownImage(input) {
+        sent.push(input.userOpenId);
+        actions.push({ kind: "markdown-input", input });
+        return { messageId: "test-markdown", refIndex: "REFIDX_TEST_MARKDOWN" };
+      },
       async acknowledgeInteraction() {}
     },
     recordMessageReference: (input) => {
@@ -93,6 +98,18 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
     },
     deleteReadAction: (token) => {
       actions.push({ kind: "deleted", token });
+    },
+    createMarkdownAsset: () => {
+      const asset = {
+        token: "asset-token-12345678901234567890",
+        expires: 1_790_000_000,
+        url: "https://mail.example.com/api/qq-assets/asset-token-12345678901234567890.png?expires=1790000000&signature=signed"
+      };
+      actions.push({ kind: "markdown-asset", asset });
+      return asset;
+    },
+    removeMarkdownAsset: (token) => {
+      actions.push({ kind: "asset-removed", token });
     },
     onStatus: (status) => statuses.push(status),
     onBindingReady: () => {
@@ -174,12 +191,12 @@ test("test notification targets the stored openid and stop is idempotent", async
 test("sent QQ mail images persist message and ref-index mappings", async () => {
   const target = harness({ currentBinding: binding() });
   const result = await target.manager.sendImageNotification(Buffer.from("mail-card"), "email-42");
-  assert.deepEqual(result, { messageId: "test-image", refIndex: "REFIDX_TEST_IMAGE" });
+  assert.deepEqual(result, { messageId: "test-markdown", refIndex: "REFIDX_TEST_MARKDOWN" });
   assert.deepEqual(target.references, [{
     emailId: "email-42",
     userOpenId: "abcdefgh12345678",
-    messageId: "test-image",
-    refIndex: "REFIDX_TEST_IMAGE"
+    messageId: "test-markdown",
+    refIndex: "REFIDX_TEST_MARKDOWN"
   }]);
   assert.deepEqual(target.actions, [
     {
@@ -192,18 +209,25 @@ test("sent QQ mail images persist message and ref-index mappings", async () => {
       }
     },
     {
-      kind: "image-input",
+      kind: "markdown-asset",
+      asset: {
+        token: "asset-token-12345678901234567890",
+        expires: 1_790_000_000,
+        url: "https://mail.example.com/api/qq-assets/asset-token-12345678901234567890.png?expires=1790000000&signature=signed"
+      }
+    },
+    {
+      kind: "markdown-input",
       input: {
         userOpenId: "abcdefgh12345678",
-        image: Buffer.from("mail-card"),
-        fileName: "mail-summary.png",
+        imageUrl: "https://mail.example.com/api/qq-assets/asset-token-12345678901234567890.png?expires=1790000000&signature=signed",
         readActionToken: "a".repeat(32)
       }
     },
     {
       kind: "finalized",
       token: "a".repeat(32),
-      input: { messageId: "test-image", refIndex: "REFIDX_TEST_IMAGE" }
+      input: { messageId: "test-markdown", refIndex: "REFIDX_TEST_MARKDOWN" }
     }
   ]);
 });

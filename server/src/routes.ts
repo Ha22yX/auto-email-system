@@ -46,6 +46,7 @@ import {
   startQqManager,
   stopQqManager
 } from "./qq/manager";
+import { resolveQqMarkdownAsset } from "./qq/markdown-assets";
 import type { QqBotPublicStatus } from "./qq/types";
 import {
   defaultWeclawApiUrl,
@@ -352,6 +353,29 @@ router.get(
   "/health",
   asyncRoute((_req, res) => {
     res.json({ ok: true, processorRunning: isProcessorRunning() });
+  })
+);
+
+router.get(
+  "/qq-assets/:token.png",
+  asyncRoute((req, res) => {
+    const asset = resolveQqMarkdownAsset(
+      String(req.params.token || ""),
+      String(req.query.expires || ""),
+      String(req.query.signature || "")
+    );
+    if (!asset) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("X-Robots-Tag", "noindex, noimageindex, noarchive");
+    res.setHeader(
+      "Cache-Control",
+      `public, max-age=${Math.max(0, asset.expires - Math.floor(Date.now() / 1000))}, immutable`
+    );
+    res.sendFile(asset.file);
   })
 );
 

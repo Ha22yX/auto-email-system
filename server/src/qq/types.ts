@@ -43,7 +43,12 @@ export type QqDirectImageInput = {
   userOpenId: string;
   image: Buffer;
   fileName?: string;
-  readActionToken?: string;
+};
+
+export type QqDirectMarkdownImageInput = {
+  userOpenId: string;
+  imageUrl: string;
+  readActionToken: string;
 };
 
 export type QqSendResult = {

@@ -51,7 +51,7 @@ test("active direct messages omit msg_id and use the official QQ endpoint", asyn
   });
   assert.equal(fake.calls[0].url, "https://api.bot.qq.com/v2/users/user-openid/messages");
   assert.equal(new Headers(fake.calls[0].init?.headers).get("authorization"), "QQBot fake-access-token");
-  assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), { content: "hello", msg_type: 0 });
+  assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), { content: "hello", msg_type: 0, msg_seq: 1 });
 });
 
 test("passive direct messages include the incoming msg_id", async () => {
@@ -63,7 +63,8 @@ test("passive direct messages include the incoming msg_id", async () => {
   assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), {
     content: "bound",
     msg_id: "incoming-message-id",
-    msg_type: 0
+    msg_type: 0,
+    msg_seq: 1
   });
 });
 
@@ -231,8 +232,7 @@ test("direct images use the official rich-media upload and media message flow", 
   assert.deepEqual(await client.sendDirectImage({
     userOpenId: "user-openid",
     image,
-    fileName: "mail-summary.png",
-    readActionToken: "a".repeat(32)
+    fileName: "mail-summary.png"
   }), { messageId: "image-message", refIndex: "REFIDX_IMAGE" });
 
   assert.equal(fake.calls[0].url, "https://api.bot.qq.com/v2/users/user-openid/files");
@@ -246,7 +246,29 @@ test("direct images use the official rich-media upload and media message flow", 
   assert.deepEqual(JSON.parse(String(fake.calls[1].init?.body)), {
     msg_type: 7,
     msg_seq: 1,
-    media: { file_info: "uploaded-file-reference" },
+    media: { file_info: "uploaded-file-reference" }
+
+  });
+});
+
+test("Markdown images and read buttons share one QQ message payload", async () => {
+  const fake = createMessageFetch([
+    new Response(JSON.stringify({ id: "markdown-message", ext_info: { ref_idx: "REFIDX_MARKDOWN" } }), { status: 200 })
+  ]);
+  const client = createQqClient({ fetch: fake.fetch, tokenProvider: createTokenProvider() });
+
+  assert.deepEqual(await client.sendDirectMarkdownImage({
+    userOpenId: "user-openid",
+    imageUrl: "https://mail.example.com/api/qq-assets/card.png?expires=1790000000&signature=signed",
+    readActionToken: "a".repeat(32)
+  }), { messageId: "markdown-message", refIndex: "REFIDX_MARKDOWN" });
+
+  assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), {
+    markdown: {
+      content: "![邮件通知](https://mail.example.com/api/qq-assets/card.png?expires=1790000000&signature=signed)"
+    },
+    msg_type: 2,
+    msg_seq: 1,
     keyboard: {
       content: {
         rows: [{
@@ -287,6 +309,7 @@ test("interaction ACK uses PUT and confirmations can reference the original imag
   assert.deepEqual(JSON.parse(String(fake.calls[1].init?.body)), {
     content: "已标记为系统已读。",
     msg_type: 0,
+    msg_seq: 1,
     message_reference: { message_id: "image-message" }
   });
 });

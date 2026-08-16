@@ -13,10 +13,12 @@ import { createQqButtonReadService, type QqButtonReadService } from "./button-re
 import { createQqClient } from "./client";
 import { createTokenProvider } from "./credentials";
 import { createQqGateway } from "./gateway";
+import { createQqMarkdownAsset, removeQqMarkdownAsset } from "./markdown-assets";
 import { createQqQuoteReadService, type QqQuoteReadService } from "./quote-read";
 import type {
   QqBotPublicStatus,
   QqDirectImageInput,
+  QqDirectMarkdownImageInput,
   QqDirectMessageInput,
   QqDispatchEvent,
   QqGatewayStatus,
@@ -41,6 +43,7 @@ type QqManagerButtonReadService = Pick<QqButtonReadService, "handleDispatchEvent
 type QqManagerClient = {
   sendDirectMessage(input: QqDirectMessageInput): Promise<QqSendResult>;
   sendDirectImage(input: QqDirectImageInput): Promise<QqSendResult>;
+  sendDirectMarkdownImage(input: QqDirectMarkdownImageInput): Promise<QqSendResult>;
   acknowledgeInteraction(interactionId: string): Promise<void>;
 };
 
@@ -55,6 +58,8 @@ export type QqManagerDependencies = {
   createReadAction?: typeof createQqEmailReadAction;
   finalizeReadAction?: typeof finalizeQqEmailReadAction;
   deleteReadAction?: typeof deleteQqEmailReadAction;
+  createMarkdownAsset?: typeof createQqMarkdownAsset;
+  removeMarkdownAsset?: typeof removeQqMarkdownAsset;
   onStatus?: (status: QqBotPublicStatus) => void;
   onBindingReady?: () => void;
 };
@@ -90,6 +95,8 @@ export class QqManager {
   private readonly createReadAction: typeof createQqEmailReadAction;
   private readonly finalizeReadAction: typeof finalizeQqEmailReadAction;
   private readonly deleteReadAction: typeof deleteQqEmailReadAction;
+  private readonly createMarkdownAsset: typeof createQqMarkdownAsset;
+  private readonly removeMarkdownAsset: typeof removeQqMarkdownAsset;
   private readonly onStatusChange?: (status: QqBotPublicStatus) => void;
   private readonly onBindingReady?: () => void;
   private started = false;
@@ -115,6 +122,8 @@ export class QqManager {
     this.createReadAction = dependencies.createReadAction ?? createQqEmailReadAction;
     this.finalizeReadAction = dependencies.finalizeReadAction ?? finalizeQqEmailReadAction;
     this.deleteReadAction = dependencies.deleteReadAction ?? deleteQqEmailReadAction;
+    this.createMarkdownAsset = dependencies.createMarkdownAsset ?? createQqMarkdownAsset;
+    this.removeMarkdownAsset = dependencies.removeMarkdownAsset ?? removeQqMarkdownAsset;
     this.onStatusChange = dependencies.onStatus;
     this.onBindingReady = dependencies.onBindingReady;
   }
@@ -175,19 +184,36 @@ export class QqManager {
   async sendImageNotification(image: Buffer, emailId?: string) {
     const binding = this.bindingService.readBinding();
     if (!binding) throw new Error("QQ notification recipient is not bound");
-    const action = emailId ? this.createReadAction({ emailId, userOpenId: binding.userOpenId }) : undefined;
-    let result: QqSendResult;
-    try {
+
+    let action = emailId ? this.createReadAction({ emailId, userOpenId: binding.userOpenId }) : undefined;
+    let markdownAsset: ReturnType<typeof createQqMarkdownAsset> | undefined;
+    let result: QqSendResult | undefined;
+
+    if (action) {
+      try {
+        markdownAsset = this.createMarkdownAsset(image);
+        result = await this.client.sendDirectMarkdownImage({
+          userOpenId: binding.userOpenId,
+          imageUrl: markdownAsset.url,
+          readActionToken: action.token
+        });
+      } catch (error) {
+        if (markdownAsset) this.removeMarkdownAsset(markdownAsset.token);
+        this.deleteReadAction(action.token);
+        action = undefined;
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(`QQ Markdown image notification unavailable; using media fallback: ${reason.slice(0, 180)}`);
+      }
+    }
+
+    if (!result) {
       result = await this.client.sendDirectImage({
         userOpenId: binding.userOpenId,
         image,
-        fileName: "mail-summary.png",
-        ...(action ? { readActionToken: action.token } : {})
+        fileName: "mail-summary.png"
       });
-    } catch (error) {
-      if (action) this.deleteReadAction(action.token);
-      throw error;
     }
+
     if (action) {
       try {
         this.finalizeReadAction(action.token, {
@@ -195,7 +221,7 @@ export class QqManager {
           refIndex: result.refIndex
         });
       } catch {
-        // The image was delivered; action mapping failure must not trigger a duplicate notification retry.
+        // The notification is delivered; action mapping failure must not trigger a duplicate retry.
       }
     }
     if (emailId && (result.messageId || result.refIndex)) {
@@ -207,11 +233,12 @@ export class QqManager {
           refIndex: result.refIndex
         });
       } catch {
-        // The image was already delivered; mapping failure must not trigger a duplicate notification retry.
+        // The notification is delivered; quote mapping failure must not trigger a duplicate retry.
       }
     }
     return result;
   }
+
   async testNotification() {
     const result = await this.sendNotification("自动邮件系统 QQ 通知测试成功。");
     this.publishStatus();
