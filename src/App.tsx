@@ -65,6 +65,23 @@ type EmailContextMenu = {
   panelRead: boolean;
 };
 
+type BulkReadConfirmation = {
+  category: MailCategory;
+  mailboxId: string;
+  mailboxLabel: string;
+  unreadCount: number;
+};
+
+type BulkReadUndo = {
+  operationId: string;
+  expiresAt: string;
+  category: MailCategory;
+  mailboxId: string;
+  updatedCount: number;
+  loadedUnreadIds: string[];
+  detailWasUnread: boolean;
+};
+
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL ??
   (window.location.port === "5173" ? "http://127.0.0.1:8787" : "");
@@ -364,6 +381,10 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [bulkReadBusy, setBulkReadBusy] = useState(false);
+  const [bulkReadConfirmation, setBulkReadConfirmation] = useState<BulkReadConfirmation | null>(null);
+  const [bulkReadUndo, setBulkReadUndo] = useState<BulkReadUndo | null>(null);
+  const [bulkReadUndoSeconds, setBulkReadUndoSeconds] = useState(0);
+  const [bulkReadUndoBusy, setBulkReadUndoBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [detailWidth, setDetailWidth] = useState(720);
   const [contextMenu, setContextMenu] = useState<EmailContextMenu | null>(null);
@@ -677,11 +698,28 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     [applyEmailReadState, detail, patchEmailReadState, scheduleDashboardRefresh]
   );
 
-  async function markCurrentCategoryRead() {
+  function requestMarkCurrentCategoryRead() {
     const unreadCount = dashboard?.unreadCounts?.[activeCategory] ?? 0;
-    if (!unreadCount || bulkReadBusy) return;
+    if (!unreadCount || bulkReadBusy || bulkReadUndo) return;
+
+    setBulkReadConfirmation({
+      category: activeCategory,
+      mailboxId: selectedMailbox,
+      mailboxLabel:
+        selectedMailbox === "all"
+          ? "全部邮箱"
+          : mailboxMap.get(selectedMailbox)?.name || "当前邮箱",
+      unreadCount
+    });
+  }
+
+  async function markCurrentCategoryRead(scope: BulkReadConfirmation) {
+    if (bulkReadBusy || bulkReadUndo) return;
 
     const optimisticReadAt = new Date().toISOString();
+    const loadedUnreadIds = emailsRef.current.filter((email) => !email.panelRead).map((email) => email.id);
+    const detailWasUnread = Boolean(detail && !detail.panelRead);
+    setBulkReadConfirmation(null);
     setBulkReadBusy(true);
     setEmails((current) =>
       current.map((email) =>
@@ -699,23 +737,27 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
             ...current,
             unreadCounts: {
               ...current.unreadCounts,
-              [activeCategory]: 0
+              [scope.category]: 0
             }
           }
         : current
     );
 
     try {
-      const result = await api.markEmailsRead(activeCategory, selectedMailbox);
-      setToast(
-        result.updatedCount > 0
-          ? "已将当前" +
-              categoryMeta[activeCategory].label +
-              "分类中的 " +
-              result.updatedCount +
-              " 封邮件标记为系统已读"
-          : "当前分类没有未读邮件"
-      );
+      const result = await api.markEmailsRead(scope.category, scope.mailboxId);
+      if (result.updatedCount > 0 && result.operationId && result.undoExpiresAt) {
+        setBulkReadUndo({
+          operationId: result.operationId,
+          expiresAt: result.undoExpiresAt,
+          category: scope.category,
+          mailboxId: scope.mailboxId,
+          updatedCount: result.updatedCount,
+          loadedUnreadIds,
+          detailWasUnread
+        });
+      } else {
+        setToast("当前分类没有未读邮件");
+      }
       await loadDashboard();
     } catch (error) {
       await Promise.allSettled([loadDashboard(), loadEmails(true)]);
@@ -725,6 +767,35 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     }
   }
 
+  async function undoCurrentBulkRead() {
+    const operation = bulkReadUndo;
+    if (!operation || bulkReadUndoBusy || bulkReadUndoSeconds <= 0) return;
+
+    setBulkReadUndoBusy(true);
+    try {
+      const result = await api.undoMarkEmailsRead(operation.operationId);
+      const affectedIds = new Set(operation.loadedUnreadIds);
+      setEmails((current) =>
+        current.map((email) =>
+          affectedIds.has(email.id) ? { ...email, panelRead: false, panelReadAt: undefined } : email
+        )
+      );
+      setDetail((current) =>
+        current && operation.detailWasUnread && affectedIds.has(current.id)
+          ? { ...current, panelRead: false, panelReadAt: undefined }
+          : current
+      );
+      setBulkReadUndo(null);
+      await loadDashboard();
+      setToast("已撤回，恢复 " + result.restoredCount + " 封系统未读邮件");
+    } catch (error) {
+      setBulkReadUndo(null);
+      await Promise.allSettled([loadDashboard(), loadEmails(true)]);
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBulkReadUndoBusy(false);
+    }
+  }
   const openEmailContextMenu = useCallback((event: ReactMouseEvent<HTMLButtonElement>, email: EmailListItem) => {
     event.preventDefault();
     setSelectedEmailId(email.id);
@@ -793,6 +864,37 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
     return () => window.clearTimeout(timer);
   }, [autoReadSuppressedId, detail?.id, detail?.panelRead, detail?.category, updateEmailReadState]);
+
+  useEffect(() => {
+    if (!bulkReadConfirmation) return;
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setBulkReadConfirmation(null);
+    };
+
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [bulkReadConfirmation]);
+
+  useEffect(() => {
+    if (!bulkReadUndo) {
+      setBulkReadUndoSeconds(0);
+      return;
+    }
+
+    const operationId = bulkReadUndo.operationId;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((Date.parse(bulkReadUndo.expiresAt) - Date.now()) / 1000));
+      setBulkReadUndoSeconds(remaining);
+      if (remaining === 0) {
+        setBulkReadUndo((current) => (current?.operationId === operationId ? null : current));
+      }
+    };
+
+    tick();
+    const timer = window.setInterval(tick, 200);
+    return () => window.clearInterval(timer);
+  }, [bulkReadUndo]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -1031,9 +1133,9 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                   <button
                     type="button"
                     className="ghost-button mark-all-read-button"
-                    disabled={bulkReadBusy || (dashboard?.unreadCounts?.[activeCategory] ?? 0) === 0}
-                    onClick={() => void markCurrentCategoryRead()}
-                    title={"将当前邮箱的" + categoryMeta[activeCategory].label + "邮件全部标记为系统已读"}
+                    disabled={bulkReadBusy || Boolean(bulkReadUndo) || (dashboard?.unreadCounts?.[activeCategory] ?? 0) === 0}
+                    onClick={requestMarkCurrentCategoryRead}
+                    title={bulkReadUndo ? "请先撤回或等待当前操作完成" : "将当前邮箱的" + categoryMeta[activeCategory].label + "邮件全部标记为系统已读"}
                   >
                     <CheckCircle size={18} weight="duotone" />
                     <span>{bulkReadBusy ? "标记中..." : "全部已读"}</span>
@@ -1192,6 +1294,82 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
           />
         )}
       </main>
+
+      {bulkReadConfirmation && (
+        <div
+          className="bulk-read-confirmation-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setBulkReadConfirmation(null);
+          }}
+        >
+          <section
+            className="bulk-read-confirmation"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-read-confirmation-title"
+          >
+            <div className="bulk-read-confirmation-icon">
+              <CheckCircle size={26} weight="duotone" />
+            </div>
+            <div className="bulk-read-confirmation-copy">
+              <p className="section-kicker">批量操作</p>
+              <h2 id="bulk-read-confirmation-title">将这些邮件全部标记为已读？</h2>
+              <p>
+                将把 <strong>{bulkReadConfirmation.mailboxLabel}</strong> 中
+                <strong> {categoryMeta[bulkReadConfirmation.category].label}</strong> 分类的
+                <strong> {bulkReadConfirmation.unreadCount} 封</strong>系统未读邮件标记为已读。
+              </p>
+              <small>仅影响处理台内的已读状态。确认后可在 10 秒内撤回。</small>
+            </div>
+            <div className="bulk-read-confirmation-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                autoFocus
+                onClick={() => setBulkReadConfirmation(null)}
+              >
+                <X size={17} />
+                取消
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void markCurrentCategoryRead(bulkReadConfirmation)}
+              >
+                <CheckCircle size={17} weight="duotone" />
+                全部标为已读
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {bulkReadUndo && (
+        <div className="bulk-read-undo" role="status" aria-live="polite">
+          <div className="bulk-read-undo-copy">
+            <span className="bulk-read-undo-icon">
+              <CheckCircle size={21} weight="fill" />
+            </span>
+            <span>
+              <strong>
+                已将 {bulkReadUndo.updatedCount} 封{categoryMeta[bulkReadUndo.category].label}邮件标为已读
+              </strong>
+              <small>本次操作可在倒计时结束前撤回</small>
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void undoCurrentBulkRead()}
+            disabled={bulkReadUndoBusy || bulkReadUndoSeconds <= 0}
+          >
+            <ClockCounterClockwise size={18} />
+            {bulkReadUndoBusy ? "撤回中..." : "撤回 " + bulkReadUndoSeconds + "s"}
+          </button>
+          <span className="bulk-read-undo-progress" aria-hidden="true">
+            <i style={{ width: String(Math.min(100, bulkReadUndoSeconds * 10)) + "%" }} />
+          </span>
+        </div>
+      )}
 
       {contextMenu && (
         <>

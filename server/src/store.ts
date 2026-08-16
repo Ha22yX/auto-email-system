@@ -34,6 +34,14 @@ const DATA_DIR = path.resolve(process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
 const JSON_DATA_FILE = path.join(DATA_DIR, "app.db.json");
 const SQLITE_FILE = path.join(DATA_DIR, "app.sqlite");
 const SCHEMA_VERSION = 2;
+const PANEL_READ_UNDO_TTL_MS = 10_000;
+
+type PanelReadUndoOperation = {
+  emailIds: string[];
+  expiresAtMs: number;
+};
+
+const panelReadUndoOperations = new Map<string, PanelReadUndoOperation>();
 
 const defaultNotifyCategories: Record<MailCategory, boolean> = {
   important: true,
@@ -793,15 +801,16 @@ export function markProcessedEmailsPanelRead(options: { category: MailCategory; 
   if (!rows.length) return { updatedCount: 0, updatedAt };
 
   const update = db.prepare("UPDATE emails SET panelRead = 1, data = ? WHERE id = ? AND panelRead = 0");
-  let updatedCount = 0;
+  const updatedIds: string[] = [];
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const row of rows) {
       const email = rowToEmail(row);
       email.panelRead = true;
       email.panelReadAt = updatedAt;
-      const result = update.run(JSON.stringify(email), String(row.id));
-      updatedCount += Number(result.changes);
+      const emailId = String(row.id);
+      const result = update.run(JSON.stringify(email), emailId);
+      if (Number(result.changes) > 0) updatedIds.push(emailId);
     }
     db.exec("COMMIT");
   } catch (error) {
@@ -809,12 +818,62 @@ export function markProcessedEmailsPanelRead(options: { category: MailCategory; 
     throw error;
   }
 
+  const operationId = randomUUID();
+  const undoExpiresAtMs = Date.now() + PANEL_READ_UNDO_TTL_MS;
+  panelReadUndoOperations.set(operationId, {
+    emailIds: updatedIds,
+    expiresAtMs: undoExpiresAtMs
+  });
+  const expiryTimer = setTimeout(() => {
+    const current = panelReadUndoOperations.get(operationId);
+    if (current?.expiresAtMs === undoExpiresAtMs) panelReadUndoOperations.delete(operationId);
+  }, PANEL_READ_UNDO_TTL_MS + 250);
+  expiryTimer.unref();
+
   publishAppEvent("email-bulk-read", {
     category: options.category,
     mailboxId: options.mailboxId ?? "all",
-    updatedCount
+    updatedCount: updatedIds.length
   });
-  return { updatedCount, updatedAt };
+  return {
+    updatedCount: updatedIds.length,
+    updatedAt,
+    operationId,
+    undoExpiresAt: new Date(undoExpiresAtMs).toISOString()
+  };
+}
+
+export function undoProcessedEmailsPanelRead(operationId: string) {
+  const operation = panelReadUndoOperations.get(operationId);
+  if (!operation || Date.now() >= operation.expiresAtMs) {
+    panelReadUndoOperations.delete(operationId);
+    return undefined;
+  }
+
+  const select = db.prepare("SELECT id, data FROM emails WHERE id = ? AND panelRead = 1");
+  const update = db.prepare("UPDATE emails SET panelRead = 0, data = ? WHERE id = ? AND panelRead = 1");
+  let restoredCount = 0;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const emailId of operation.emailIds) {
+      const row = select.get(emailId) as SqlRow | undefined;
+      if (!row) continue;
+      const email = rowToEmail(row);
+      email.panelRead = false;
+      email.panelReadAt = undefined;
+      const result = update.run(JSON.stringify(email), emailId);
+      restoredCount += Number(result.changes);
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  panelReadUndoOperations.delete(operationId);
+  const restoredAt = new Date().toISOString();
+  publishAppEvent("email-bulk-read-undone", { restoredCount });
+  return { restoredCount, restoredAt };
 }
 
 export function addRun(run: ProcessingRun) {

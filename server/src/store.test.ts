@@ -31,7 +31,8 @@ const {
   enqueueNotificationDelivery,
   listNotificationDeliveries,
   markProcessedEmailsPanelRead,
-  queryProcessedEmails
+  queryProcessedEmails,
+  undoProcessedEmailsPanelRead
 } = await import("./store");
 
 const primaryApiKey = "primary-placeholder-secret";
@@ -256,15 +257,31 @@ test("bulk panel read updates only the selected mailbox and category", () => {
   addProcessedEmail(makeEmail("bulk-secondary-" + suffix, targetMailbox, "secondary"));
   addProcessedEmail(makeEmail("bulk-other-mailbox-" + suffix, otherMailbox, "important"));
 
+  const alreadyRead = makeEmail("bulk-already-read-" + suffix, targetMailbox, "important");
+  alreadyRead.panelRead = true;
+  alreadyRead.panelReadAt = "2026-08-16T00:00:00.000Z";
+  addProcessedEmail(alreadyRead);
+
   const result = markProcessedEmailsPanelRead({ category: "important", mailboxId: targetMailbox });
   assert.equal(result.updatedCount, 2);
+  assert.equal(typeof result.operationId, "string");
 
   const targetImportant = queryProcessedEmails({
     category: "important",
     mailboxId: targetMailbox,
     limit: 20
   }).items;
-  assert.equal(targetImportant.every((email) => email.panelRead && email.panelReadAt === result.updatedAt), true);
+  const changedIds = new Set([
+    "bulk-important-1-" + suffix,
+    "bulk-important-2-" + suffix
+  ]);
+  assert.equal(
+    targetImportant
+      .filter((email) => changedIds.has(email.id))
+      .every((email) => email.panelRead && email.panelReadAt === result.updatedAt),
+    true
+  );
+  assert.equal(targetImportant.find((email) => email.id === alreadyRead.id)?.panelReadAt, alreadyRead.panelReadAt);
   assert.equal(
     queryProcessedEmails({ category: "secondary", mailboxId: targetMailbox, limit: 20 }).items[0]?.panelRead,
     false
@@ -277,6 +294,17 @@ test("bulk panel read updates only the selected mailbox and category", () => {
     markProcessedEmailsPanelRead({ category: "important", mailboxId: targetMailbox }).updatedCount,
     0
   );
+
+  const undoResult = undoProcessedEmailsPanelRead(result.operationId!);
+  assert.equal(undoResult?.restoredCount, 2);
+  const afterUndo = queryProcessedEmails({
+    category: "important",
+    mailboxId: targetMailbox,
+    limit: 20
+  }).items;
+  assert.equal(afterUndo.filter((email) => changedIds.has(email.id)).every((email) => !email.panelRead), true);
+  assert.equal(afterUndo.find((email) => email.id === alreadyRead.id)?.panelRead, true);
+  assert.equal(undoProcessedEmailsPanelRead(result.operationId!), undefined);
 });
 test("delivery identity is unique per email and channel", () => {
   const emailId = `email-delivery-${process.pid}`;

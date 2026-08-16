@@ -83,9 +83,20 @@ export const api = {
     return request<ProcessedEmail>(`/api/emails/${id}`);
   },
   markEmailsRead(category: MailCategory, mailboxId: string) {
-    return request<{ updatedCount: number; updatedAt: string }>("/api/emails/read-state", {
+    return request<{
+      updatedCount: number;
+      updatedAt: string;
+      operationId?: string;
+      undoExpiresAt?: string;
+    }>("/api/emails/read-state", {
       method: "PATCH",
       body: JSON.stringify({ category, mailboxId })
+    });
+  },
+  undoMarkEmailsRead(operationId: string) {
+    return request<{ restoredCount: number; restoredAt: string }>("/api/emails/read-state/undo", {
+      method: "PATCH",
+      body: JSON.stringify({ operationId })
     });
   },
   updateEmailReadState(id: string, panelRead: boolean) {

@@ -30,6 +30,7 @@ import {
   updateNotificationSettings,
   updateQqBotSettings,
   updateProcessedEmailPanelRead,
+  undoProcessedEmailsPanelRead,
   updateSystemSettings,
   upsertMailbox,
   verifyAdminPassword
@@ -208,6 +209,10 @@ const panelReadSchema = z.object({
 const bulkPanelReadSchema = z.object({
   category: z.enum(["important", "secondary", "ignore"]),
   mailboxId: z.string().trim().min(1).default("all")
+});
+
+const bulkPanelReadUndoSchema = z.object({
+  operationId: z.string().uuid()
 });
 
 const loginSchema = z.object({
@@ -802,6 +807,18 @@ router.patch(
         mailboxId: parsed.mailboxId
       })
     );
+  })
+);
+router.patch(
+  "/emails/read-state/undo",
+  asyncRoute((req, res) => {
+    const parsed = bulkPanelReadUndoSchema.parse(req.body);
+    const result = undoProcessedEmailsPanelRead(parsed.operationId);
+    if (!result) {
+      res.status(410).json({ error: "撤回时限已结束，请刷新邮件状态" });
+      return;
+    }
+    res.json(result);
   })
 );
 router.patch(
