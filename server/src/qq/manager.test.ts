@@ -259,7 +259,7 @@ test("ambiguous Markdown delivery failures retain the button action mapping", as
   });
 });
 
-test("definitive Markdown rejections clean up unusable button actions", async () => {
+test("explicit Markdown rejections also retain the button action mapping", async () => {
   const target = harness({
     currentBinding: binding(),
     markdownError: new QqApiError({ kind: "invalid_request", status: 400 })
@@ -267,6 +267,6 @@ test("definitive Markdown rejections clean up unusable button actions", async ()
 
   await target.manager.sendImageNotification(Buffer.from("mail-card"), "email-42");
 
-  assert.equal(target.actions.some((entry) => (entry as { kind?: string }).kind === "deleted"), true);
-  assert.equal(target.actions.some((entry) => (entry as { kind?: string }).kind === "asset-removed"), true);
+  assert.equal(target.actions.some((entry) => (entry as { kind?: string }).kind === "deleted"), false);
+  assert.equal(target.actions.some((entry) => (entry as { kind?: string }).kind === "asset-removed"), false);
 });
