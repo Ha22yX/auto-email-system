@@ -24,6 +24,7 @@ import type {
   QqGatewayStatus,
   QqSendResult
 } from "./types";
+import { QqApiError } from "./types";
 
 type QqManagerGateway = {
   start(): Promise<void>;
@@ -72,6 +73,10 @@ function maskRecipient(userOpenId: string) {
 function validChallenge(challenge: QqBindingChallenge | undefined) {
   if (!challenge || challenge.consumedAt || Date.parse(challenge.expiresAt) <= Date.now()) return undefined;
   return { expiresAt: challenge.expiresAt };
+}
+
+function qqSendMayHaveSucceeded(error: unknown) {
+  return error instanceof QqApiError && error.kind === "transient";
 }
 
 function defaultDependencies() {
@@ -198,11 +203,15 @@ export class QqManager {
           readActionToken: action.token
         });
       } catch (error) {
-        if (markdownAsset) this.removeMarkdownAsset(markdownAsset.token);
-        this.deleteReadAction(action.token);
-        action = undefined;
+        const retainAction = qqSendMayHaveSucceeded(error);
+        if (!retainAction) {
+          if (markdownAsset) this.removeMarkdownAsset(markdownAsset.token);
+          this.deleteReadAction(action.token);
+          action = undefined;
+        }
         const reason = error instanceof Error ? error.message : String(error);
-        console.warn(`QQ Markdown image notification unavailable; using media fallback: ${reason.slice(0, 180)}`);
+        const mapping = retainAction ? "; retained read action because delivery is uncertain" : "";
+        console.warn(`QQ Markdown image notification unavailable; using media fallback${mapping}: ${reason.slice(0, 180)}`);
       }
     }
 

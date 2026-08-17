@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { QqManager } from "./manager";
-import type { QqDispatchEvent, QqGatewayStatus } from "./types";
+import { QqApiError, type QqDispatchEvent, type QqGatewayStatus } from "./types";
 import type { QqBotBinding, QqBotConfig } from "../types";
 
 function config(overrides: Partial<QqBotConfig> = {}): QqBotConfig {
@@ -26,7 +26,11 @@ function binding(): QqBotBinding {
   };
 }
 
-function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBinding } = {}) {
+function harness(overrides: {
+  config?: QqBotConfig;
+  currentBinding?: QqBotBinding;
+  markdownError?: Error;
+} = {}) {
   let currentBinding = overrides.currentBinding;
   let dispatchListener: ((event: QqDispatchEvent) => void) | undefined;
   let gatewayStatus: QqGatewayStatus = { state: "stopped", reconnectAttempt: 0 };
@@ -80,6 +84,7 @@ function harness(overrides: { config?: QqBotConfig; currentBinding?: QqBotBindin
       async sendDirectMarkdownImage(input) {
         sent.push(input.userOpenId);
         actions.push({ kind: "markdown-input", input });
+        if (overrides.markdownError) throw overrides.markdownError;
         return { messageId: "test-markdown", refIndex: "REFIDX_TEST_MARKDOWN" };
       },
       async acknowledgeInteraction() {}
@@ -230,4 +235,38 @@ test("sent QQ mail images persist message and ref-index mappings", async () => {
       input: { messageId: "test-markdown", refIndex: "REFIDX_TEST_MARKDOWN" }
     }
   ]);
+});
+
+test("ambiguous Markdown delivery failures retain the button action mapping", async () => {
+  const target = harness({
+    currentBinding: binding(),
+    markdownError: new QqApiError({
+      kind: "transient",
+      status: 0,
+      message: "QQ direct-message request failed"
+    })
+  });
+
+  const result = await target.manager.sendImageNotification(Buffer.from("mail-card"), "email-42");
+
+  assert.deepEqual(result, { messageId: "test-image", refIndex: "REFIDX_TEST_IMAGE" });
+  assert.equal(target.actions.some((entry) => (entry as { kind?: string }).kind === "deleted"), false);
+  assert.equal(target.actions.some((entry) => (entry as { kind?: string }).kind === "asset-removed"), false);
+  assert.deepEqual(target.actions.at(-1), {
+    kind: "finalized",
+    token: "a".repeat(32),
+    input: { messageId: "test-image", refIndex: "REFIDX_TEST_IMAGE" }
+  });
+});
+
+test("definitive Markdown rejections clean up unusable button actions", async () => {
+  const target = harness({
+    currentBinding: binding(),
+    markdownError: new QqApiError({ kind: "invalid_request", status: 400 })
+  });
+
+  await target.manager.sendImageNotification(Buffer.from("mail-card"), "email-42");
+
+  assert.equal(target.actions.some((entry) => (entry as { kind?: string }).kind === "deleted"), true);
+  assert.equal(target.actions.some((entry) => (entry as { kind?: string }).kind === "asset-removed"), true);
 });

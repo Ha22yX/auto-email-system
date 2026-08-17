@@ -72,6 +72,11 @@ test("parses only valid mail-read callback interactions", () => {
     interactionId: "interaction-1",
     token: TOKEN
   });
+  const uppercase = interaction();
+  (uppercase.data.data as { resolved: { button_data: string } }).resolved.button_data =
+    `mail-read:${TOKEN.toUpperCase()}`;
+  assert.equal(parseQqMailReadInteraction(uppercase)?.token, TOKEN);
+
   const unrelated = interaction();
   (unrelated.data.data as { resolved: { button_data: string } }).resolved.button_data = "other-action";
   assert.equal(parseQqMailReadInteraction(unrelated), undefined);

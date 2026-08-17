@@ -45,7 +45,7 @@ export function parseQqMailReadInteraction(event: QqDispatchEvent) {
   const match = buttonData?.match(/^mail-read:([a-f0-9]{32})$/i);
   if (!match) return undefined;
   const interactionId = text(event.data.id) ?? event.id;
-  return interactionId ? { interactionId, token: match[1] } : undefined;
+  return interactionId ? { interactionId, token: match[1].toLowerCase() } : undefined;
 }
 
 function confirmation(email: ProcessedEmail, alreadyRead: boolean) {
