@@ -13,6 +13,8 @@ const {
   addProcessedEmail,
   claimNotificationDeliveries,
   consumeQqBindingChallenge,
+  createQqEmailReadAction,
+  findQqEmailReadAction,
   findQqNotificationReference,
   normalizeAiSettings,
   publicAiSettings,
@@ -28,6 +30,7 @@ const {
   readState,
   readStoredCredentialEnvelope,
   updateAiSettings,
+  updateProcessedEmailReadMark,
   updateQqBotSettings,
   updateQqState,
   enqueueNotificationDelivery,
@@ -309,6 +312,41 @@ test("bulk panel read updates only the selected mailbox and category", () => {
   assert.equal(afterUndo.find((email) => email.id === alreadyRead.id)?.panelRead, true);
   assert.equal(undoProcessedEmailsPanelRead(result.operationId!), undefined);
 });
+
+test("email state updates preserve QQ button actions and message references", () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const email: ProcessedEmail = {
+    id: `qq-action-email-${suffix}`,
+    mailboxId: `qq-action-mailbox-${suffix}`,
+    externalUid: `qq-action-uid-${suffix}`,
+    subject: "QQ action persistence",
+    processedAt: new Date().toISOString(),
+    category: "important",
+    summaryZh: "verify upsert foreign-key behavior",
+    reasonZh: "test",
+    actionItemsZh: [],
+    originalText: "test",
+    panelRead: false,
+    readMarked: false
+  };
+  assert.ok(addProcessedEmail(email));
+  const userOpenId = `qq-action-user-${suffix}`;
+  const action = createQqEmailReadAction({ emailId: email.id, userOpenId });
+  recordQqNotificationReference({
+    emailId: email.id,
+    userOpenId,
+    messageId: `qq-action-message-${suffix}`
+  });
+
+  updateProcessedEmailReadMark(email.mailboxId, email.externalUid, { marked: true });
+
+  assert.equal(findQqEmailReadAction(action.token, userOpenId)?.emailId, email.id);
+  assert.equal(findQqNotificationReference({
+    userOpenId,
+    messageId: `qq-action-message-${suffix}`
+  })?.emailId, email.id);
+});
+
 test("delivery identity is unique per email and channel", () => {
   const emailId = `email-delivery-${process.pid}`;
   enqueueNotificationDelivery(emailId, "qq");

@@ -393,11 +393,29 @@ function insertEmail(email: ProcessedEmail) {
     panelRead: email.panelRead ?? email.category === "ignore"
   };
   db.prepare(
-    `INSERT OR REPLACE INTO emails (
+    `INSERT INTO emails (
       id, mailboxId, externalUid, messageId, subject, fromName, fromAddress, toText, receivedAt,
       processedAt, category, summaryZh, panelRead, readMarked, notifiedAt, notificationError,
       contentFingerprint, data
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      mailboxId = excluded.mailboxId,
+      externalUid = excluded.externalUid,
+      messageId = excluded.messageId,
+      subject = excluded.subject,
+      fromName = excluded.fromName,
+      fromAddress = excluded.fromAddress,
+      toText = excluded.toText,
+      receivedAt = excluded.receivedAt,
+      processedAt = excluded.processedAt,
+      category = excluded.category,
+      summaryZh = excluded.summaryZh,
+      panelRead = excluded.panelRead,
+      readMarked = excluded.readMarked,
+      notifiedAt = excluded.notifiedAt,
+      notificationError = excluded.notificationError,
+      contentFingerprint = excluded.contentFingerprint,
+      data = excluded.data`
   ).run(
     normalized.id,
     normalized.mailboxId,
