@@ -369,11 +369,12 @@ router.get(
       return;
     }
     res.setHeader("Content-Type", "image/png");
+    res.setHeader("Content-Encoding", "identity");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     res.setHeader("X-Robots-Tag", "noindex, noimageindex, noarchive");
     res.setHeader(
       "Cache-Control",
-      `public, max-age=${Math.max(0, asset.expires - Math.floor(Date.now() / 1000))}, immutable`
+      `public, max-age=${Math.max(0, asset.expires - Math.floor(Date.now() / 1000))}, immutable, no-transform`
     );
     res.sendFile(asset.file);
   })
