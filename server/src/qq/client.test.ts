@@ -260,12 +260,14 @@ test("Markdown images and read buttons share one QQ message payload", async () =
   assert.deepEqual(await client.sendDirectMarkdownImage({
     userOpenId: "user-openid",
     imageUrl: "https://mail.example.com/api/qq-assets/card.png?expires=1790000000&signature=signed",
+    imageWidth: 1080,
+    imageHeight: 1366,
     readActionToken: "a".repeat(32)
   }), { messageId: "markdown-message", refIndex: "REFIDX_MARKDOWN" });
 
   assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), {
     markdown: {
-      content: "![邮件通知](https://mail.example.com/api/qq-assets/card.png?expires=1790000000&signature=signed)"
+      content: "![邮件通知 #1080px #1366px](https://mail.example.com/api/qq-assets/card.png?expires=1790000000&signature=signed)"
     },
     msg_type: 2,
     msg_seq: 1,

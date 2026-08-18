@@ -195,6 +195,8 @@ export class QqManager {
         result = await this.client.sendDirectMarkdownImage({
           userOpenId: binding.userOpenId,
           imageUrl: markdownAsset.url,
+          imageWidth: markdownAsset.width,
+          imageHeight: markdownAsset.height,
           readActionToken: action.token
         });
       } catch (error) {

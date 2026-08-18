@@ -108,7 +108,9 @@ function harness(overrides: {
       const asset = {
         token: "asset-token-12345678901234567890",
         expires: 1_790_000_000,
-        url: "https://mail.example.com/api/qq-assets/asset-token-12345678901234567890.png?expires=1790000000&signature=signed"
+        url: "https://mail.example.com/api/qq-assets/asset-token-12345678901234567890.png?expires=1790000000&signature=signed",
+        width: 1080,
+        height: 1366
       };
       actions.push({ kind: "markdown-asset", asset });
       return asset;
@@ -218,7 +220,9 @@ test("sent QQ mail images persist message and ref-index mappings", async () => {
       asset: {
         token: "asset-token-12345678901234567890",
         expires: 1_790_000_000,
-        url: "https://mail.example.com/api/qq-assets/asset-token-12345678901234567890.png?expires=1790000000&signature=signed"
+        url: "https://mail.example.com/api/qq-assets/asset-token-12345678901234567890.png?expires=1790000000&signature=signed",
+        width: 1080,
+        height: 1366
       }
     },
     {
@@ -226,6 +230,8 @@ test("sent QQ mail images persist message and ref-index mappings", async () => {
       input: {
         userOpenId: "abcdefgh12345678",
         imageUrl: "https://mail.example.com/api/qq-assets/asset-token-12345678901234567890.png?expires=1790000000&signature=signed",
+        imageWidth: 1080,
+        imageHeight: 1366,
         readActionToken: "a".repeat(32)
       }
     },

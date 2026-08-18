@@ -8,6 +8,7 @@ const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const MAX_ASSET_BYTES = 5 * 1024 * 1024;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{32}$/;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_IHDR = Buffer.from("IHDR", "ascii");
 const DEFAULT_DATA_DIR = process.env.NODE_TEST_CONTEXT
   ? path.join(tmpdir(), `auto-email-system-test-${process.pid}`)
   : "data";
@@ -86,11 +87,18 @@ export function stopQqMarkdownAssetCleanupWorker() {
 
 export function createQqMarkdownAsset(image: Buffer, now = Date.now()) {
   if (
-    image.length < PNG_SIGNATURE.length ||
+    image.length < 24 ||
     image.length > MAX_ASSET_BYTES ||
-    !image.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+    !image.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE) ||
+    image.readUInt32BE(8) !== 13 ||
+    !image.subarray(12, 16).equals(PNG_IHDR)
   ) {
     throw new Error("QQ Markdown notification asset must be a bounded PNG image");
+  }
+  const width = image.readUInt32BE(16);
+  const height = image.readUInt32BE(20);
+  if (width < 1 || height < 1 || width > 8_192 || height > 8_192) {
+    throw new Error("QQ Markdown notification asset has invalid dimensions");
   }
 
   fs.mkdirSync(ASSET_DIR, { recursive: true });
@@ -101,7 +109,7 @@ export function createQqMarkdownAsset(image: Buffer, now = Date.now()) {
   const url = new URL(`${publicBaseUrl()}/api/qq-assets/${token}.png`);
   url.searchParams.set("expires", String(expires));
   url.searchParams.set("signature", signature(token, expires));
-  return { token, expires, url: url.toString() };
+  return { token, expires, url: url.toString(), width, height };
 }
 
 export function removeQqMarkdownAsset(token: string) {

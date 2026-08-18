@@ -48,6 +48,8 @@ export type QqDirectImageInput = {
 export type QqDirectMarkdownImageInput = {
   userOpenId: string;
   imageUrl: string;
+  imageWidth: number;
+  imageHeight: number;
   readActionToken: string;
 };
 

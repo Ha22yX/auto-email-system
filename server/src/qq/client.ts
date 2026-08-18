@@ -115,7 +115,17 @@ export class QqClient {
     } catch {
       throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_markdown_image" });
     }
-    if (!input.userOpenId.trim() || imageUrl.protocol !== "https:" || !/^[A-Fa-f0-9]{32}$/.test(input.readActionToken)) {
+    if (
+      !input.userOpenId.trim() ||
+      imageUrl.protocol !== "https:" ||
+      !Number.isInteger(input.imageWidth) ||
+      !Number.isInteger(input.imageHeight) ||
+      input.imageWidth < 1 ||
+      input.imageHeight < 1 ||
+      input.imageWidth > 8_192 ||
+      input.imageHeight > 8_192 ||
+      !/^[A-Fa-f0-9]{32}$/.test(input.readActionToken)
+    ) {
       throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_markdown_image" });
     }
     return this.withTokenRefresh((token) => this.sendMarkdownImageWithToken(input, token));
@@ -218,7 +228,9 @@ export class QqClient {
   private async sendMarkdownImageWithToken(input: QqDirectMarkdownImageInput, token: string): Promise<QqSendResult> {
     this.messageSequence = (this.messageSequence % 10_000) + 1;
     const payload: Record<string, unknown> = {
-      markdown: { content: `![邮件通知](${input.imageUrl})` },
+      markdown: {
+        content: `![邮件通知 #${input.imageWidth}px #${input.imageHeight}px](${input.imageUrl})`
+      },
       msg_type: 2,
       msg_seq: this.messageSequence,
       keyboard: this.readActionKeyboard(input.readActionToken)
