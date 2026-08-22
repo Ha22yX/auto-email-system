@@ -37,6 +37,7 @@ export type QqDirectMessageInput = {
   content: string;
   msgId?: string;
   messageReferenceId?: string;
+  readActionToken?: string;
 };
 
 export type QqDirectImageInput = {

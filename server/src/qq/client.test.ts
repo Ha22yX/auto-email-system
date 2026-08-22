@@ -251,6 +251,44 @@ test("direct images use the official rich-media upload and media message flow", 
   });
 });
 
+test("direct text messages can carry the read button keyboard", async () => {
+  const fake = createMessageFetch([
+    new Response(JSON.stringify({ id: "button-message" }), { status: 200 })
+  ]);
+  const client = createQqClient({ fetch: fake.fetch, tokenProvider: createTokenProvider() });
+
+  await client.sendDirectMessage({
+    userOpenId: "user-openid",
+    content: "点击下方按钮可将上一封邮件标记为系统已读。",
+    messageReferenceId: "image-message",
+    readActionToken: "a".repeat(32)
+  });
+
+  assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), {
+    content: "点击下方按钮可将上一封邮件标记为系统已读。",
+    msg_type: 0,
+    msg_seq: 1,
+    message_reference: { message_id: "image-message" },
+    keyboard: {
+      content: {
+        rows: [{
+          buttons: [{
+            id: "mail-read",
+            render_data: { label: "标记为已阅", visited_label: "已标记为已阅", style: 1 },
+            action: {
+              type: 1,
+              permission: { type: 2 },
+              data: `mail-read:${"a".repeat(32)}`,
+              click_limit: 1
+            },
+            group_id: "mail-read"
+          }]
+        }]
+      }
+    }
+  });
+});
+
 test("Markdown images and read buttons share one QQ message payload", async () => {
   const fake = createMessageFetch([
     new Response(JSON.stringify({ id: "markdown-message", ext_info: { ref_idx: "REFIDX_MARKDOWN" } }), { status: 200 })

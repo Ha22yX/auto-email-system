@@ -98,6 +98,9 @@ export class QqClient {
     if (!input.userOpenId.trim() || !input.content.trim()) {
       throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_message_input", message: "QQ direct message requires a recipient and content" });
     }
+    if (input.readActionToken && !/^[A-Fa-f0-9]{32}$/.test(input.readActionToken)) {
+      throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_read_action_token" });
+    }
     return this.withTokenRefresh((token) => this.sendTextWithToken(input, token));
   }
 
@@ -198,6 +201,7 @@ export class QqClient {
     };
     if (input.msgId) payload.msg_id = input.msgId;
     if (input.messageReferenceId) payload.message_reference = { message_id: input.messageReferenceId };
+    if (input.readActionToken) payload.keyboard = this.readActionKeyboard(input.readActionToken);
     const body = await this.requestJson(`${QQ_API_ORIGIN}/v2/users/${encodeURIComponent(input.userOpenId)}/messages`, payload, token);
     return this.sendResult(body);
   }

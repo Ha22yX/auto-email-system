@@ -188,8 +188,20 @@ export class QqManager {
     let action = emailId ? this.createReadAction({ emailId, userOpenId: binding.userOpenId }) : undefined;
     let markdownAsset: ReturnType<typeof createQqMarkdownAsset> | undefined;
     let result: QqSendResult | undefined;
+    let actionMessageResult: QqSendResult | undefined;
 
-    if (action) {
+    try {
+      result = await this.client.sendDirectImage({
+        userOpenId: binding.userOpenId,
+        image,
+        fileName: "mail-summary.png"
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`QQ media image notification unavailable; using Markdown URL fallback: ${reason.slice(0, 180)}`);
+    }
+
+    if (action && !result) {
       try {
         markdownAsset = this.createMarkdownAsset(image);
         result = await this.client.sendDirectMarkdownImage({
@@ -201,23 +213,33 @@ export class QqManager {
         });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        console.warn(`QQ Markdown image notification unavailable; using media fallback; retained read action because delivery is uncertain: ${reason.slice(0, 180)}`);
+        console.warn(`QQ Markdown image notification unavailable; retained read action because delivery is uncertain: ${reason.slice(0, 180)}`);
       }
     }
 
     if (!result) {
-      result = await this.client.sendDirectImage({
-        userOpenId: binding.userOpenId,
-        image,
-        fileName: "mail-summary.png"
-      });
+      throw new Error("QQ image notification failed: media and Markdown delivery were unavailable");
+    }
+
+    if (action && !markdownAsset) {
+      try {
+        actionMessageResult = await this.client.sendDirectMessage({
+          userOpenId: binding.userOpenId,
+          content: "点击下方按钮可将上一封邮件标记为系统已读。",
+          ...(result.messageId ? { messageReferenceId: result.messageId } : {}),
+          readActionToken: action.token
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(`QQ read button message unavailable; image notification was still delivered: ${reason.slice(0, 180)}`);
+      }
     }
 
     if (action) {
       try {
         this.finalizeReadAction(action.token, {
-          messageId: result.messageId,
-          refIndex: result.refIndex
+          messageId: actionMessageResult?.messageId ?? result.messageId,
+          refIndex: actionMessageResult?.refIndex ?? result.refIndex
         });
       } catch {
         // The notification is delivered; action mapping failure must not trigger a duplicate retry.
