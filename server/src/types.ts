@@ -64,6 +64,32 @@ export type NotificationDelivery = {
   updatedAt: string;
 };
 
+export type EmailNotificationStatusSummary = {
+  channel: NotificationChannel;
+  status: NotificationDeliveryStatus;
+  attemptCount: number;
+  nextAttemptAt?: string;
+  sentAt?: string;
+  lastError?: string;
+};
+
+export type NotificationDeliveryListItem = NotificationDelivery & {
+  email?: {
+    id: string;
+    mailboxId: string;
+    mailboxName: string;
+    subject: string;
+    fromName?: string;
+    fromAddress?: string;
+    receivedAt?: string;
+    processedAt: string;
+    category: MailCategory;
+    summaryZh: string;
+    panelRead: boolean;
+    readMarked: boolean;
+  };
+};
+
 export type QqGatewayState = {
   sessionId?: string;
   resumeUrl?: string;

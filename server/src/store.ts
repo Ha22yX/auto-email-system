@@ -15,8 +15,10 @@ import type {
   Mailbox,
   NotificationChannel,
   NotificationDelivery,
+  NotificationDeliveryListItem,
   NotificationDeliveryStatus,
   NotificationSettings,
+  EmailNotificationStatusSummary,
   ProcessedEmail,
   ProcessingRun,
   PublicQqBotSettings,
@@ -1151,6 +1153,47 @@ function rowToNotificationDelivery(row: SqlRow): NotificationDelivery {
   };
 }
 
+function rowToNotificationSummary(row: SqlRow): EmailNotificationStatusSummary {
+  return {
+    channel: String(row.channel) as NotificationChannel,
+    status: String(row.status) as NotificationDeliveryStatus,
+    attemptCount: Number(row.attemptCount ?? 0),
+    nextAttemptAt: row.nextAttemptAt ? String(row.nextAttemptAt) : undefined,
+    sentAt: row.sentAt ? String(row.sentAt) : undefined,
+    lastError: row.lastError ? String(row.lastError) : undefined
+  };
+}
+
+function notificationDeliveryListItem(row: SqlRow): NotificationDeliveryListItem {
+  const delivery = rowToNotificationDelivery(row);
+  if (!row.emailData) return delivery;
+  const email = rowToEmail({ data: row.emailData });
+  return {
+    ...delivery,
+    email: {
+      id: email.id,
+      mailboxId: email.mailboxId,
+      mailboxName: row.mailboxData ? rowToMailbox({ data: row.mailboxData }).name : "未知邮箱",
+      subject: email.subject,
+      fromName: email.fromName,
+      fromAddress: email.fromAddress,
+      receivedAt: email.receivedAt,
+      processedAt: email.processedAt,
+      category: email.category,
+      summaryZh: email.summaryZh,
+      panelRead: email.panelRead ?? email.category === "ignore",
+      readMarked: email.readMarked
+    }
+  };
+}
+
+export function getEmailNotificationSummary(emailId: string, channel: NotificationChannel) {
+  const row = db
+    .prepare("SELECT channel, status, attemptCount, nextAttemptAt, sentAt, lastError FROM notification_deliveries WHERE emailId = ? AND channel = ? LIMIT 1")
+    .get(emailId, channel) as SqlRow | undefined;
+  return row ? rowToNotificationSummary(row) : undefined;
+}
+
 export function readStoredCredentialEnvelope(key: string) {
   const row = db.prepare("SELECT envelope FROM credentials WHERE key = ?").get(key) as SqlRow | undefined;
   return row ? String(row.envelope) : "";
@@ -1493,6 +1536,59 @@ export function listNotificationDeliveries(options: { emailId?: string; status?:
     .all(...params) as SqlRow[]).map(rowToNotificationDelivery);
 }
 
+export function queryNotificationDeliveries(options: {
+  channel?: NotificationChannel;
+  status?: NotificationDeliveryStatus | "failed";
+  offset?: number;
+  limit?: number;
+}) {
+  const where: string[] = [];
+  const params: SQLInputValue[] = [];
+  if (options.channel) {
+    where.push("notification_deliveries.channel = ?");
+    params.push(options.channel);
+  }
+  if (options.status === "failed") {
+    where.push("notification_deliveries.status IN ('retry', 'paused')");
+  } else if (options.status) {
+    where.push("notification_deliveries.status = ?");
+    params.push(options.status);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const totalRow = db
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM notification_deliveries
+       LEFT JOIN emails ON emails.id = notification_deliveries.emailId
+       ${whereSql}`
+    )
+    .get(...params) as SqlRow;
+  const limit = Math.min(100, Math.max(10, Math.floor(options.limit ?? 40)));
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
+  const rows = db
+    .prepare(
+      `SELECT notification_deliveries.*, emails.data AS emailData, mailboxes.data AS mailboxData
+       FROM notification_deliveries
+       LEFT JOIN emails ON emails.id = notification_deliveries.emailId
+       LEFT JOIN mailboxes ON mailboxes.id = emails.mailboxId
+       ${whereSql}
+       ORDER BY ${NOTIFICATION_DELIVERY_RECEIVED_ORDER_SQL}
+       LIMIT ? OFFSET ?`
+    )
+    .all(...params, limit, offset) as SqlRow[];
+
+  const total = Number(totalRow.total ?? 0);
+  return {
+    items: rows.map(notificationDeliveryListItem),
+    total,
+    offset,
+    limit,
+    hasMoreBefore: offset > 0,
+    hasMoreAfter: offset + rows.length < total
+  };
+}
+
 export function claimNotificationDeliveries(
   limit = 20,
   now = new Date().toISOString(),
@@ -1539,6 +1635,59 @@ export function resumePausedNotificationDeliveries(channel: NotificationChannel)
   const now = new Date().toISOString();
   const result = db.prepare(
     "UPDATE notification_deliveries SET status = 'retry', nextAttemptAt = ?, lastError = NULL, updatedAt = ? WHERE channel = ? AND status = 'paused'"
+  ).run(now, now, channel) as { changes?: number };
+  if (Number(result.changes ?? 0) > 0) publishNotificationDeliveryStatus(channel, "retry");
+  return Number(result.changes ?? 0);
+}
+
+export function retryNotificationDelivery(id: string) {
+  const row = db.prepare("SELECT * FROM notification_deliveries WHERE id = ?").get(id) as SqlRow | undefined;
+  if (!row) return undefined;
+  const delivery = rowToNotificationDelivery(row);
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE notification_deliveries
+     SET status = 'retry', nextAttemptAt = ?, lastError = NULL, updatedAt = ?
+     WHERE id = ?`
+  ).run(now, now, id);
+  publishNotificationDeliveryStatus(delivery.channel, "retry");
+  return getNotificationDelivery(delivery.emailId, delivery.channel);
+}
+
+export function pauseNotificationDelivery(id: string) {
+  const row = db.prepare("SELECT * FROM notification_deliveries WHERE id = ?").get(id) as SqlRow | undefined;
+  if (!row) return undefined;
+  const delivery = rowToNotificationDelivery(row);
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE notification_deliveries
+     SET status = 'paused', nextAttemptAt = NULL, updatedAt = ?
+     WHERE id = ?`
+  ).run(now, id);
+  publishNotificationDeliveryStatus(delivery.channel, "paused");
+  return getNotificationDelivery(delivery.emailId, delivery.channel);
+}
+
+export function resumeNotificationDelivery(id: string) {
+  const row = db.prepare("SELECT * FROM notification_deliveries WHERE id = ?").get(id) as SqlRow | undefined;
+  if (!row) return undefined;
+  const delivery = rowToNotificationDelivery(row);
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE notification_deliveries
+     SET status = 'retry', nextAttemptAt = ?, lastError = NULL, updatedAt = ?
+     WHERE id = ? AND status = 'paused'`
+  ).run(now, now, id);
+  publishNotificationDeliveryStatus(delivery.channel, "retry");
+  return getNotificationDelivery(delivery.emailId, delivery.channel);
+}
+
+export function retryNotificationDeliveriesByChannel(channel: NotificationChannel) {
+  const now = new Date().toISOString();
+  const result = db.prepare(
+    `UPDATE notification_deliveries
+     SET status = 'retry', nextAttemptAt = ?, lastError = NULL, updatedAt = ?
+     WHERE channel = ? AND status IN ('retry', 'paused')`
   ).run(now, now, channel) as { changes?: number };
   if (Number(result.changes ?? 0) > 0) publishNotificationDeliveryStatus(channel, "retry");
   return Number(result.changes ?? 0);

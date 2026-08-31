@@ -19,6 +19,8 @@ const {
   normalizeAiSettings,
   publicAiSettings,
   publicQqBotSettings,
+  pauseNotificationDelivery,
+  queryNotificationDeliveries,
   recordQqNotificationReference,
   readMailboxes,
   readProcessingRuns,
@@ -36,6 +38,9 @@ const {
   enqueueNotificationDelivery,
   listNotificationDeliveries,
   markProcessedEmailsPanelRead,
+  retryNotificationDeliveriesByChannel,
+  retryNotificationDelivery,
+  resumeNotificationDelivery,
   queryProcessedEmails,
   undoProcessedEmailsPanelRead
 } = await import("./store");
@@ -450,6 +455,67 @@ test("notification delivery claims sort by email received time across mailboxes"
 
   const claimed = claimNotificationDeliveries(3, new Date(Date.now() + 60_000).toISOString());
   assert.deepEqual(claimed.map((delivery) => delivery.emailId), [early, middle, late]);
+});
+
+test("notification queue queries expose mail context and failed status group", () => {
+  const sqlite = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  sqlite.prepare("DELETE FROM notification_deliveries").run();
+  sqlite.close();
+
+  const suffix = `${process.pid}-${Date.now()}`;
+  const retryEmail = `queue-retry-${suffix}`;
+  const pausedEmail = `queue-paused-${suffix}`;
+  addProcessedEmail(makeStoreEmail({
+    id: pausedEmail,
+    mailboxId: `queue-mailbox-paused-${suffix}`,
+    receivedAt: "2026-08-31T09:00:00.000Z"
+  }));
+  addProcessedEmail(makeStoreEmail({
+    id: retryEmail,
+    mailboxId: `queue-mailbox-retry-${suffix}`,
+    receivedAt: "2026-08-31T08:00:00.000Z"
+  }));
+  const retry = enqueueNotificationDelivery(retryEmail, "qq");
+  const paused = enqueueNotificationDelivery(pausedEmail, "qq");
+
+  const database = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  database.prepare("UPDATE notification_deliveries SET status = 'retry', lastError = 'QQ media upload failed' WHERE id = ?").run(retry.id);
+  database.prepare("UPDATE notification_deliveries SET status = 'paused', lastError = '消息发送失败, 无好友关系' WHERE id = ?").run(paused.id);
+  database.close();
+
+  const failed = queryNotificationDeliveries({ channel: "qq", status: "failed", limit: 20 });
+  assert.deepEqual(failed.items.map((item) => item.emailId), [retryEmail, pausedEmail]);
+  assert.equal(failed.items[0]?.email?.subject, retryEmail);
+  assert.equal(failed.items[1]?.email?.mailboxName, "未知邮箱");
+  assert.equal(failed.items[0]?.lastError, "QQ media upload failed");
+});
+
+test("notification queue actions retry, pause, resume, and bulk retry deliveries", () => {
+  const sqlite = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  sqlite.prepare("DELETE FROM notification_deliveries").run();
+  sqlite.close();
+
+  const suffix = `${process.pid}-${Date.now()}`;
+  const firstEmail = `queue-action-first-${suffix}`;
+  const secondEmail = `queue-action-second-${suffix}`;
+  addProcessedEmail(makeStoreEmail({ id: firstEmail, mailboxId: `queue-action-mailbox-${suffix}` }));
+  addProcessedEmail(makeStoreEmail({ id: secondEmail, mailboxId: `queue-action-mailbox-${suffix}` }));
+  const first = enqueueNotificationDelivery(firstEmail, "qq");
+  const second = enqueueNotificationDelivery(secondEmail, "qq");
+
+  assert.equal(pauseNotificationDelivery(first.id)?.status, "paused");
+  assert.equal(resumeNotificationDelivery(first.id)?.status, "retry");
+  assert.equal(retryNotificationDelivery(first.id)?.status, "retry");
+
+  const database = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  database.prepare("UPDATE notification_deliveries SET status = 'paused', lastError = 'paused' WHERE id = ?").run(first.id);
+  database.prepare("UPDATE notification_deliveries SET status = 'retry', lastError = 'retry' WHERE id = ?").run(second.id);
+  database.close();
+
+  assert.equal(retryNotificationDeliveriesByChannel("qq"), 2);
+  const after = listNotificationDeliveries().filter((delivery) => [first.id, second.id].includes(delivery.id));
+  assert.deepEqual(after.map((delivery) => delivery.status), ["retry", "retry"]);
+  assert.deepEqual(after.map((delivery) => delivery.lastError), [undefined, undefined]);
 });
 
 test("resuming paused deliveries affects only the selected channel", () => {

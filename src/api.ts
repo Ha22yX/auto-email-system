@@ -6,6 +6,9 @@ import type {
   EmailListPage,
   MailCategory,
   Mailbox,
+  NotificationDeliveryItem,
+  NotificationDeliveryPage,
+  NotificationDeliveryStatus,
   NotificationSettings,
   NotificationSettingsResponse,
   ProcessedEmail,
@@ -78,6 +81,33 @@ export const api = {
       limit: String(limit)
     });
     return request<EmailListPage>(`/api/emails?${params.toString()}`);
+  },
+  notifications(status: NotificationDeliveryStatus | "failed" = "failed", offset = 0, limit = 40) {
+    const params = new URLSearchParams({
+      channel: "qq",
+      status,
+      offset: String(offset),
+      limit: String(limit)
+    });
+    return request<NotificationDeliveryPage>(`/api/notifications?${params.toString()}`);
+  },
+  retryNotification(id: string) {
+    return request<NotificationDeliveryItem>(`/api/notifications/${encodeURIComponent(id)}/retry`, {
+      method: "POST"
+    });
+  },
+  pauseNotification(id: string) {
+    return request<NotificationDeliveryItem>(`/api/notifications/${encodeURIComponent(id)}/pause`, {
+      method: "POST"
+    });
+  },
+  resumeNotification(id: string) {
+    return request<NotificationDeliveryItem>(`/api/notifications/${encodeURIComponent(id)}/resume`, {
+      method: "POST"
+    });
+  },
+  retryAllQqNotifications() {
+    return request<{ updatedCount: number }>("/api/notifications/qq/retry-all", { method: "POST" });
   },
   email(id: string) {
     return request<ProcessedEmail>(`/api/emails/${id}`);

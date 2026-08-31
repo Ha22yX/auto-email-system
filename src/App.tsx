@@ -51,6 +51,9 @@ import type {
   EmailListItem,
   MailCategory,
   Mailbox,
+  NotificationDeliveryItem,
+  NotificationDeliveryPage,
+  NotificationDeliveryStatus,
   NotificationSettings,
   ProcessedEmail,
   ProcessingRun,
@@ -58,7 +61,8 @@ import type {
   WeclawStatus
 } from "./types";
 
-type View = "mail" | "settings";
+type View = "mail" | "timeline" | "notifications" | "settings";
+type NotificationQueueStatus = NotificationDeliveryStatus | "failed";
 type EmailContextMenu = {
   x: number;
   y: number;
@@ -174,8 +178,41 @@ function formatTime(value?: string) {
   }).format(new Date(value));
 }
 
+function formatDay(value?: string) {
+  if (!value) return "未知日期";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short"
+  }).format(new Date(value));
+}
+
 function senderName(email: EmailListItem | ProcessedEmail) {
   return email.fromName || email.fromAddress || "未知发件人";
+}
+
+const notificationStatusMeta: Record<NotificationDeliveryStatus, { label: string; className: string }> = {
+  pending: { label: "QQ 待发送", className: "pending" },
+  sending: { label: "QQ 发送中", className: "sending" },
+  sent: { label: "QQ 已发送", className: "sent" },
+  retry: { label: "QQ 重试中", className: "retry" },
+  paused: { label: "QQ 已暂停", className: "paused" }
+};
+
+function qqNotificationLabel(email: EmailListItem | ProcessedEmail) {
+  const notification = email.qqNotification;
+  return notification ? notificationStatusMeta[notification.status] : { label: "QQ 未入队", className: "missing" };
+}
+
+function safeErrorLabel(value?: string) {
+  if (!value) return "暂无失败原因";
+  const lower = value.toLowerCase();
+  if (lower.includes("relationship") || value.includes("无好友关系")) return "QQ 无好友关系";
+  if (lower.includes("rate") || lower.includes("limit") || value.includes("限流")) return "QQ 接口限流，稍后重试";
+  if (lower.includes("upload") || lower.includes("image") || value.includes("图片")) return "QQ 图片上传失败";
+  if (lower.includes("authentication") || lower.includes("token")) return "QQ 鉴权失败";
+  if (lower.includes("not bound") || value.includes("未绑定")) return "QQ 接收人未绑定";
+  return value.slice(0, 96);
 }
 
 const blockedEmailTags = [
@@ -376,6 +413,11 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const [emailTotal, setEmailTotal] = useState(0);
   const [emailWindowLoading, setEmailWindowLoading] = useState<"newer" | "older" | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string>("");
+  const [notificationStatus, setNotificationStatus] = useState<NotificationQueueStatus>("failed");
+  const [notifications, setNotifications] = useState<NotificationDeliveryItem[]>([]);
+  const [notificationPage, setNotificationPage] = useState<NotificationDeliveryPage | null>(null);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationActionBusy, setNotificationActionBusy] = useState("");
   const [detail, setDetail] = useState<ProcessedEmail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -595,6 +637,45 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     },
     [activeCategory, captureEmailScrollAnchor, loading, query, restoreEmailScrollAnchor, selectedMailbox]
   );
+
+  const loadNotifications = useCallback(async (status = notificationStatus, silent = false) => {
+    if (!silent) setNotificationsLoading(true);
+    try {
+      const page = await api.notifications(status, 0, 60);
+      setNotifications(page.items);
+      setNotificationPage(page);
+    } finally {
+      if (!silent) setNotificationsLoading(false);
+    }
+  }, [notificationStatus]);
+
+  async function updateNotificationQueue(action: "retry" | "pause" | "resume", deliveryId: string) {
+    setNotificationActionBusy(`${action}:${deliveryId}`);
+    try {
+      if (action === "retry") await api.retryNotification(deliveryId);
+      if (action === "pause") await api.pauseNotification(deliveryId);
+      if (action === "resume") await api.resumeNotification(deliveryId);
+      await Promise.allSettled([loadNotifications(notificationStatus, true), loadDashboard(), loadEmails(true)]);
+      setToast(action === "pause" ? "已暂停这条 QQ 通知" : "已加入 QQ 通知重试队列");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNotificationActionBusy("");
+    }
+  }
+
+  async function retryAllQqNotifications() {
+    setNotificationActionBusy("retry-all");
+    try {
+      const result = await api.retryAllQqNotifications();
+      await Promise.allSettled([loadNotifications(notificationStatus, true), loadDashboard(), loadEmails(true)]);
+      setToast(`已恢复 ${result.updatedCount} 条 QQ 通知重试`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setNotificationActionBusy("");
+    }
+  }
 
   const handleEmailListScroll = useCallback(() => {
     const node = emailListRef.current;
@@ -824,10 +905,16 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   }, [loadDashboard]);
 
   useEffect(() => {
-    if (view === "mail") {
+    if (view === "mail" || view === "timeline") {
       void loadEmails().catch((error) => setToast(error.message));
     }
   }, [view, loadEmails]);
+
+  useEffect(() => {
+    if (view === "notifications") {
+      void loadNotifications(notificationStatus).catch((error) => setToast(error.message));
+    }
+  }, [view, notificationStatus, loadNotifications]);
 
   useEffect(() => {
     if (!selectedEmailId) {
@@ -926,8 +1013,11 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
         const nearLatest =
           emailOffsetRef.current === 0 &&
           (!emailListRef.current || emailListRef.current.scrollTop < EMAIL_SCROLL_THRESHOLD);
-        if (view === "mail" && nearLatest) {
+        if ((view === "mail" || view === "timeline") && nearLatest) {
           void loadEmails(true).catch(() => undefined);
+        }
+        if (view === "notifications") {
+          void loadNotifications(notificationStatus, true).catch(() => undefined);
         }
 
         try {
@@ -952,7 +1042,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
       source.removeEventListener("app", scheduleRefresh);
       source.close();
     };
-  }, [loadDashboard, loadEmails, patchEmailReadState, selectedEmailId, view]);
+  }, [loadDashboard, loadEmails, loadNotifications, notificationStatus, patchEmailReadState, selectedEmailId, view]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -967,7 +1057,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
       void loadDashboard().catch(() => undefined);
       const nearLatest =
         emailOffsetRef.current === 0 && (!emailListRef.current || emailListRef.current.scrollTop < EMAIL_SCROLL_THRESHOLD);
-      if (view === "mail" && nearLatest) {
+      if ((view === "mail" || view === "timeline") && nearLatest) {
         void loadEmails(true).catch(() => undefined);
       }
     }, 10000);
@@ -991,7 +1081,17 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
   const activeMailboxName =
     selectedMailbox === "all" ? "全部邮箱" : mailboxMap.get(selectedMailbox)?.name || "当前邮箱";
-  const pageEyebrow = view === "mail" ? activeMailboxName : "系统配置";
+  const pageEyebrow = view === "mail" || view === "timeline"
+    ? activeMailboxName
+    : view === "notifications"
+      ? "QQ 通知"
+      : "系统配置";
+  const pageTitle = {
+    mail: "邮件处理台",
+    timeline: "邮件时间线",
+    notifications: "通知队列",
+    settings: "管理设置"
+  }[view];
   const runStatusText = dashboard?.processorRunning
     ? dashboard.currentRun?.currentStage || "正在处理"
     : "空闲";
@@ -999,7 +1099,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     dashboard?.currentRun,
     Boolean(dashboard?.processorRunning)
   );
-  const mailNavExpanded = view === "mail";
+  const mailNavExpanded = view === "mail" || view === "timeline";
   const loadedEmailStart = emailTotal ? emailOffset + 1 : 0;
   const loadedEmailEnd = emailOffset + emails.length;
   const unloadedEarlierCount = emailOffset;
@@ -1020,9 +1120,16 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
         <nav className="nav-stack">
           <div className={mailNavExpanded ? "nav-group active" : "nav-group"}>
-            <button className={mailNavExpanded ? "nav-item active" : "nav-item"} onClick={() => setView("mail")}>
+            <button className={view === "mail" ? "nav-item active" : "nav-item"} onClick={() => setView("mail")}>
               <SealCheck size={18} />
               处理台
+            </button>
+            <button
+              className={view === "timeline" ? "nav-item active" : "nav-item"}
+              onClick={() => setView("timeline")}
+            >
+              <ClockCounterClockwise size={18} />
+              时间线
             </button>
             <div
               className={mailNavExpanded ? "mailbox-submenu expanded" : "mailbox-submenu collapsed"}
@@ -1056,6 +1163,13 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
             </div>
           </div>
           <button
+            className={view === "notifications" ? "nav-item active" : "nav-item"}
+            onClick={() => setView("notifications")}
+          >
+            <BellRinging size={18} />
+            通知队列
+          </button>
+          <button
             className={view === "settings" ? "nav-item active" : "nav-item"}
             onClick={() => setView("settings")}
           >
@@ -1078,7 +1192,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
         <header className="topbar">
           <div>
             <p className="eyebrow">{pageEyebrow}</p>
-            <h1>{view === "mail" ? "邮件处理台" : "管理设置"}</h1>
+            <h1>{pageTitle}</h1>
           </div>
           <div className="topbar-actions">
             <div className={dashboard?.processorRunning ? "run-state running" : "run-state"}>
@@ -1095,7 +1209,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
           </div>
         </header>
 
-        {view === "mail" ? (
+        {view === "mail" || view === "timeline" ? (
           <section ref={mailLayoutRef} className="mail-layout" style={mailLayoutStyle}>
             <div className="mail-main">
               <div className="metric-grid">
@@ -1132,8 +1246,8 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
               <div className="list-toolbar">
                 <div>
-                  <h2>{categoryMeta[activeCategory].label}邮件</h2>
-                  <p>{categoryMeta[activeCategory].helper}</p>
+                  <h2>{view === "timeline" ? "按收到时间排列" : `${categoryMeta[activeCategory].label}邮件`}</h2>
+                  <p>{view === "timeline" ? "跨邮箱按真实收件时间从早到晚展示" : categoryMeta[activeCategory].helper}</p>
                 </div>
                 <div className="list-toolbar-actions">
                   <button
@@ -1193,8 +1307,13 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                     )}
                     {emails.map((email, index) => {
                     const CategoryIcon = categoryMeta[email.category].icon;
+                    const day = formatDay(email.receivedAt || email.processedAt);
+                    const showDay =
+                      view === "timeline" &&
+                      (index === 0 || formatDay(emails[index - 1]?.receivedAt || emails[index - 1]?.processedAt) !== day);
                     const rowClassName = [
                       "email-row",
+                      view === "timeline" ? "timeline-row" : "",
                       email.category,
                       selectedEmailId === email.id ? "active" : "",
                       email.panelRead ? "panel-read" : "panel-unread"
@@ -1203,8 +1322,14 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                       .join(" ");
 
                     return (
+                      <div className={view === "timeline" ? "timeline-email-entry" : "email-list-entry"} key={email.id}>
+                        {showDay && (
+                          <div className="timeline-day-divider">
+                            <span>{day}</span>
+                            <em>{activeMailboxName}</em>
+                          </div>
+                        )}
                       <button
-                        key={email.id}
                         data-email-id={email.id}
                         className={rowClassName}
                         style={{ "--row-index": String(Math.min(index, 12)) } as CSSProperties}
@@ -1237,10 +1362,12 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                               <CheckCircle size={15} />
                               {email.readMarked ? "邮箱已读" : "邮箱待确认"}
                             </span>
+                            <QqNotificationBadge email={email} />
                           </div>
                           {email.actionItemsZh.length > 0 && <em>{email.actionItemsZh.length} 个动作</em>}
                         </div>
                       </button>
+                      </div>
                     );
                   })}
                     {(unloadedLaterCount > 0 || emailWindowLoading === "older") && (
@@ -1289,6 +1416,24 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
               autoLoadRemoteImages={Boolean(dashboard?.settings.system.autoLoadRemoteImages)}
             />
           </section>
+        ) : view === "notifications" ? (
+          <NotificationQueuePanel
+            status={notificationStatus}
+            onStatusChange={setNotificationStatus}
+            notifications={notifications}
+            page={notificationPage}
+            loading={notificationsLoading}
+            busyAction={notificationActionBusy}
+            onReload={() => loadNotifications(notificationStatus)}
+            onRetry={(id) => updateNotificationQueue("retry", id)}
+            onPause={(id) => updateNotificationQueue("pause", id)}
+            onResume={(id) => updateNotificationQueue("resume", id)}
+            onRetryAll={retryAllQqNotifications}
+            onOpenEmail={(emailId) => {
+              setSelectedEmailId(emailId);
+              setView("mail");
+            }}
+          />
         ) : (
           <SettingsPanel
             dashboard={dashboard}
@@ -1724,6 +1869,7 @@ function EmailDetail({
               {detail.panelRead ? <CheckCircle size={15} /> : <EnvelopeSimple size={15} />}
               {detail.panelRead ? "系统已读" : "系统未读"}
             </span>
+            <QqNotificationBadge email={detail} />
           </div>
           <time>{formatTime(detail.receivedAt || detail.processedAt)}</time>
         </div>
@@ -1806,6 +1952,187 @@ function EmailDetail({
         </section>
       </div>
     </aside>
+  );
+}
+
+function QqNotificationBadge({ email }: { email: EmailListItem | ProcessedEmail }) {
+  const meta = qqNotificationLabel(email);
+  const title = email.qqNotification?.lastError ? safeErrorLabel(email.qqNotification.lastError) : meta.label;
+  return (
+    <span className={`qq-notification-badge ${meta.className}`} title={title}>
+      <BellRinging size={15} />
+      {meta.label}
+    </span>
+  );
+}
+
+const notificationQueueTabs: Array<{ status: NotificationQueueStatus; label: string }> = [
+  { status: "failed", label: "失败/重试" },
+  { status: "paused", label: "已暂停" },
+  { status: "sending", label: "发送中" },
+  { status: "sent", label: "已发送" }
+];
+
+function NotificationQueuePanel({
+  status,
+  onStatusChange,
+  notifications,
+  page,
+  loading,
+  busyAction,
+  onReload,
+  onRetry,
+  onPause,
+  onResume,
+  onRetryAll,
+  onOpenEmail
+}: {
+  status: NotificationQueueStatus;
+  onStatusChange: (status: NotificationQueueStatus) => void;
+  notifications: NotificationDeliveryItem[];
+  page: NotificationDeliveryPage | null;
+  loading: boolean;
+  busyAction: string;
+  onReload: () => Promise<void>;
+  onRetry: (id: string) => Promise<void>;
+  onPause: (id: string) => Promise<void>;
+  onResume: (id: string) => Promise<void>;
+  onRetryAll: () => Promise<void>;
+  onOpenEmail: (emailId: string) => void;
+}) {
+  return (
+    <section className="queue-panel">
+      <div className="queue-toolbar">
+        <div>
+          <p className="section-kicker">QQ 通知</p>
+          <h2>通知投递队列</h2>
+        </div>
+        <div className="queue-actions">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void onReload()}
+            disabled={loading || Boolean(busyAction)}
+          >
+            <ClockCounterClockwise size={17} />
+            刷新
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void onRetryAll()}
+            disabled={busyAction === "retry-all"}
+          >
+            <BellRinging size={17} />
+            {busyAction === "retry-all" ? "恢复中" : "重试全部"}
+          </button>
+        </div>
+      </div>
+
+      <div className="queue-tabs" role="tablist" aria-label="通知状态">
+        {notificationQueueTabs.map((tab) => (
+          <button
+            key={tab.status}
+            type="button"
+            className={status === tab.status ? "active" : ""}
+            onClick={() => onStatusChange(tab.status)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="queue-summary">
+        <span>
+          当前列表 {page && notifications.length ? `${page.offset + 1}-${page.offset + notifications.length}` : "0"} / {page?.total ?? 0}
+        </span>
+        <em>按邮件收到时间从早到晚</em>
+      </div>
+
+      <div className={loading ? "queue-list loading" : "queue-list"}>
+        {loading ? (
+          Array.from({ length: 6 }).map((_, index) => <div className="queue-skeleton" key={index} />)
+        ) : notifications.length ? (
+          notifications.map((delivery) => {
+            const meta = notificationStatusMeta[delivery.status];
+            const email = delivery.email;
+            const busyRetry = busyAction === `retry:${delivery.id}`;
+            const busyPause = busyAction === `pause:${delivery.id}`;
+            const busyResume = busyAction === `resume:${delivery.id}`;
+            return (
+              <article className="queue-row" key={delivery.id}>
+                <div className="queue-row-main">
+                  <div className="queue-row-title">
+                    <span className={`qq-notification-badge ${meta.className}`}>
+                      <BellRinging size={15} />
+                      {meta.label}
+                    </span>
+                    <strong>{email?.subject || "邮件不存在"}</strong>
+                  </div>
+                  <div className="queue-row-meta">
+                    <span>{email?.mailboxName || "未知邮箱"}</span>
+                    <span>{email?.fromName || email?.fromAddress || "未知发件人"}</span>
+                    <time>{formatTime(email?.receivedAt || email?.processedAt || delivery.createdAt)}</time>
+                  </div>
+                  <p>{delivery.lastError ? safeErrorLabel(delivery.lastError) : email?.summaryZh || "暂无失败原因"}</p>
+                  <div className="queue-row-foot">
+                    <span>尝试 {delivery.attemptCount} 次</span>
+                    {delivery.nextAttemptAt && <span>下次 {formatTime(delivery.nextAttemptAt)}</span>}
+                    {delivery.sentAt && <span>已发 {formatTime(delivery.sentAt)}</span>}
+                  </div>
+                </div>
+                <div className="queue-row-actions">
+                  {email && (
+                    <button type="button" className="ghost-button" onClick={() => onOpenEmail(email.id)}>
+                      <EnvelopeSimple size={16} />
+                      打开
+                    </button>
+                  )}
+                  {delivery.status !== "sent" && delivery.status !== "sending" && (
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void onRetry(delivery.id)}
+                      disabled={busyRetry}
+                    >
+                      <ClockCounterClockwise size={16} />
+                      {busyRetry ? "提交中" : "重试"}
+                    </button>
+                  )}
+                  {delivery.status === "paused" ? (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void onResume(delivery.id)}
+                      disabled={busyResume}
+                    >
+                      <Play size={16} weight="fill" />
+                      {busyResume ? "恢复中" : "恢复"}
+                    </button>
+                  ) : delivery.status !== "sent" ? (
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => void onPause(delivery.id)}
+                      disabled={busyPause}
+                    >
+                      <X size={16} />
+                      {busyPause ? "暂停中" : "暂停"}
+                    </button>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })
+        ) : (
+          <div className="empty-state queue-empty">
+            <BellRinging size={34} />
+            <h3>没有匹配的 QQ 通知</h3>
+            <p>切换状态标签可以查看其他通知记录。</p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

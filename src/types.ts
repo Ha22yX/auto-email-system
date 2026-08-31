@@ -138,6 +138,15 @@ export type NotificationSettings = {
   notifyCategories: Record<MailCategory, boolean>;
 };
 
+export type EmailNotificationStatusSummary = {
+  channel: NotificationChannel;
+  status: NotificationDeliveryStatus;
+  attemptCount: number;
+  nextAttemptAt?: string;
+  sentAt?: string;
+  lastError?: string;
+};
+
 export type AuthSettings = {
   passwordUpdatedAt: string;
   sessionDays: number;
@@ -180,6 +189,37 @@ export type EmailListItem = {
   readMarkNote?: string;
   notifiedAt?: string;
   notificationError?: string;
+  qqNotification?: EmailNotificationStatusSummary;
+};
+
+export type NotificationDeliveryItem = EmailNotificationStatusSummary & {
+  id: string;
+  emailId: string;
+  createdAt: string;
+  updatedAt: string;
+  email?: {
+    id: string;
+    mailboxId: string;
+    mailboxName: string;
+    subject: string;
+    fromName?: string;
+    fromAddress?: string;
+    receivedAt?: string;
+    processedAt: string;
+    category: MailCategory;
+    summaryZh: string;
+    panelRead: boolean;
+    readMarked: boolean;
+  };
+};
+
+export type NotificationDeliveryPage = {
+  items: NotificationDeliveryItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMoreBefore: boolean;
+  hasMoreAfter: boolean;
 };
 
 export type EmailListPage = {

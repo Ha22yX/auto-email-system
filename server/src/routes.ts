@@ -16,15 +16,21 @@ import {
   publicMailbox,
   publicQqBotSettings,
   getDashboardData,
+  getEmailNotificationSummary,
   getProcessedEmailById,
   markProcessedEmailsPanelRead,
+  pauseNotificationDelivery,
+  queryNotificationDeliveries,
   queryProcessedEmails,
   readMailboxes,
   readProcessingRuns,
   readQqBotConfig,
   readSettings,
   removeMailbox,
+  retryNotificationDeliveriesByChannel,
+  retryNotificationDelivery,
   resumePausedNotificationDeliveries,
+  resumeNotificationDelivery,
   updateAuthPassword,
   updateAiSettings,
   updateNotificationSettings,
@@ -60,6 +66,8 @@ import type {
   AiSettings,
   ClassificationResult,
   MailCategory,
+  NotificationChannel,
+  NotificationDeliveryStatus,
   NotificationSettings,
   ProcessedEmail,
   PublicQqBotSettings
@@ -217,6 +225,16 @@ const bulkPanelReadUndoSchema = z.object({
   operationId: z.string().uuid()
 });
 
+const notificationChannels = new Set<NotificationChannel>(["wechat", "qq"]);
+const notificationStatuses = new Set<NotificationDeliveryStatus | "failed">([
+  "pending",
+  "sending",
+  "sent",
+  "retry",
+  "paused",
+  "failed"
+]);
+
 const loginSchema = z.object({
   password: z.string().min(1, "请输入登录密码")
 });
@@ -254,7 +272,8 @@ function emailListItem(email: ProcessedEmail) {
     panelRead: email.panelRead ?? email.category === "ignore",
     panelReadAt: email.panelReadAt,
     readMarked: email.readMarked,
-    readMarkNote: email.readMarkNote
+    readMarkNote: email.readMarkNote,
+    qqNotification: getEmailNotificationSummary(email.id, "qq")
   };
 }
 
@@ -262,6 +281,7 @@ function emailDetailItem(email: ProcessedEmail) {
   return {
     ...email,
     panelRead: email.panelRead ?? email.category === "ignore",
+    qqNotification: getEmailNotificationSummary(email.id, "qq"),
     assetToken: createEmailAssetToken(email.id)
   };
 }
@@ -761,6 +781,79 @@ router.get(
       hasMoreBefore: result.hasMoreBefore,
       hasMoreAfter: result.hasMoreAfter
     });
+  })
+);
+
+router.get(
+  "/notifications",
+  asyncRoute((req, res) => {
+    const channel = String(req.query.channel ?? "qq");
+    const status = String(req.query.status ?? "failed");
+    const offset = Math.max(0, Math.floor(Number(req.query.offset ?? 0) || 0));
+    const limit = Math.min(100, Math.max(10, Math.floor(Number(req.query.limit ?? 40) || 40)));
+    const result = queryNotificationDeliveries({
+      channel: notificationChannels.has(channel as NotificationChannel) ? (channel as NotificationChannel) : "qq",
+      status: notificationStatuses.has(status as NotificationDeliveryStatus | "failed")
+        ? (status as NotificationDeliveryStatus | "failed")
+        : "failed",
+      offset,
+      limit
+    });
+    res.json({
+      items: result.items,
+      total: result.total,
+      offset,
+      limit,
+      hasMoreBefore: result.hasMoreBefore,
+      hasMoreAfter: result.hasMoreAfter
+    });
+  })
+);
+
+router.post(
+  "/notifications/qq/retry-all",
+  asyncRoute((_req, res) => {
+    const updatedCount = retryNotificationDeliveriesByChannel("qq");
+    if (updatedCount > 0) scheduleNotificationDispatch(0);
+    res.json({ updatedCount });
+  })
+);
+
+router.post(
+  "/notifications/:id/retry",
+  asyncRoute((req, res) => {
+    const delivery = retryNotificationDelivery(String(req.params.id));
+    if (!delivery) {
+      res.status(404).json({ error: "通知记录不存在" });
+      return;
+    }
+    scheduleNotificationDispatch(0);
+    res.json(delivery);
+  })
+);
+
+router.post(
+  "/notifications/:id/pause",
+  asyncRoute((req, res) => {
+    const delivery = pauseNotificationDelivery(String(req.params.id));
+    if (!delivery) {
+      res.status(404).json({ error: "通知记录不存在" });
+      return;
+    }
+    res.json(delivery);
+  })
+);
+
+router.post(
+  "/notifications/:id/resume",
+  asyncRoute((req, res) => {
+    const delivery = resumeNotificationDelivery(String(req.params.id));
+    if (!delivery) {
+      res.status(404).json({ error: "通知记录不存在" });
+      return;
+    }
+    scheduleNotificationDispatch(0);
+    res.json(delivery);
   })
 );
 
