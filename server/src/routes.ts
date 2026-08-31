@@ -184,7 +184,27 @@ export const qqNotificationSchema = z.object({
     important: z.coerce.boolean().default(true),
     secondary: z.coerce.boolean().default(true),
     ignore: z.coerce.boolean().default(false)
-  })
+  }),
+  agent: z
+    .object({
+      enabled: z.coerce.boolean().optional().default(false),
+      requireConfirmation: z.coerce.boolean().optional().default(true),
+      maxResults: z.coerce.number().int().min(3).max(10).optional().default(6),
+      permissions: z
+        .object({
+          readMail: z.coerce.boolean().default(true),
+          manageReadState: z.coerce.boolean().default(true),
+          manageNotifications: z.coerce.boolean().default(true),
+          runProcessing: z.coerce.boolean().default(true),
+          checkMailboxes: z.coerce.boolean().default(true),
+          reclassifyMail: z.coerce.boolean().default(true)
+        })
+        .partial()
+        .optional()
+        .default({})
+    })
+    .partial()
+    .optional()
 });
 
 const notificationChannelsSchema = z.object({

@@ -10,6 +10,7 @@ import type {
   AiSettings,
   AppState,
   AuthSettings,
+  ClassificationResult,
   IncomingEmail,
   MailCategory,
   Mailbox,
@@ -25,6 +26,8 @@ import type {
   QqBotBinding,
   QqBotConfig,
   QqBotSettingsInput,
+  QqAgentPermission,
+  QqAgentSettings,
   QqGatewayState,
   QqEmailReadAction,
   QqNotificationReference,
@@ -60,12 +63,29 @@ const defaultNotifyCategories: Record<MailCategory, boolean> = {
   ignore: false
 };
 
+const defaultQqAgentPermissions: Record<QqAgentPermission, boolean> = {
+  readMail: true,
+  manageReadState: true,
+  manageNotifications: true,
+  runProcessing: true,
+  checkMailboxes: true,
+  reclassifyMail: true
+};
+
+const defaultQqAgentSettings: QqAgentSettings = {
+  enabled: false,
+  requireConfirmation: true,
+  maxResults: 6,
+  permissions: defaultQqAgentPermissions
+};
+
 const defaultQqBotConfig: QqBotConfig = {
   appId: "",
   encryptedAppSecret: "",
   enabled: false,
   notifyCategories: defaultNotifyCategories,
-  quoteImageMarksRead: true
+  quoteImageMarksRead: true,
+  agent: defaultQqAgentSettings
 };
 
 const aiProtocols = new Set(["auto", "openai-chat", "openai-responses", "anthropic", "gemini"]);
@@ -274,6 +294,24 @@ db.exec(`
     ON qq_email_read_actions(createdAt DESC);
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS qq_agent_events (
+    id TEXT PRIMARY KEY,
+    userOpenId TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    toolName TEXT,
+    status TEXT NOT NULL,
+    message TEXT,
+    data TEXT NOT NULL,
+    createdAt TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_qq_agent_events_user
+    ON qq_agent_events(userOpenId, createdAt DESC);
+  CREATE INDEX IF NOT EXISTS idx_qq_agent_events_tool
+    ON qq_agent_events(toolName, createdAt DESC);
+`);
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -284,6 +322,27 @@ function bool(value: unknown) {
 
 function parseBool(value: unknown) {
   return Number(value) === 1;
+}
+
+function normalizeQqAgentSettings(input: Partial<QqAgentSettings> | undefined): QqAgentSettings {
+  const permissions = {
+    ...defaultQqAgentPermissions,
+    ...(input?.permissions ?? {})
+  };
+  const maxResults = Math.floor(Number(input?.maxResults ?? defaultQqAgentSettings.maxResults));
+  return {
+    enabled: Boolean(input?.enabled ?? defaultQqAgentSettings.enabled),
+    requireConfirmation: Boolean(input?.requireConfirmation ?? defaultQqAgentSettings.requireConfirmation),
+    maxResults: Math.min(10, Math.max(3, Number.isFinite(maxResults) ? maxResults : defaultQqAgentSettings.maxResults)),
+    permissions: {
+      readMail: Boolean(permissions.readMail),
+      manageReadState: Boolean(permissions.manageReadState),
+      manageNotifications: Boolean(permissions.manageNotifications),
+      runProcessing: Boolean(permissions.runProcessing),
+      checkMailboxes: Boolean(permissions.checkMailboxes),
+      reclassifyMail: Boolean(permissions.reclassifyMail)
+    }
+  };
 }
 
 function normalizeFingerprintText(value?: string) {
@@ -864,9 +923,36 @@ export function updateProcessedEmailPanelRead(id: string, panelRead: boolean) {
   return email;
 }
 
-export function markProcessedEmailsPanelRead(options: { category: MailCategory; mailboxId?: string }) {
-  const where = ["category = ?", "panelRead = 0"];
-  const params: SQLInputValue[] = [options.category];
+export function updateProcessedEmailCategory(id: string, category: MailCategory) {
+  const email = getProcessedEmailById(id);
+  if (!email) throw new Error("邮件不存在");
+
+  email.category = category;
+  insertEmail(email);
+  publishAppEvent("email", { id, mailboxId: email.mailboxId, category: email.category });
+  return email;
+}
+
+export function updateProcessedEmailClassification(id: string, result: ClassificationResult) {
+  const email = getProcessedEmailById(id);
+  if (!email) throw new Error("邮件不存在");
+
+  email.category = result.category;
+  email.summaryZh = result.summaryZh;
+  email.reasonZh = result.reasonZh;
+  email.actionItemsZh = result.actionItemsZh;
+  insertEmail(email);
+  publishAppEvent("email", { id, mailboxId: email.mailboxId, category: email.category });
+  return email;
+}
+
+export function markProcessedEmailsPanelRead(options: { category?: MailCategory; mailboxId?: string }) {
+  const where = ["panelRead = 0"];
+  const params: SQLInputValue[] = [];
+  if (options.category) {
+    where.push("category = ?");
+    params.push(options.category);
+  }
   if (options.mailboxId && options.mailboxId !== "all") {
     where.push("mailboxId = ?");
     params.push(options.mailboxId);
@@ -909,7 +995,7 @@ export function markProcessedEmailsPanelRead(options: { category: MailCategory; 
   expiryTimer.unref();
 
   publishAppEvent("email-bulk-read", {
-    category: options.category,
+    category: options.category ?? "all",
     mailboxId: options.mailboxId ?? "all",
     updatedCount: updatedIds.length
   });
@@ -999,6 +1085,8 @@ export function queryProcessedEmails(options: {
   category?: string;
   mailboxId?: string;
   q?: string;
+  since?: string;
+  until?: string;
   offset?: number;
   limit?: number;
 }) {
@@ -1015,14 +1103,22 @@ export function queryProcessedEmails(options: {
     params.push(options.mailboxId);
   }
   if (options.q?.trim()) {
-    where.push("(subject LIKE ? OR fromName LIKE ? OR fromAddress LIKE ? OR summaryZh LIKE ?)");
+    where.push("(subject LIKE ? OR fromName LIKE ? OR fromAddress LIKE ? OR summaryZh LIKE ? OR data LIKE ?)");
     const query = `%${options.q.trim()}%`;
-    params.push(query, query, query, query);
+    params.push(query, query, query, query, query);
+  }
+  if (options.since) {
+    where.push("COALESCE(receivedAt, processedAt) >= ?");
+    params.push(options.since);
+  }
+  if (options.until) {
+    where.push("COALESCE(receivedAt, processedAt) < ?");
+    params.push(options.until);
   }
 
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const totalRow = db.prepare(`SELECT COUNT(*) AS total FROM emails ${whereSql}`).get(...params) as SqlRow;
-  const limit = Math.min(100, Math.max(20, Math.floor(options.limit ?? 40)));
+  const limit = Math.min(100, Math.max(1, Math.floor(options.limit ?? 40)));
   const offset = Math.max(0, Math.floor(options.offset ?? 0));
   const rows = db
     .prepare(`SELECT data FROM emails ${whereSql} ORDER BY ${EMAIL_DISPLAY_RECEIVED_ORDER_SQL} LIMIT ? OFFSET ?`)
@@ -1037,6 +1133,50 @@ export function queryProcessedEmails(options: {
     hasMoreBefore: offset > 0,
     hasMoreAfter: offset + rows.length < total
   };
+}
+
+export function getEmailStats(options: {
+  mailboxId?: string;
+  since?: string;
+  until?: string;
+} = {}) {
+  const where: string[] = [];
+  const params: SQLInputValue[] = [];
+  if (options.mailboxId && options.mailboxId !== "all") {
+    where.push("mailboxId = ?");
+    params.push(options.mailboxId);
+  }
+  if (options.since) {
+    where.push("COALESCE(receivedAt, processedAt) >= ?");
+    params.push(options.since);
+  }
+  if (options.until) {
+    where.push("COALESCE(receivedAt, processedAt) < ?");
+    params.push(options.until);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const counts: Record<MailCategory, number> = { important: 0, secondary: 0, ignore: 0 };
+  const unreadCounts: Record<MailCategory, number> = { important: 0, secondary: 0, ignore: 0 };
+  for (const row of db.prepare(`SELECT category, COUNT(*) AS total FROM emails ${whereSql} GROUP BY category`).all(
+    ...params
+  ) as SqlRow[]) {
+    counts[row.category as MailCategory] = Number(row.total ?? 0);
+  }
+  const unreadWhereSql = `${whereSql}${whereSql ? " AND" : "WHERE"} panelRead = 0`;
+  for (const row of db.prepare(`SELECT category, COUNT(*) AS total FROM emails ${unreadWhereSql} GROUP BY category`).all(
+    ...params
+  ) as SqlRow[]) {
+    unreadCounts[row.category as MailCategory] = Number(row.total ?? 0);
+  }
+
+  const total = Number(
+    (db.prepare(`SELECT COUNT(*) AS total FROM emails ${whereSql}`).get(...params) as SqlRow).total ?? 0
+  );
+  const unreadTotal = Number(
+    (db.prepare(`SELECT COUNT(*) AS total FROM emails ${unreadWhereSql}`).get(...params) as SqlRow).total ?? 0
+  );
+  return { counts, unreadCounts, total, unreadTotal };
 }
 
 export function getDashboardData(mailboxId?: string) {
@@ -1139,6 +1279,46 @@ export function recordProcessingEvent(input: {
   return event;
 }
 
+export function recordQqAgentEvent(input: {
+  userOpenId: string;
+  kind: string;
+  status: string;
+  toolName?: string;
+  message?: string;
+  data?: unknown;
+}) {
+  const event = {
+    id: randomUUID(),
+    userOpenId: input.userOpenId,
+    kind: input.kind.slice(0, 64),
+    toolName: input.toolName?.slice(0, 80),
+    status: input.status.slice(0, 32),
+    message: input.message?.replace(/\s+/g, " ").trim().slice(0, 240),
+    data: input.data ?? {},
+    createdAt: new Date().toISOString()
+  };
+  db.prepare(
+    `INSERT INTO qq_agent_events (id, userOpenId, kind, toolName, status, message, data, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    event.id,
+    event.userOpenId,
+    event.kind,
+    event.toolName ?? null,
+    event.status,
+    event.message ?? null,
+    JSON.stringify(event.data).slice(0, 12000),
+    event.createdAt
+  );
+  publishAppEvent("qq-agent", {
+    kind: event.kind,
+    status: event.status,
+    toolName: event.toolName,
+    createdAt: event.createdAt
+  });
+  return event;
+}
+
 function rowToNotificationDelivery(row: SqlRow): NotificationDelivery {
   return {
     id: String(row.id),
@@ -1218,7 +1398,8 @@ function readStoredQqBotSettings(): QqBotConfig {
     notifyCategories: {
       ...defaultNotifyCategories,
       ...saved.notifyCategories
-    }
+    },
+    agent: normalizeQqAgentSettings(saved.agent)
   };
 }
 
@@ -1232,6 +1413,7 @@ export function publicQqBotSettings(config: QqBotConfig): PublicQqBotSettings {
     enabled: config.enabled,
     notifyCategories: clone(config.notifyCategories),
     quoteImageMarksRead: config.quoteImageMarksRead,
+    agent: clone(normalizeQqAgentSettings(config.agent)),
     hasAppSecret: Boolean(config.encryptedAppSecret),
     maskedAppSecret: config.encryptedAppSecret ? "configured" : ""
   };
@@ -1251,6 +1433,14 @@ export function updateQqBotSettings(input: QqBotSettingsInput): PublicQqBotSetti
     enabled: input.enabled ?? current.enabled,
     notifyCategories,
     quoteImageMarksRead: input.quoteImageMarksRead ?? current.quoteImageMarksRead,
+    agent: normalizeQqAgentSettings({
+      ...current.agent,
+      ...input.agent,
+      permissions: {
+        ...current.agent.permissions,
+        ...input.agent?.permissions
+      }
+    }),
     encryptedAppSecret
   };
   const now = new Date().toISOString();

@@ -238,9 +238,105 @@
 .qq-quote-read-toggle .switch-track.on { background: var(--accent); }
 .qq-quote-read-toggle .switch-track.on > span { transform: translateX(18px); }
 
+.qq-agent-section { gap: 12px; }
+.qq-agent-toggle { margin-bottom: 0; }
+.qq-agent-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 128px;
+  gap: 10px;
+}
+.qq-agent-confirm-toggle,
+.qq-agent-limit {
+  display: grid;
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(248, 250, 248, 0.76);
+}
+.qq-agent-confirm-toggle {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  padding: 9px 11px;
+  color: var(--muted);
+  text-align: left;
+}
+.qq-agent-confirm-toggle.active {
+  border-color: rgba(31, 105, 83, 0.32);
+  background: rgba(226, 239, 233, 0.58);
+  color: var(--accent);
+}
+.qq-agent-confirm-toggle span {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qq-agent-confirm-toggle em,
+.qq-agent-permission em {
+  color: inherit;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 760;
+}
+.qq-agent-limit {
+  grid-template-columns: minmax(0, 1fr) 48px;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.qq-agent-limit input {
+  width: 48px;
+  min-width: 0;
+  padding: 6px;
+  text-align: center;
+}
+.qq-agent-permission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.qq-agent-permission {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(248, 250, 248, 0.76);
+  color: var(--muted);
+  text-align: left;
+}
+.qq-agent-permission.active {
+  border-color: rgba(31, 105, 83, 0.3);
+  background: rgba(226, 239, 233, 0.58);
+  color: var(--accent);
+}
+.qq-agent-permission span {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qq-agent-permission small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 @media (max-width: 560px) {
   .qq-quote-read-toggle { grid-template-columns: auto minmax(0, 1fr); }
   .qq-quote-read-toggle .switch-track { grid-column: 2; }
+  .qq-agent-controls,
+  .qq-agent-permission-grid { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

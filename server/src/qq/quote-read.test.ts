@@ -12,7 +12,20 @@ function config(enabled = true): QqBotConfig {
     encryptedAppSecret: "v1:test",
     enabled: true,
     quoteImageMarksRead: enabled,
-    notifyCategories: { important: true, secondary: true, ignore: false }
+    notifyCategories: { important: true, secondary: true, ignore: false },
+    agent: {
+      enabled: false,
+      requireConfirmation: true,
+      maxResults: 6,
+      permissions: {
+        readMail: true,
+        manageReadState: true,
+        manageNotifications: true,
+        runProcessing: true,
+        checkMailboxes: true,
+        reclassifyMail: true
+      }
+    }
   };
 }
 

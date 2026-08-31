@@ -158,6 +158,7 @@ test("QQ AppSecret is encrypted and never returned by public settings", () => {
 
   assert.equal(publicSettings.hasAppSecret, true);
   assert.deepEqual(Object.keys(publicSettings).sort(), [
+    "agent",
     "appId",
     "enabled",
     "hasAppSecret",
@@ -169,6 +170,19 @@ test("QQ AppSecret is encrypted and never returned by public settings", () => {
   assert.equal(JSON.stringify(publicSettings).includes(envelope), false);
   assert.equal("appSecret" in publicSettings, false);
   assert.equal("encryptedAppSecret" in publicSettings, false);
+  assert.deepEqual(publicSettings.agent, {
+    enabled: false,
+    requireConfirmation: true,
+    maxResults: 6,
+    permissions: {
+      readMail: true,
+      manageReadState: true,
+      manageNotifications: true,
+      runProcessing: true,
+      checkMailboxes: true,
+      reclassifyMail: true
+    }
+  });
   assert.equal(config.encryptedAppSecret, envelope);
   assert.equal(envelope.includes("test-secret"), false);
 });
@@ -375,6 +389,44 @@ test("processed email queries show newest received mail first across mailboxes",
   });
 
   assert.deepEqual(result.items.map((email) => email.id), [third, second, first]);
+});
+
+test("processed email queries filter by received time window", () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const before = `range-before-${suffix}`;
+  const insideOld = `range-inside-old-${suffix}`;
+  const insideNew = `range-inside-new-${suffix}`;
+  const after = `range-after-${suffix}`;
+
+  addProcessedEmail(makeStoreEmail({
+    id: before,
+    mailboxId: `range-mailbox-${suffix}`,
+    receivedAt: "2026-08-30T23:59:59.000Z"
+  }));
+  addProcessedEmail(makeStoreEmail({
+    id: insideOld,
+    mailboxId: `range-mailbox-${suffix}`,
+    receivedAt: "2026-08-31T08:00:00.000Z"
+  }));
+  addProcessedEmail(makeStoreEmail({
+    id: insideNew,
+    mailboxId: `range-mailbox-${suffix}`,
+    receivedAt: "2026-08-31T10:00:00.000Z"
+  }));
+  addProcessedEmail(makeStoreEmail({
+    id: after,
+    mailboxId: `range-mailbox-${suffix}`,
+    receivedAt: "2026-09-01T00:00:00.000Z"
+  }));
+
+  const result = queryProcessedEmails({
+    mailboxId: `range-mailbox-${suffix}`,
+    since: "2026-08-31T00:00:00.000Z",
+    until: "2026-09-01T00:00:00.000Z",
+    limit: 20
+  });
+
+  assert.deepEqual(result.items.map((email) => email.id), [insideNew, insideOld]);
 });
 
 test("email state updates preserve QQ button actions and message references", () => {

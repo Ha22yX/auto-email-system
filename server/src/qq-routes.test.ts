@@ -3,15 +3,32 @@ import test from "node:test";
 
 const { buildNotificationSettingsResponse, qqNotificationSchema } = await import("./routes");
 
+const agent = {
+  enabled: false,
+  requireConfirmation: true,
+  maxResults: 6,
+  permissions: {
+    readMail: true,
+    manageReadState: true,
+    manageNotifications: true,
+    runProcessing: true,
+    checkMailboxes: true,
+    reclassifyMail: true
+  }
+};
+
 test("QQ notification settings accept a blank write-only secret and validate AppID", () => {
   const parsed = qqNotificationSchema.parse({
     appId: "1900000000",
     appSecret: "",
     enabled: true,
     quoteImageMarksRead: true,
-    notifyCategories: { important: true, secondary: true, ignore: false }
+    notifyCategories: { important: true, secondary: true, ignore: false },
+    agent: { enabled: true, permissions: { runProcessing: false } }
   });
   assert.equal(parsed.appSecret, "");
+  assert.equal(parsed.agent?.enabled, true);
+  assert.equal(parsed.agent?.permissions?.runProcessing, false);
   assert.throws(() => qqNotificationSchema.parse({ ...parsed, appId: "not-an-app-id" }));
 });
 
@@ -31,7 +48,8 @@ test("combined notification settings never serialize QQ secrets or full recipien
       hasAppSecret: true,
       maskedAppSecret: "test...cret",
       quoteImageMarksRead: true,
-      notifyCategories: { important: true, secondary: true, ignore: false }
+      notifyCategories: { important: true, secondary: true, ignore: false },
+      agent
     },
     {
       enabled: true,

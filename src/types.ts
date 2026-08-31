@@ -10,16 +10,35 @@ export type NotificationChannelSettings = {
   notifyCategories: Record<MailCategory, boolean>;
 };
 
+export type QqAgentPermission =
+  | "readMail"
+  | "manageReadState"
+  | "manageNotifications"
+  | "runProcessing"
+  | "checkMailboxes"
+  | "reclassifyMail";
+
+export type QqAgentSettings = {
+  enabled: boolean;
+  requireConfirmation: boolean;
+  maxResults: number;
+  permissions: Record<QqAgentPermission, boolean>;
+};
+
 export type QqBotConfig = NotificationChannelSettings & {
   appId: string;
   encryptedAppSecret: string;
   quoteImageMarksRead: boolean;
+  agent: QqAgentSettings;
 };
 
 export type QqBotSettingsInput = Partial<NotificationChannelSettings> & {
   appId?: string;
   appSecret?: string;
   quoteImageMarksRead?: boolean;
+  agent?: Partial<Omit<QqAgentSettings, "permissions">> & {
+    permissions?: Partial<Record<QqAgentPermission, boolean>>;
+  };
 };
 
 export type PublicQqBotSettings = NotificationChannelSettings & {
@@ -27,6 +46,7 @@ export type PublicQqBotSettings = NotificationChannelSettings & {
   hasAppSecret: boolean;
   maskedAppSecret: string;
   quoteImageMarksRead: boolean;
+  agent: QqAgentSettings;
 };
 
 export type QqGatewayStatus = {

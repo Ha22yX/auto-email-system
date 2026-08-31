@@ -7,7 +7,20 @@ const TEST_CONFIG = {
   encryptedAppSecret: "encrypted-test-secret",
   enabled: true,
   quoteImageMarksRead: true,
-  notifyCategories: { important: true, secondary: true, ignore: false }
+  notifyCategories: { important: true, secondary: true, ignore: false },
+  agent: {
+    enabled: false,
+    requireConfirmation: true,
+    maxResults: 6,
+    permissions: {
+      readMail: true,
+      manageReadState: true,
+      manageNotifications: true,
+      runProcessing: true,
+      checkMailboxes: true,
+      reclassifyMail: true
+    }
+  }
 };
 
 function createTokenFetch(tokens: Array<{ access_token: string; expires_in: number }>) {

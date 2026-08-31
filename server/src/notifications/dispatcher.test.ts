@@ -52,12 +52,27 @@ const wechatSettings: NotificationSettings = {
   notifyCategories: { important: true, secondary: true, ignore: false }
 };
 
+const qqAgentSettings: QqBotConfig["agent"] = {
+  enabled: false,
+  requireConfirmation: true,
+  maxResults: 6,
+  permissions: {
+    readMail: true,
+    manageReadState: true,
+    manageNotifications: true,
+    runProcessing: true,
+    checkMailboxes: true,
+    reclassifyMail: true
+  }
+};
+
 const qqSettings: QqBotConfig = {
   enabled: true,
   appId: "1900000000",
   encryptedAppSecret: "v1:fake",
   quoteImageMarksRead: true,
-  notifyCategories: { important: true, secondary: true, ignore: false }
+  notifyCategories: { important: true, secondary: true, ignore: false },
+  agent: qqAgentSettings
 };
 
 function createHarness(options: {

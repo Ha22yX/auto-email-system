@@ -5,6 +5,7 @@ import {
   resumePausedNotificationDeliveries
 } from "../store";
 import type { QqBotBinding, QqBotConfig } from "../types";
+import { createQqAgentService, type QqAgentService } from "./agent";
 import { createQqBindingService, type QqBindingChallenge, type QqBindingService } from "./binding";
 import { createQqButtonReadService, type QqButtonReadService } from "./button-read";
 import { createQqClient } from "./client";
@@ -34,6 +35,7 @@ type QqManagerBindingService = Pick<
 
 type QqManagerQuoteReadService = Pick<QqQuoteReadService, "handleDispatchEvent">;
 type QqManagerButtonReadService = Pick<QqButtonReadService, "handleDispatchEvent">;
+type QqManagerAgentService = Pick<QqAgentService, "handleDispatchEvent">;
 
 type QqManagerClient = {
   sendDirectMessage(input: QqDirectMessageInput): Promise<QqSendResult>;
@@ -47,6 +49,7 @@ export type QqManagerDependencies = {
   bindingService?: QqManagerBindingService;
   quoteReadService?: QqManagerQuoteReadService;
   buttonReadService?: QqManagerButtonReadService;
+  agentService?: QqManagerAgentService;
   client?: QqManagerClient;
   recordMessageReference?: typeof recordQqNotificationReference;
   onStatus?: (status: QqBotPublicStatus) => void;
@@ -79,6 +82,7 @@ export class QqManager {
   private readonly bindingService: QqManagerBindingService;
   private readonly quoteReadService: QqManagerQuoteReadService;
   private readonly buttonReadService: QqManagerButtonReadService;
+  private readonly agentService: QqManagerAgentService;
   private readonly client: QqManagerClient;
   private readonly recordMessageReference: typeof recordQqNotificationReference;
   private readonly onStatusChange?: (status: QqBotPublicStatus) => void;
@@ -102,6 +106,11 @@ export class QqManager {
       readBinding: () => this.bindingService.readBinding(),
       client: this.client
     });
+    this.agentService = dependencies.agentService ?? createQqAgentService({
+      readConfig: this.readConfig,
+      readBinding: () => this.bindingService.readBinding(),
+      client: this.client
+    });
     this.recordMessageReference = dependencies.recordMessageReference ?? recordQqNotificationReference;
     this.onStatusChange = dependencies.onStatus;
     this.onBindingReady = dependencies.onBindingReady;
@@ -110,7 +119,7 @@ export class QqManager {
   async start() {
     if (this.started) return;
     const config = this.readConfig();
-    if (!config.enabled || !this.isConfigured(config)) {
+    if (!this.shouldRun(config) || !this.isConfigured(config)) {
       this.publishStatus();
       return;
     }
@@ -145,7 +154,7 @@ export class QqManager {
   async rebind() {
     await this.start();
     const config = this.readConfig();
-    if (!config.enabled || !this.isConfigured(config)) throw new Error("QQ bot is not enabled and configured");
+    if (!this.shouldRun(config) || !this.isConfigured(config)) throw new Error("QQ bot is not enabled and configured");
     const challenge = this.bindingService.createBindingCode();
     this.publishStatus();
     return challenge;
@@ -217,7 +226,24 @@ export class QqManager {
             : "";
           console.info(`[qq] mail-read interaction: ${buttonResult.kind}${details}${confirmation}`);
         }
-        await this.quoteReadService.handleDispatchEvent(event);
+        const quoteResult = await this.quoteReadService.handleDispatchEvent(event);
+        if (quoteResult.kind !== "ignored" && quoteResult.kind !== "disabled") {
+          const details = "emailId" in quoteResult ? ` email=${quoteResult.emailId}` : "";
+          const confirmation = "confirmationFailed" in quoteResult && quoteResult.confirmationFailed
+            ? " confirmation=failed"
+            : "";
+          console.info(`[qq] mail-quote interaction: ${quoteResult.kind}${details}${confirmation}`);
+        }
+        if (
+          result.kind !== "bound" &&
+          buttonResult.kind === "ignored" &&
+          (quoteResult.kind === "ignored" || quoteResult.kind === "disabled")
+        ) {
+          const agentResult = await this.agentService.handleDispatchEvent(event);
+          if (agentResult.kind !== "ignored" && agentResult.kind !== "disabled") {
+            console.info(`[qq] agent interaction: ${agentResult.kind}`);
+          }
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -229,6 +255,10 @@ export class QqManager {
 
   private isConfigured(config: QqBotConfig) {
     return Boolean(config.appId.trim() && config.encryptedAppSecret);
+  }
+
+  private shouldRun(config: QqBotConfig) {
+    return Boolean(config.enabled || config.agent?.enabled);
   }
 
   private publicBinding(binding: QqBotBinding) {

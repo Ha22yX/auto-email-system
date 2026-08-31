@@ -186,7 +186,20 @@ test("a delayed 401 for token A does not discard a refreshed token B", async () 
       encryptedAppSecret: "encrypted-test-secret",
       enabled: true,
       quoteImageMarksRead: true,
-  notifyCategories: { important: true, secondary: true, ignore: false }
+      notifyCategories: { important: true, secondary: true, ignore: false },
+      agent: {
+        enabled: false,
+        requireConfirmation: true,
+        maxResults: 6,
+        permissions: {
+          readMail: true,
+          manageReadState: true,
+          manageNotifications: true,
+          runProcessing: true,
+          checkMailboxes: true,
+          reclassifyMail: true
+        }
+      }
     }),
     decryptCredential: () => "fake-app-secret"
   });

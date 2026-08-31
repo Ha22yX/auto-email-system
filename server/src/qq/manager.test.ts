@@ -4,13 +4,28 @@ import { QqManager } from "./manager";
 import { QqApiError, type QqDispatchEvent, type QqGatewayStatus } from "./types";
 import type { QqBotBinding, QqBotConfig } from "../types";
 
+const agent: QqBotConfig["agent"] = {
+  enabled: false,
+  requireConfirmation: true,
+  maxResults: 6,
+  permissions: {
+    readMail: true,
+    manageReadState: true,
+    manageNotifications: true,
+    runProcessing: true,
+    checkMailboxes: true,
+    reclassifyMail: true
+  }
+};
+
 function config(overrides: Partial<QqBotConfig> = {}): QqBotConfig {
   return {
     appId: "1900000000",
     encryptedAppSecret: "v1:fake",
     enabled: true,
     quoteImageMarksRead: true,
-  notifyCategories: { important: true, secondary: true, ignore: false },
+    notifyCategories: { important: true, secondary: true, ignore: false },
+    agent,
     ...overrides
   };
 }
@@ -69,6 +84,11 @@ function harness(overrides: {
         handled.push(event);
         currentBinding = binding();
         return { kind: "bound" as const };
+      }
+    },
+    agentService: {
+      async handleDispatchEvent() {
+        return { kind: "ignored" as const };
       }
     },
     client: {
@@ -138,6 +158,12 @@ test("enabled settings start one Gateway and forward dispatches to binding", asy
   assert.equal(target.handled.length, 1);
   assert.equal(target.bindingReady, 1);
   assert.equal(target.statuses.length > 0, true);
+});
+
+test("agent-only settings start the Gateway without enabling QQ notifications", async () => {
+  const target = harness({ config: config({ enabled: false, agent: { ...agent, enabled: true } }) });
+  await target.manager.start();
+  assert.equal(target.starts, 1);
 });
 
 test("public status masks the bound user openid", () => {

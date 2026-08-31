@@ -7,7 +7,9 @@ import {
   LinkSimple,
   PaperPlaneTilt,
   Plugs,
+  Robot,
   SealCheck,
+  ShieldCheck,
   Star,
   Warning
 } from "@phosphor-icons/react";
@@ -15,6 +17,8 @@ import { api } from "./api";
 import "./qq-notification.css";
 import type {
   MailCategory,
+  QqAgentPermission,
+  QqAgentSettings,
   PublicQqBotSettings,
   QqBindingChallenge,
   QqBotPublicStatus
@@ -25,7 +29,24 @@ type QqForm = {
   appSecret: string;
   enabled: boolean;
   quoteImageMarksRead: boolean;
+  agent: QqAgentSettings;
   notifyCategories: Record<MailCategory, boolean>;
+};
+
+const defaultAgentPermissions: Record<QqAgentPermission, boolean> = {
+  readMail: true,
+  manageReadState: true,
+  manageNotifications: true,
+  runProcessing: true,
+  checkMailboxes: true,
+  reclassifyMail: true
+};
+
+const defaultAgentSettings: QqAgentSettings = {
+  enabled: false,
+  requireConfirmation: true,
+  maxResults: 6,
+  permissions: defaultAgentPermissions
 };
 
 const categories: Array<{
@@ -38,12 +59,39 @@ const categories: Array<{
   { id: "ignore", label: "不用管", icon: Archive }
 ];
 
+const agentPermissions: Array<{
+  id: QqAgentPermission;
+  label: string;
+  detail: string;
+}> = [
+  { id: "readMail", label: "查看/搜索邮件", detail: "最近邮件、分类列表、详情、统计" },
+  { id: "manageReadState", label: "修改已读状态", detail: "单封、分类、邮箱批量标记已读" },
+  { id: "manageNotifications", label: "管理通知队列", detail: "查看失败、重试、暂停、恢复" },
+  { id: "runProcessing", label: "手动处理邮箱", detail: "处理全部、指定邮箱、同步新邮件" },
+  { id: "checkMailboxes", label: "检查邮箱", detail: "查看邮箱列表和连接健康" },
+  { id: "reclassifyMail", label: "调整分类", detail: "重新 AI 分类或手动移动分类" }
+];
+
+function normalizeAgent(settings: PublicQqBotSettings): QqAgentSettings {
+  const agent = settings.agent ?? defaultAgentSettings;
+  return {
+    enabled: agent.enabled ?? false,
+    requireConfirmation: agent.requireConfirmation ?? true,
+    maxResults: Math.min(10, Math.max(3, Math.floor(agent.maxResults ?? 6))),
+    permissions: {
+      ...defaultAgentPermissions,
+      ...(agent.permissions ?? {})
+    }
+  };
+}
+
 function formFromSettings(settings: PublicQqBotSettings): QqForm {
   return {
     appId: settings.appId,
     appSecret: "",
     enabled: settings.enabled,
     quoteImageMarksRead: settings.quoteImageMarksRead ?? true,
+    agent: normalizeAgent(settings),
     notifyCategories: {
       important: settings.notifyCategories?.important ?? true,
       secondary: settings.notifyCategories?.secondary ?? true,
@@ -173,6 +221,28 @@ export function QqNotificationPanel({ setToast }: { setToast: (message: string) 
     });
   }
 
+  function updateAgent(patch: Partial<QqAgentSettings>) {
+    if (!form) return;
+    setForm({
+      ...form,
+      agent: {
+        ...form.agent,
+        ...patch,
+        permissions: patch.permissions ?? form.agent.permissions
+      }
+    });
+  }
+
+  function toggleAgentPermission(permission: QqAgentPermission) {
+    if (!form) return;
+    updateAgent({
+      permissions: {
+        ...form.agent.permissions,
+        [permission]: !form.agent.permissions[permission]
+      }
+    });
+  }
+
   return (
     <div className="settings-panel qq-notification-panel">
       <div className="panel-heading qq-panel-heading">
@@ -279,6 +349,69 @@ export function QqNotificationPanel({ setToast }: { setToast: (message: string) 
                 <span />
               </span>
             </button>
+          </section>
+
+          <section className="qq-section qq-agent-section">
+            <button
+              type="button"
+              className={"qq-quote-read-toggle qq-agent-toggle" + (form.agent.enabled ? " active" : "")}
+              aria-pressed={form.agent.enabled}
+              onClick={() => updateAgent({ enabled: !form.agent.enabled })}
+            >
+              <span className="qq-quote-read-icon">
+                <Robot size={21} weight={form.agent.enabled ? "fill" : "regular"} />
+              </span>
+              <span className="qq-quote-read-copy">
+                <strong>{form.agent.enabled ? "QQ 智能体已开启" : "开启 QQ 智能体"}</strong>
+                <small>已绑定的 QQ 用户可通过单聊查询邮件、管理通知队列并执行确认型动作</small>
+              </span>
+              <span className={"switch-track" + (form.agent.enabled ? " on" : "")} aria-hidden="true">
+                <span />
+              </span>
+            </button>
+
+            <div className="qq-agent-controls">
+              <button
+                type="button"
+                className={"qq-agent-confirm-toggle" + (form.agent.requireConfirmation ? " active" : "")}
+                aria-pressed={form.agent.requireConfirmation}
+                onClick={() => updateAgent({ requireConfirmation: !form.agent.requireConfirmation })}
+              >
+                <ShieldCheck size={18} weight="duotone" />
+                <span>写操作二次确认</span>
+                <em>{form.agent.requireConfirmation ? "开启" : "关闭"}</em>
+              </button>
+              <label className="qq-agent-limit">
+                每次结果
+                <input
+                  type="number"
+                  min={3}
+                  max={10}
+                  value={form.agent.maxResults}
+                  onChange={(event) => updateAgent({
+                    maxResults: Math.min(10, Math.max(3, Math.floor(Number(event.target.value) || 6)))
+                  })}
+                />
+              </label>
+            </div>
+
+            <div className="qq-agent-permission-grid">
+              {agentPermissions.map((permission) => {
+                const active = form.agent.permissions[permission.id];
+                return (
+                  <button
+                    type="button"
+                    key={permission.id}
+                    className={"qq-agent-permission" + (active ? " active" : "")}
+                    onClick={() => toggleAgentPermission(permission.id)}
+                  >
+                    <span>{permission.label}</span>
+                    <small>{permission.detail}</small>
+                    <em>{active ? "允许" : "关闭"}</em>
+                  </button>
+                );
+              })}
+            </div>
           </section>
 
           <section className="qq-section qq-binding-section">
