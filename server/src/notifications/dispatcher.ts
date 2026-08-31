@@ -20,10 +20,8 @@ import { getQqManager } from "../qq/manager";
 import { QqApiError } from "../qq/types";
 import { sendClawbotEmailCard } from "./clawbot";
 import { renderEmailNotificationCard } from "./card";
-import { sendImageNotificationWithTextFallback } from "./delivery";
 import {
   buildEmailNotificationModel,
-  renderQqEmailNotification,
   type EmailNotificationModel
 } from "./format";
 
@@ -94,12 +92,10 @@ function defaultDependencies() {
     updateDelivery: updateNotificationDelivery,
     sendWechat: (model: EmailNotificationModel, settings: NotificationSettings) =>
       sendClawbotEmailCard(settings, model),
-    sendQq: (model: EmailNotificationModel) =>
-      sendImageNotificationWithTextFallback({
-        renderImage: () => renderEmailNotificationCard(model),
-        sendImage: (image) => getQqManager().sendImageNotification(image, model.emailId),
-        sendText: () => getQqManager().sendNotification(renderQqEmailNotification(model))
-      })
+    sendQq: async (model: EmailNotificationModel) => {
+      const image = await renderEmailNotificationCard(model);
+      return getQqManager().sendImageNotification(image, model.emailId);
+    }
   };
 }
 

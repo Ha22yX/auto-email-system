@@ -188,7 +188,7 @@ test("sent QQ mail images persist message and ref-index mappings", async () => {
   ]);
 });
 
-test("media image delivery failures bubble up to the notification text fallback", async () => {
+test("media image delivery failures bubble up for dispatcher retry", async () => {
   const target = harness({
     currentBinding: binding(),
     imageError: new QqApiError({
