@@ -57,6 +57,30 @@ const settings: AiSettings = {
   multimodalMaxTotalMb: 18
 };
 
+function makeStoreEmail(input: {
+  id: string;
+  mailboxId: string;
+  receivedAt?: string;
+  processedAt?: string;
+  category?: ProcessedEmail["category"];
+}): ProcessedEmail {
+  return {
+    id: input.id,
+    mailboxId: input.mailboxId,
+    externalUid: input.id,
+    subject: input.id,
+    receivedAt: input.receivedAt,
+    processedAt: input.processedAt ?? new Date().toISOString(),
+    category: input.category ?? "important",
+    summaryZh: input.id,
+    reasonZh: "store ordering test",
+    actionItemsZh: [],
+    originalText: "unique body " + input.id,
+    panelRead: false,
+    readMarked: true
+  };
+}
+
 test("public AI settings redact both API keys and expose only safe key metadata", () => {
   const publicSettings = publicAiSettings(settings);
   const serialized = JSON.stringify(publicSettings);
@@ -313,6 +337,41 @@ test("bulk panel read updates only the selected mailbox and category", () => {
   assert.equal(undoProcessedEmailsPanelRead(result.operationId!), undefined);
 });
 
+test("processed email queries sort by received time across mailboxes", () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const first = `received-first-${suffix}`;
+  const second = `received-second-${suffix}`;
+  const third = `received-third-${suffix}`;
+
+  addProcessedEmail(makeStoreEmail({
+    id: third,
+    mailboxId: `mailbox-b-${suffix}`,
+    receivedAt: "2026-08-31T10:00:00.000Z",
+    processedAt: "2026-08-31T10:00:01.000Z"
+  }));
+  addProcessedEmail(makeStoreEmail({
+    id: first,
+    mailboxId: `mailbox-a-${suffix}`,
+    receivedAt: "2026-08-31T08:00:00.000Z",
+    processedAt: "2026-08-31T10:00:02.000Z"
+  }));
+  addProcessedEmail(makeStoreEmail({
+    id: second,
+    mailboxId: `mailbox-c-${suffix}`,
+    receivedAt: "2026-08-31T09:00:00.000Z",
+    processedAt: "2026-08-31T10:00:03.000Z"
+  }));
+
+  const result = queryProcessedEmails({
+    category: "important",
+    mailboxId: "all",
+    q: suffix,
+    limit: 20
+  });
+
+  assert.deepEqual(result.items.map((email) => email.id), [first, second, third]);
+});
+
 test("email state updates preserve QQ button actions and message references", () => {
   const suffix = `${process.pid}-${Date.now()}`;
   const email: ProcessedEmail = {
@@ -353,6 +412,44 @@ test("delivery identity is unique per email and channel", () => {
   enqueueNotificationDelivery(emailId, "qq");
 
   assert.equal(listNotificationDeliveries({ emailId }).length, 1);
+});
+
+test("notification delivery claims sort by email received time across mailboxes", () => {
+  const sqlite = new DatabaseSync(path.join(process.env.DATA_DIR!, "app.sqlite"));
+  sqlite.prepare("DELETE FROM notification_deliveries").run();
+  sqlite.close();
+
+  const suffix = `${process.pid}-${Date.now()}`;
+  const late = `notify-late-${suffix}`;
+  const early = `notify-early-${suffix}`;
+  const middle = `notify-middle-${suffix}`;
+
+  addProcessedEmail(makeStoreEmail({
+    id: late,
+    mailboxId: `mailbox-late-${suffix}`,
+    receivedAt: "2026-08-31T10:00:00.000Z",
+    processedAt: "2026-08-31T10:00:01.000Z"
+  }));
+  enqueueNotificationDelivery(late, "qq");
+
+  addProcessedEmail(makeStoreEmail({
+    id: early,
+    mailboxId: `mailbox-early-${suffix}`,
+    receivedAt: "2026-08-31T08:00:00.000Z",
+    processedAt: "2026-08-31T10:00:02.000Z"
+  }));
+  enqueueNotificationDelivery(early, "qq");
+
+  addProcessedEmail(makeStoreEmail({
+    id: middle,
+    mailboxId: `mailbox-middle-${suffix}`,
+    receivedAt: "2026-08-31T09:00:00.000Z",
+    processedAt: "2026-08-31T10:00:03.000Z"
+  }));
+  enqueueNotificationDelivery(middle, "qq");
+
+  const claimed = claimNotificationDeliveries(3, new Date(Date.now() + 60_000).toISOString());
+  assert.deepEqual(claimed.map((delivery) => delivery.emailId), [early, middle, late]);
 });
 
 test("resuming paused deliveries affects only the selected channel", () => {

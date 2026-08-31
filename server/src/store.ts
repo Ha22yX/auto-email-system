@@ -37,6 +37,12 @@ const JSON_DATA_FILE = path.join(DATA_DIR, "app.db.json");
 const SQLITE_FILE = path.join(DATA_DIR, "app.sqlite");
 const SCHEMA_VERSION = 2;
 const PANEL_READ_UNDO_TTL_MS = 10_000;
+const EMAIL_RECEIVED_ORDER_SQL = "COALESCE(receivedAt, processedAt) ASC, processedAt ASC, id ASC";
+const NOTIFICATION_DELIVERY_RECEIVED_ORDER_SQL = [
+  "COALESCE(emails.receivedAt, emails.processedAt, notification_deliveries.createdAt) ASC",
+  "notification_deliveries.createdAt ASC",
+  "notification_deliveries.id ASC"
+].join(", ");
 
 type PanelReadUndoOperation = {
   emailIds: string[];
@@ -157,6 +163,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_emails_message_id ON emails(mailboxId, messageId);
   CREATE INDEX IF NOT EXISTS idx_emails_fingerprint ON emails(mailboxId, contentFingerprint);
   CREATE INDEX IF NOT EXISTS idx_emails_notification_retry ON emails(notificationError, notifiedAt);
+  CREATE INDEX IF NOT EXISTS idx_emails_received_order
+    ON emails(COALESCE(receivedAt, processedAt), processedAt, id);
+  CREATE INDEX IF NOT EXISTS idx_emails_category_received
+    ON emails(category, COALESCE(receivedAt, processedAt), processedAt, id);
+  CREATE INDEX IF NOT EXISTS idx_emails_mailbox_received
+    ON emails(mailboxId, COALESCE(receivedAt, processedAt), processedAt, id);
 
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
@@ -565,7 +577,7 @@ function getAllMailboxes() {
 }
 
 function getAllEmails() {
-  return (db.prepare("SELECT data FROM emails ORDER BY processedAt DESC").all() as SqlRow[]).map(rowToEmail);
+  return (db.prepare(`SELECT data FROM emails ORDER BY ${EMAIL_RECEIVED_ORDER_SQL}`).all() as SqlRow[]).map(rowToEmail);
 }
 
 function getRuns(limit = 100) {
@@ -1010,7 +1022,7 @@ export function queryProcessedEmails(options: {
   const limit = Math.min(100, Math.max(20, Math.floor(options.limit ?? 40)));
   const offset = Math.max(0, Math.floor(options.offset ?? 0));
   const rows = db
-    .prepare(`SELECT data FROM emails ${whereSql} ORDER BY processedAt DESC LIMIT ? OFFSET ?`)
+    .prepare(`SELECT data FROM emails ${whereSql} ORDER BY ${EMAIL_RECEIVED_ORDER_SQL} LIMIT ? OFFSET ?`)
     .all(...params, limit, offset) as SqlRow[];
 
   const total = Number(totalRow.total ?? 0);
@@ -1048,7 +1060,7 @@ export function getDashboardData(mailboxId?: string) {
   );
   const allTotal = Number((db.prepare("SELECT COUNT(*) AS total FROM emails").get() as SqlRow).total ?? 0);
   const recentEmails = (
-    db.prepare(`SELECT data FROM emails ${whereSql} ORDER BY processedAt DESC LIMIT 8`).all(...params) as SqlRow[]
+    db.prepare(`SELECT data FROM emails ${whereSql} ORDER BY ${EMAIL_RECEIVED_ORDER_SQL} LIMIT 8`).all(...params) as SqlRow[]
   ).map(rowToEmail);
   const currentRunRow = db
     .prepare("SELECT data FROM runs WHERE status = ? ORDER BY startedAt DESC LIMIT 1")
@@ -1085,7 +1097,7 @@ export function getPendingNotificationEmails(limit = 20) {
       .prepare(
         `SELECT data FROM emails
          WHERE COALESCE(notificationError, '') <> '' AND notifiedAt IS NULL
-         ORDER BY processedAt DESC
+         ORDER BY ${EMAIL_RECEIVED_ORDER_SQL}
          LIMIT ?`
       )
       .all(limit) as SqlRow[]
@@ -1462,16 +1474,22 @@ export function listNotificationDeliveries(options: { emailId?: string; status?:
   const where: string[] = [];
   const params: SQLInputValue[] = [];
   if (options.emailId) {
-    where.push("emailId = ?");
+    where.push("notification_deliveries.emailId = ?");
     params.push(options.emailId);
   }
   if (options.status) {
-    where.push("status = ?");
+    where.push("notification_deliveries.status = ?");
     params.push(options.status);
   }
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   return (db
-    .prepare(`SELECT * FROM notification_deliveries ${whereSql} ORDER BY createdAt ASC`)
+    .prepare(
+      `SELECT notification_deliveries.*
+       FROM notification_deliveries
+       LEFT JOIN emails ON emails.id = notification_deliveries.emailId
+       ${whereSql}
+       ORDER BY ${NOTIFICATION_DELIVERY_RECEIVED_ORDER_SQL}`
+    )
     .all(...params) as SqlRow[]).map(rowToNotificationDelivery);
 }
 
@@ -1490,10 +1508,12 @@ export function claimNotificationDeliveries(
        WHERE status = 'sending' AND updatedAt <= ?`
     ).run(now, now, staleBefore);
     const rows = db.prepare(
-      `SELECT * FROM notification_deliveries
-       WHERE status IN ('pending', 'retry')
-         AND (nextAttemptAt IS NULL OR nextAttemptAt <= ?)
-       ORDER BY createdAt ASC
+      `SELECT notification_deliveries.*
+       FROM notification_deliveries
+       LEFT JOIN emails ON emails.id = notification_deliveries.emailId
+       WHERE notification_deliveries.status IN ('pending', 'retry')
+         AND (notification_deliveries.nextAttemptAt IS NULL OR notification_deliveries.nextAttemptAt <= ?)
+       ORDER BY ${NOTIFICATION_DELIVERY_RECEIVED_ORDER_SQL}
        LIMIT ?`
     ).all(now, safeLimit) as SqlRow[];
     const claimed: NotificationDelivery[] = [];

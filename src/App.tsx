@@ -1002,8 +1002,8 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const mailNavExpanded = view === "mail";
   const loadedEmailStart = emailTotal ? emailOffset + 1 : 0;
   const loadedEmailEnd = emailOffset + emails.length;
-  const unloadedNewerCount = emailOffset;
-  const unloadedOlderCount = Math.max(0, emailTotal - loadedEmailEnd);
+  const unloadedEarlierCount = emailOffset;
+  const unloadedLaterCount = Math.max(0, emailTotal - loadedEmailEnd);
 
   return (
     <div className="app-shell">
@@ -1184,11 +1184,11 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                   ))
                 ) : emails.length ? (
                   <>
-                    {(unloadedNewerCount > 0 || emailWindowLoading === "newer") && (
+                    {(unloadedEarlierCount > 0 || emailWindowLoading === "newer") && (
                       <div className="email-window-edge">
                         {emailWindowLoading === "newer"
-                          ? "正在换入最新邮件..."
-                          : `向上滚动可换入 ${unloadedNewerCount} 封更新邮件`}
+                          ? "正在换入更早邮件..."
+                          : `向上滚动可换入 ${unloadedEarlierCount} 封更早邮件`}
                       </div>
                     )}
                     {emails.map((email, index) => {
@@ -1243,11 +1243,11 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                       </button>
                     );
                   })}
-                    {(unloadedOlderCount > 0 || emailWindowLoading === "older") && (
+                    {(unloadedLaterCount > 0 || emailWindowLoading === "older") && (
                       <div className="email-window-edge">
                         {emailWindowLoading === "older"
-                          ? "正在加载更早邮件..."
-                          : `向下滚动可加载 ${unloadedOlderCount} 封历史邮件`}
+                          ? "正在加载更晚邮件..."
+                          : `向下滚动可加载 ${unloadedLaterCount} 封更晚邮件`}
                       </div>
                     )}
                   </>

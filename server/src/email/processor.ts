@@ -83,6 +83,7 @@ export async function processMailboxes(options: {
   mailboxId?: string;
   manual?: boolean;
   recoverInterrupted?: boolean;
+  suppressNotificationDispatch?: boolean;
 } = {}) {
   if (running) {
     throw new Error("已有处理任务正在运行");
@@ -114,6 +115,7 @@ export async function processMailboxes(options: {
     errors: []
   };
   addRun(run);
+  let enqueuedNotificationCount = 0;
 
   try {
     const mailboxes = state.mailboxes.filter((mailbox) => {
@@ -294,8 +296,7 @@ export async function processMailboxes(options: {
         currentEmailStepTotal: currentStepTotal
       });
 
-      enqueueEmailNotifications(insertedEmail);
-      scheduleNotificationDispatch(0);
+      enqueuedNotificationCount += enqueueEmailNotifications(insertedEmail).length;
 
       try {
         persistRun(run, {
@@ -411,6 +412,9 @@ export async function processMailboxes(options: {
     run.currentStage = run.status === "success" ? "处理完成" : "处理完成，有错误";
     run.currentSubject = undefined;
     persistRun(run);
+    if (enqueuedNotificationCount > 0 && !options.suppressNotificationDispatch) {
+      scheduleNotificationDispatch(0);
+    }
     return run;
   } finally {
     running = false;
@@ -443,7 +447,7 @@ async function drainProcessingQueue() {
   queuedMailboxIds.delete(mailboxId);
   queueDraining = true;
   try {
-    await processMailboxes({ mailboxId });
+    await processMailboxes({ mailboxId, suppressNotificationDispatch: true });
   } catch {
     queuedMailboxIds.add(mailboxId);
     scheduleQueueDrain(10000);
@@ -453,6 +457,8 @@ async function drainProcessingQueue() {
 
   if (queuedMailboxIds.size) {
     scheduleQueueDrain(1000);
+  } else {
+    scheduleNotificationDispatch(0);
   }
 }
 
