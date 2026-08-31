@@ -85,4 +85,3 @@ export function renderEmailNotification(model: EmailNotificationModel) {
 }
 
 export const renderWechatEmailNotification = renderEmailNotification;
-export const renderQqEmailNotification = renderEmailNotification;
