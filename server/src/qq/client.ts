@@ -5,6 +5,7 @@ import {
   type QqApiErrorKind,
   type QqDirectImageInput,
   type QqDirectMarkdownImageInput,
+  type QqDirectMarkdownMessageInput,
   type QqDirectMessageInput,
   type QqSendResult,
   type QqTokenProviderLike
@@ -101,6 +102,13 @@ export class QqClient {
     return this.withTokenRefresh((token) => this.sendTextWithToken(input, token));
   }
 
+  async sendDirectMarkdownMessage(input: QqDirectMarkdownMessageInput): Promise<QqSendResult> {
+    if (!input.userOpenId.trim() || !input.markdown.trim()) {
+      throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_markdown_message", message: "QQ Markdown message requires a recipient and content" });
+    }
+    return this.withTokenRefresh((token) => this.sendMarkdownTextWithToken(input, token));
+  }
+
   async sendDirectImage(input: QqDirectImageInput): Promise<QqSendResult> {
     if (!input.userOpenId.trim() || !input.image.length || input.image.length > MAX_NOTIFICATION_IMAGE_BYTES) {
       throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_image_input", message: "QQ direct image requires a recipient and a bounded image" });
@@ -194,6 +202,19 @@ export class QqClient {
     const payload: Record<string, unknown> = {
       content: input.content,
       msg_type: 0,
+      msg_seq: this.messageSequence
+    };
+    if (input.msgId) payload.msg_id = input.msgId;
+    if (input.messageReferenceId) payload.message_reference = { message_id: input.messageReferenceId };
+    const body = await this.requestJson(`${QQ_API_ORIGIN}/v2/users/${encodeURIComponent(input.userOpenId)}/messages`, payload, token);
+    return this.sendResult(body);
+  }
+
+  private async sendMarkdownTextWithToken(input: QqDirectMarkdownMessageInput, token: string): Promise<QqSendResult> {
+    this.messageSequence = (this.messageSequence % 10_000) + 1;
+    const payload: Record<string, unknown> = {
+      markdown: { content: input.markdown },
+      msg_type: 2,
       msg_seq: this.messageSequence
     };
     if (input.msgId) payload.msg_id = input.msgId;

@@ -68,6 +68,25 @@ test("passive direct messages include the incoming msg_id", async () => {
   });
 });
 
+test("Markdown direct messages use msg_type 2 and can reply passively", async () => {
+  const tokenProvider = createTokenProvider();
+  const fake = createMessageFetch([new Response(JSON.stringify({ id: "markdown-text-message" }), { status: 200 })]);
+  const client = createQqClient({ fetch: fake.fetch, tokenProvider });
+
+  await client.sendDirectMarkdownMessage({
+    userOpenId: "user-openid",
+    markdown: "**今天有 1 封重要邮件**\n1. Please verify",
+    msgId: "incoming-message-id"
+  });
+
+  assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), {
+    markdown: { content: "**今天有 1 封重要邮件**\n1. Please verify" },
+    msg_id: "incoming-message-id",
+    msg_type: 2,
+    msg_seq: 1
+  });
+});
+
 test("an authentication failure refreshes and retries exactly once", async () => {
   const tokenProvider = createTokenProvider();
   const fake = createMessageFetch([

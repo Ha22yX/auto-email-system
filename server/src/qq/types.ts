@@ -39,6 +39,13 @@ export type QqDirectMessageInput = {
   messageReferenceId?: string;
 };
 
+export type QqDirectMarkdownMessageInput = {
+  userOpenId: string;
+  markdown: string;
+  msgId?: string;
+  messageReferenceId?: string;
+};
+
 export type QqDirectImageInput = {
   userOpenId: string;
   image: Buffer;

@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { ProcessedEmail, QqBotBinding, QqBotConfig } from "../types";
-import type { QqDirectMessageInput, QqDispatchEvent } from "./types";
+import type { QqDirectMarkdownMessageInput, QqDirectMessageInput, QqDispatchEvent } from "./types";
 
 process.env.DATA_DIR ??= path.join(tmpdir(), `auto-email-system-agent-test-${process.pid}`);
 process.env.QQ_CREDENTIAL_ENCRYPTION_KEY ??= "test-only-qq-credential-encryption-key";
 
-const { addProcessedEmail, getProcessedEmailById } = await import("../store");
+const { addProcessedEmail, getProcessedEmailById, updateAiSettings } = await import("../store");
 const { QqAgentService } = await import("./agent");
 
 const USER_OPEN_ID = "agent-bound-user";
@@ -82,20 +82,36 @@ function email(input: { id: string; subject: string; receivedAt: string; panelRe
   };
 }
 
-function harness(options: { config?: QqBotConfig; currentBinding?: QqBotBinding } = {}) {
+function harness(options: {
+  config?: QqBotConfig;
+  currentBinding?: QqBotBinding;
+  fetch?: typeof fetch;
+  markdown?: boolean;
+} = {}) {
   const sent: QqDirectMessageInput[] = [];
+  const sentMarkdown: QqDirectMarkdownMessageInput[] = [];
+  const client = {
+    async sendDirectMessage(input: QqDirectMessageInput) {
+      sent.push(input);
+      return { messageId: `reply-${sent.length}` };
+    },
+    ...(options.markdown
+      ? {
+          async sendDirectMarkdownMessage(input: QqDirectMarkdownMessageInput) {
+            sentMarkdown.push(input);
+            return { messageId: `markdown-reply-${sentMarkdown.length}` };
+          }
+        }
+      : {})
+  };
   const service = new QqAgentService({
     readConfig: () => options.config ?? config(),
     readBinding: () => options.currentBinding ?? binding(),
-    client: {
-      async sendDirectMessage(input) {
-        sent.push(input);
-        return { messageId: `reply-${sent.length}` };
-      }
-    },
+    client,
+    fetch: options.fetch,
     now: () => Date.parse("2026-08-31T12:00:00.000Z")
   });
-  return { service, sent };
+  return { service, sent, sentMarkdown };
 }
 
 test("disabled QQ Agent ignores bound direct messages", async () => {
@@ -127,6 +143,50 @@ test("enabled QQ Agent lists recent mail for the bound user", async () => {
   assert.match(target.sent[0].content, /最近邮件/);
   assert.match(target.sent[0].content, /Your Grab E-Receipt/);
   assert.equal(target.sent[0].msgId, `message-list-${suffix}`);
+});
+
+test("QQ Agent summarizes tool results with AI and sends Markdown replies", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  addProcessedEmail(email({
+    id: `agent-ai-${suffix}`,
+    subject: `Please finalize your lens preference ${suffix}`,
+    receivedAt: "2026-08-31T17:12:00.000Z"
+  }));
+  updateAiSettings({
+    apiKey: "agent-test-key",
+    baseUrl: "https://api.example.test/v1/chat/completions",
+    model: "agent-test-model",
+    protocol: "openai-chat"
+  });
+  const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      messages?: Array<{ content?: string }>;
+    };
+    const prompt = body.messages?.at(-1)?.content ?? "";
+    assert.match(prompt, /Please finalize your lens preference/);
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            reply: "**今天有 1 封重要邮件**\n\n1. **Warby Parker** 需要你确认镜片方案。\n\n下一步：可以回复 `看第 1 封` 查看详情。"
+          })
+        }
+      }]
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  try {
+    const target = harness({ fetch, markdown: true });
+    const result = await target.service.handleDispatchEvent(event(`今天有没有 ${suffix} 相关的重要邮件`, `ai-${suffix}`));
+
+    assert.deepEqual(result, { kind: "handled" });
+    assert.equal(target.sent.length, 0);
+    assert.equal(target.sentMarkdown.length, 1);
+    assert.match(target.sentMarkdown[0].markdown, /\*\*今天有 1 封重要邮件\*\*/);
+    assert.equal(target.sentMarkdown[0].msgId, `message-ai-${suffix}`);
+  } finally {
+    updateAiSettings({ apiKey: "", protocol: "auto" });
+  }
 });
 
 test("write tools require confirmation before changing mail state", async () => {
