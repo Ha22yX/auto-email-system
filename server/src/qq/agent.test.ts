@@ -38,10 +38,10 @@ function config(agent: QqBotConfig["agent"] = agentDefaults): QqBotConfig {
   };
 }
 
-function binding(): QqBotBinding {
+function binding(userOpenId = USER_OPEN_ID): QqBotBinding {
   return {
     id: "primary",
-    userOpenId: USER_OPEN_ID,
+    userOpenId,
     friendshipStatus: "friend",
     proactiveStatus: "enabled",
     createdAt: "2026-08-31T00:00:00.000Z",
@@ -49,34 +49,44 @@ function binding(): QqBotBinding {
   };
 }
 
-function event(content: string, id: string): QqDispatchEvent {
+function event(content: string, id: string, userOpenId = USER_OPEN_ID): QqDispatchEvent {
   return {
     id,
     type: "C2C_MESSAGE_CREATE",
     sequence: Number(id.replace(/\D/g, "")) || 1,
     data: {
       id: `message-${id}`,
-      author: { user_openid: USER_OPEN_ID },
+      author: { user_openid: userOpenId },
       content
     }
   };
 }
 
-function email(input: { id: string; subject: string; receivedAt: string; panelRead?: boolean }): ProcessedEmail {
+function email(input: {
+  id: string;
+  subject: string;
+  receivedAt: string;
+  panelRead?: boolean;
+  fromName?: string;
+  fromAddress?: string;
+  summaryZh?: string;
+  originalText?: string;
+  category?: ProcessedEmail["category"];
+}): ProcessedEmail {
   return {
     id: input.id,
     mailboxId: `agent-mailbox-${process.pid}`,
     externalUid: input.id,
     subject: input.subject,
-    fromName: "Grab",
-    fromAddress: "no-reply@example.com",
+    fromName: input.fromName ?? "Grab",
+    fromAddress: input.fromAddress ?? "no-reply@example.com",
     receivedAt: input.receivedAt,
     processedAt: input.receivedAt,
-    category: "important",
-    summaryZh: "测试邮件摘要",
+    category: input.category ?? "important",
+    summaryZh: input.summaryZh ?? "测试邮件摘要",
     reasonZh: "用于 QQ Agent 测试",
     actionItemsZh: ["查看账单"],
-    originalText: "This is a test receipt.",
+    originalText: input.originalText ?? "This is a test receipt.",
     panelRead: input.panelRead ?? false,
     readMarked: true
   };
@@ -87,6 +97,7 @@ function harness(options: {
   currentBinding?: QqBotBinding;
   fetch?: typeof fetch;
   markdown?: boolean;
+  userOpenId?: string;
 } = {}) {
   const sent: QqDirectMessageInput[] = [];
   const sentMarkdown: QqDirectMarkdownMessageInput[] = [];
@@ -106,7 +117,7 @@ function harness(options: {
   };
   const service = new QqAgentService({
     readConfig: () => options.config ?? config(),
-    readBinding: () => options.currentBinding ?? binding(),
+    readBinding: () => options.currentBinding ?? binding(options.userOpenId),
     client,
     fetch: options.fetch,
     now: () => Date.parse("2026-08-31T12:00:00.000Z")
@@ -145,7 +156,56 @@ test("enabled QQ Agent lists recent mail for the bound user", async () => {
   assert.equal(target.sent[0].msgId, `message-list-${suffix}`);
 });
 
-test("QQ Agent summarizes tool results with AI and sends Markdown replies", async () => {
+test("QQ Agent remembers school aliases and searches them instead of unrelated recent mail", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `school-user-${suffix}`;
+  addProcessedEmail(email({
+    id: `agent-school-${suffix}`,
+    subject: `Wardlaw-Hartridge weekly update ${suffix}`,
+    fromName: "Wardlaw-Hartridge School",
+    fromAddress: "news@whschool.example",
+    receivedAt: "2026-08-31T08:30:00.000Z",
+    summaryZh: "学校发布了本周安排。"
+  }));
+  addProcessedEmail(email({
+    id: `agent-ikea-${suffix}`,
+    subject: `IKEA customer service chat ${suffix}`,
+    fromName: "IKEA",
+    fromAddress: "support@ikea.example",
+    receivedAt: "2026-08-31T11:30:00.000Z",
+    summaryZh: "客服聊天记录。"
+  }));
+
+  const target = harness({ markdown: true, userOpenId });
+  await target.service.handleDispatchEvent(event("你能不能记住我的学校是wardlaw hartridge", `remember-${suffix}`, userOpenId));
+  await target.service.handleDispatchEvent(event("搜索一下最近也没有什么来自学校的邮件", `school-search-${suffix}`, userOpenId));
+
+  const reply = target.sentMarkdown.at(-1)?.markdown ?? target.sent.at(-1)?.content ?? "";
+  assert.match(reply, /Wardlaw-Hartridge/i);
+  assert.doesNotMatch(reply, /IKEA/);
+});
+
+test("QQ Agent asks for school memory before searching school mail", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `unknown-school-user-${suffix}`;
+  addProcessedEmail(email({
+    id: `agent-unknown-school-ikea-${suffix}`,
+    subject: `IKEA customer service chat ${suffix}`,
+    fromName: "IKEA",
+    fromAddress: "support@ikea.example",
+    receivedAt: "2026-08-31T11:30:00.000Z",
+    summaryZh: "客服聊天记录。"
+  }));
+
+  const target = harness({ userOpenId });
+  await target.service.handleDispatchEvent(event("搜索一下最近有没有来自学校的邮件", `unknown-school-${suffix}`, userOpenId));
+
+  const reply = target.sent.at(-1)?.content ?? "";
+  assert.match(reply, /还不知道.*学校/);
+  assert.doesNotMatch(reply, /IKEA/);
+});
+
+test("QQ Agent loops through AI tool calls and sends Markdown replies", async () => {
   const suffix = `${process.pid}-${Date.now()}`;
   addProcessedEmail(email({
     id: `agent-ai-${suffix}`,
@@ -158,16 +218,32 @@ test("QQ Agent summarizes tool results with AI and sends Markdown replies", asyn
     model: "agent-test-model",
     protocol: "openai-chat"
   });
+  let callCount = 0;
   const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+    callCount += 1;
     const body = JSON.parse(String(init?.body ?? "{}")) as {
       messages?: Array<{ content?: string }>;
     };
     const prompt = body.messages?.at(-1)?.content ?? "";
+    if (callCount === 1) {
+      assert.match(prompt, new RegExp(suffix));
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              finish: false,
+              toolCalls: [{ name: "mail.search", arguments: { query: suffix, period: "today" } }]
+            })
+          }
+        }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     assert.match(prompt, /Please finalize your lens preference/);
     return new Response(JSON.stringify({
       choices: [{
         message: {
           content: JSON.stringify({
+            finish: true,
             reply: "**今天有 1 封重要邮件**\n\n1. **Warby Parker** 需要你确认镜片方案。\n\n下一步：可以回复 `看第 1 封` 查看详情。"
           })
         }
@@ -184,8 +260,85 @@ test("QQ Agent summarizes tool results with AI and sends Markdown replies", asyn
     assert.equal(target.sentMarkdown.length, 1);
     assert.match(target.sentMarkdown[0].markdown, /\*\*今天有 1 封重要邮件\*\*/);
     assert.equal(target.sentMarkdown[0].msgId, `message-ai-${suffix}`);
+    assert.equal(callCount, 2);
   } finally {
-    updateAiSettings({ apiKey: "", protocol: "auto" });
+    updateAiSettings({ apiKey: " ", protocol: "auto" });
+  }
+});
+
+test("QQ Agent can run multiple AI tool rounds before finishing", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  addProcessedEmail(email({
+    id: `agent-multi-${suffix}`,
+    subject: `Urgent account alert ${suffix}`,
+    fromName: "Bank",
+    fromAddress: "alerts@bank.example",
+    receivedAt: "2026-08-31T09:45:00.000Z",
+    summaryZh: "银行提醒账户需要确认。",
+    originalText: "Please confirm the account activity before midnight."
+  }));
+  updateAiSettings({
+    apiKey: "agent-test-key",
+    baseUrl: "https://api.example.test/v1/chat/completions",
+    model: "agent-test-model",
+    protocol: "openai-chat"
+  });
+  let callCount = 0;
+  const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+    callCount += 1;
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      messages?: Array<{ content?: string }>;
+    };
+    const prompt = body.messages?.at(-1)?.content ?? "";
+    if (callCount === 1) {
+      assert.match(prompt, /toolTranscript/);
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              finish: false,
+              toolCalls: [{ name: "mail.search", arguments: { query: suffix, limit: 1 } }]
+            })
+          }
+        }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (callCount === 2) {
+      assert.match(prompt, /Urgent account alert/);
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              finish: false,
+              toolCalls: [{ name: "mail.getDetail", arguments: { index: 1 } }]
+            })
+          }
+        }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    assert.match(prompt, /Please confirm the account activity/);
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            finish: true,
+            reply: "**需要处理 1 封邮件**\n\n1. **Urgent account alert**：银行要求在午夜前确认账户活动。"
+          })
+        }
+      }]
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  try {
+    const target = harness({ fetch, markdown: true });
+    const result = await target.service.handleDispatchEvent(event(`帮我看看 ${suffix} 这封邮件具体要做什么`, `multi-${suffix}`));
+
+    assert.deepEqual(result, { kind: "handled" });
+    assert.equal(target.sentMarkdown.length, 1);
+    assert.match(target.sentMarkdown[0].markdown, /需要处理 1 封邮件/);
+    assert.equal(callCount, 3);
+  } finally {
+    updateAiSettings({ apiKey: " ", protocol: "auto" });
   }
 });
 

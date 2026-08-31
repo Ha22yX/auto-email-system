@@ -42,6 +42,8 @@ import type { QqDirectMarkdownMessageInput, QqDirectMessageInput, QqDispatchEven
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
 const MAX_TOOL_CALLS = 4;
+const MAX_AGENT_STEPS = 6;
+const MAX_AGENT_TOTAL_TOOL_CALLS = 10;
 const MAX_QQ_MESSAGE_CHARS = 1800;
 
 const categoryLabels: Record<MailCategory, string> = {
@@ -139,6 +141,14 @@ type AgentSession = {
   updatedAt: string;
 };
 
+type AgentProfile = {
+  facts: {
+    schoolName?: string;
+  };
+  aliases: Record<string, string>;
+  updatedAt: string;
+};
+
 type ToolResult = {
   name: QqAgentToolName;
   ok: boolean;
@@ -151,9 +161,14 @@ type ToolResult = {
 };
 
 type AgentPlan = {
+  finish?: boolean;
   reply?: string;
   toolCalls: QqAgentToolCall[];
 };
+
+type AgentMemoryCommand =
+  | { kind: "setSchool"; value: string }
+  | { kind: "forgetSchool" };
 
 type AiEmailSummary = {
   index: number;
@@ -242,6 +257,14 @@ function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function textArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const itemText = text(item);
+    return itemText ? [itemText] : [];
+  });
+}
+
 function boolArg(value: unknown, fallback: boolean) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
@@ -327,6 +350,11 @@ function sessionKey(userOpenId: string) {
   return `agent-session:${digest}`;
 }
 
+function profileKey(userOpenId: string) {
+  const digest = createHash("sha256").update(userOpenId).digest("hex");
+  return `agent-profile:${digest}`;
+}
+
 function incomingMessageId(event: QqDispatchEvent) {
   return text(event.data.id) ?? event.id;
 }
@@ -362,6 +390,7 @@ function normalizePlan(value: unknown): AgentPlan {
       })
     : [];
   return {
+    finish: boolArg(item.finish, false),
     reply: text(item.reply),
     toolCalls: toolCalls.slice(0, MAX_TOOL_CALLS)
   };
@@ -448,6 +477,100 @@ function messagePeriodArgs(message: string) {
   return period ? { period } : {};
 }
 
+function normalizeRememberedValue(value: string) {
+  return value
+    .replace(/[。.!！?？,，;；]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+function parseMemoryCommand(message: string): AgentMemoryCommand | undefined {
+  const normalized = message.trim();
+  if (/^(?:忘记|删除|清除).*(?:学校|school)/i.test(normalized) || /(?:学校|school).*(?:忘记|删除|清除)/i.test(normalized)) {
+    return { kind: "forgetSchool" };
+  }
+  const schoolMatch =
+    normalized.match(/(?:记住|保存|记一下|帮我记住|请记住|备注)?.{0,8}(?:我的)?学校(?:名字)?(?:是|叫|=|：|:)\s*([^\n。；;！!？?]{2,80})/i)
+    ?? normalized.match(/(?:我是|我在)\s*([A-Za-z0-9][A-Za-z0-9\s.'&-]{1,80})\s*(?:学校|school)/i);
+  if (!schoolMatch?.[1]) return undefined;
+  const value = normalizeRememberedValue(schoolMatch[1]);
+  return value ? { kind: "setSchool", value } : undefined;
+}
+
+function schoolSearchQueries(schoolName: string) {
+  const compact = normalizeRememberedValue(schoolName);
+  const noSchoolSuffix = compact.replace(/\s+school$/i, "").trim();
+  const candidates = [
+    compact,
+    compact.replace(/[ -]+/g, "-"),
+    compact.replace(/[ -]+/g, " "),
+    noSchoolSuffix,
+    noSchoolSuffix.replace(/[ -]+/g, "-"),
+    noSchoolSuffix.replace(/[ -]+/g, " ")
+  ];
+  return [...new Set(candidates.map((item) => item.trim()).filter(Boolean))].slice(0, 6);
+}
+
+function schoolFromProfile(profile: AgentProfile) {
+  return profile.facts.schoolName ?? profile.aliases["学校"] ?? profile.aliases.school;
+}
+
+function hasSchoolSearchIntent(message: string) {
+  return /(学校|school)/i.test(message)
+    && /(邮件|邮箱|搜索|搜|查|找|来自|发来|最近|最新|有没有|有无|是否有|什么)/i.test(message);
+}
+
+function extractSearchQuery(message: string) {
+  const trimmed = message.trim();
+  if (/^(?:查|看|打开)\s*第\s*\d+/i.test(trimmed)) return undefined;
+  const match = trimmed.match(/^(?:搜索|搜|查找|查|找)(?:一?下|一下)?\s*(.+)$/i);
+  if (!match?.[1]) return undefined;
+  const query = match[1]
+    .replace(/^(?:最近|最新|今天|今日|昨天|昨日|本周|这周|最近一周)\s*/i, "")
+    .replace(/^(?:有没有|有无|是否有|有什么|有没有什么|也没有什么|还有没有)\s*/i, "")
+    .replace(/(?:的)?(?:邮件|邮箱邮件)\s*$/i, "")
+    .replace(/^来自\s*/i, "")
+    .trim();
+  if (!query || /^(?:邮件|学校|school)$/i.test(query)) return undefined;
+  return query;
+}
+
+function emailSortValue(email: ProcessedEmail) {
+  const received = Date.parse(email.receivedAt || email.processedAt);
+  const processed = Date.parse(email.processedAt);
+  return {
+    received: Number.isNaN(received) ? 0 : received,
+    processed: Number.isNaN(processed) ? 0 : processed
+  };
+}
+
+function compareEmailsDesc(left: ProcessedEmail, right: ProcessedEmail) {
+  const a = emailSortValue(left);
+  const b = emailSortValue(right);
+  return b.received - a.received || b.processed - a.processed || right.id.localeCompare(left.id);
+}
+
+function compactToolResult(result: ToolResult) {
+  return {
+    name: result.name,
+    ok: result.ok,
+    message: result.message,
+    data: result.data
+  };
+}
+
+function profilePrompt(profile: AgentProfile) {
+  const school = schoolFromProfile(profile);
+  const aliases = Object.entries(profile.aliases)
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}=${value}`);
+  return {
+    schoolName: school,
+    aliases
+  };
+}
+
 function formatMailboxName(mailboxId?: string) {
   if (!mailboxId || mailboxId === "all") return "全部邮箱";
   return readMailboxes().find((mailbox) => mailbox.id === mailboxId)?.name ?? "指定邮箱";
@@ -485,12 +608,14 @@ function helpText() {
     "**QQ 智能体已开启**",
     "",
     "**我可以帮你：**",
-    "1. 查邮件：`今天重要邮件有哪些`、`搜索 Grab receipt`",
-    "2. 看详情：`看第 2 封`、`这封要做什么`",
-    "3. 管已读：`把第 2 封标记已读`",
-    "4. 管通知：`QQ 通知失败有哪些`、`重试全部失败通知`",
-    "5. 管邮箱：`检查邮箱连接`、`处理 Gmail 邮箱`",
+    "1. **查邮件**：`今天重要邮件有哪些`、`搜索 Grab receipt`、`最近有没有学校邮件`",
+    "2. **看详情**：`看第 2 封`、`这封要做什么`",
+    "3. **记偏好**：`记住我的学校是 Wardlaw Hartridge`",
+    "4. **管已读**：`把第 2 封标记已读`",
+    "5. **管通知**：`QQ 通知失败有哪些`、`重试全部失败通知`",
+    "6. **管邮箱**：`检查邮箱连接`、`处理 Gmail 邮箱`",
     "",
+    "> 我会按需要连续调用工具，直到能给出结论。",
     "> 涉及修改或执行任务时，我会先让你确认。"
   ].join("\n");
 }
@@ -622,11 +747,13 @@ export class QqAgentService {
     this.inFlightUsers.add(userOpenId);
     try {
       const session = this.readSession(userOpenId, agent);
+      const profile = this.readProfile(userOpenId);
       this.appendHistory(session, "user", message, agent);
       recordQqAgentEvent({ userOpenId, kind: "message", status: "received", message });
-      const reply = await this.respond(message, session, agent);
+      const reply = await this.respond(message, session, agent, profile);
       this.appendHistory(session, "assistant", reply, agent);
       this.saveSession(session, agent);
+      this.saveProfile(userOpenId, profile);
       await this.sendReply(userOpenId, reply, incomingMessageId(event));
       return { kind: "handled" as const };
     } catch (error) {
@@ -639,7 +766,7 @@ export class QqAgentService {
     }
   }
 
-  private async respond(message: string, session: AgentSession, agent: QqAgentSettings) {
+  private async respond(message: string, session: AgentSession, agent: QqAgentSettings, profile: AgentProfile) {
     if (session.pendingAction && session.pendingAction.expiresAt <= new Date(this.now()).toISOString()) {
       session.pendingAction = undefined;
     }
@@ -654,22 +781,46 @@ export class QqAgentService {
     if (session.pendingAction && isCancel(message)) {
       const summary = session.pendingAction.summary;
       session.pendingAction = undefined;
-      return `已取消：${summary}`;
+      return `**已取消**\n${summary}`;
+    }
+
+    const memoryCommand = parseMemoryCommand(message);
+    if (memoryCommand) {
+      return this.applyMemoryCommand(memoryCommand, profile);
     }
 
     if (isContinue(message)) {
-      if (!session.lastList) return "没有可以继续展开的列表。你可以先搜索邮件或查看最近邮件。";
+      if (!session.lastList) return "**没有可以继续展开的列表**\n你可以先搜索邮件或查看最近邮件。";
       const continuedCall = session.lastList.toolCall;
       const result = await this.executeTool(continuedCall, session, agent, false);
       this.rememberToolResult(session, result);
-      return await this.aiReplyFromToolResults(message, session, agent, { toolCalls: [continuedCall] }, [result])
+      return await this.aiReplyFromToolResults(message, session, agent, { toolCalls: [continuedCall] }, [result], profile)
         ?? result.message;
     }
 
     if (session.pendingAction) session.pendingAction = undefined;
 
-    const localPlan = this.heuristicPlan(message, session);
-    const plan = localPlan ?? await this.aiPlan(message, session, agent);
+    const priorityPlan = this.priorityHeuristicPlan(message, session, profile);
+    if (priorityPlan) return await this.executePlanAndReply(message, session, agent, profile, priorityPlan);
+
+    const aiReply = await this.aiAgentLoop(message, session, agent, profile);
+    if (aiReply) return aiReply;
+
+    const localPlan = this.heuristicPlan(message, session, profile);
+    const plan = localPlan ?? {
+      reply: "AI API Key 还没配置好，所以我只能响应固定指令。\n\n" + helpText(),
+      toolCalls: []
+    };
+    return await this.executePlanAndReply(message, session, agent, profile, plan);
+  }
+
+  private async executePlanAndReply(
+    message: string,
+    session: AgentSession,
+    agent: QqAgentSettings,
+    profile: AgentProfile,
+    plan: AgentPlan
+  ) {
     if (!plan.toolCalls.length) return plan.reply || helpText();
 
     const results: ToolResult[] = [];
@@ -683,16 +834,47 @@ export class QqAgentService {
       }
     }
 
-    const synthesized = await this.aiReplyFromToolResults(message, session, agent, plan, results);
+    const synthesized = await this.aiReplyFromToolResults(message, session, agent, plan, results, profile);
     if (synthesized) return synthesized;
 
     return results.map((result) => result.message).join("\n\n") || plan.reply || helpText();
   }
 
-  private heuristicPlan(message: string, session: AgentSession): AgentPlan | undefined {
+  private priorityHeuristicPlan(message: string, _session: AgentSession, profile: AgentProfile): AgentPlan | undefined {
     if (/(帮助|help|菜单|功能|你会什么|你能干嘛|有什么用|能做什么)/i.test(message.trim())) {
       return { reply: helpText(), toolCalls: [] };
     }
+    if (hasSchoolSearchIntent(message)) {
+      const schoolName = schoolFromProfile(profile);
+      if (!schoolName) {
+        return {
+          reply: [
+            "**我还不知道“学校”指哪所学校**",
+            "",
+            "你可以先说：`记住我的学校是 Wardlaw Hartridge`",
+            "之后再说 `搜索学校邮件`，我会自动按这个名称查。"
+          ].join("\n"),
+          toolCalls: []
+        };
+      }
+      return {
+        toolCalls: [{
+          name: "mail.search",
+          arguments: {
+            query: schoolName,
+            queries: schoolSearchQueries(schoolName),
+            category: categoryFromMessage(message),
+            ...messagePeriodArgs(message)
+          }
+        }]
+      };
+    }
+    return undefined;
+  }
+
+  private heuristicPlan(message: string, session: AgentSession, profile: AgentProfile): AgentPlan | undefined {
+    const priorityPlan = this.priorityHeuristicPlan(message, session, profile);
+    if (priorityPlan) return priorityPlan;
     const index = indexFromMessage(message);
     if (/通知/.test(message) && /失败|队列|异常|错误/.test(message)) {
       return { toolCalls: [{ name: "notification.listFailed", arguments: messagePeriodArgs(message) }] };
@@ -738,9 +920,9 @@ export class QqAgentService {
     if (/标记.*已读|已读/.test(message) && (index || /这封|上一封|上一条/.test(message))) {
       return { toolCalls: [{ name: "mail.markPanelRead", arguments: { index: index ?? session.lastEmails[0]?.index ?? 1, panelRead: true } }] };
     }
-    const searchMatch = message.match(/^(?:搜索|查找|查|找)\s+(.+)$/);
-    if (searchMatch?.[1]?.trim()) {
-      return { toolCalls: [{ name: "mail.search", arguments: { query: searchMatch[1].trim() } }] };
+    const searchQuery = extractSearchQuery(message);
+    if (searchQuery) {
+      return { toolCalls: [{ name: "mail.search", arguments: { query: searchQuery, ...messagePeriodArgs(message) } }] };
     }
     if (/最近|最新/.test(message)) {
       return { toolCalls: [{ name: "mail.listRecent", arguments: messagePeriodArgs(message) }] };
@@ -755,24 +937,97 @@ export class QqAgentService {
     return undefined;
   }
 
-  private async aiPlan(message: string, session: AgentSession, agent: QqAgentSettings): Promise<AgentPlan> {
+  private async aiAgentLoop(message: string, session: AgentSession, agent: QqAgentSettings, profile: AgentProfile) {
     const settings = readSettings().ai;
-    if (!settings.apiKey.trim()) {
-      return {
-        reply: "AI API Key 还没配置好，所以我只能响应固定指令。\n\n" + helpText(),
-        toolCalls: []
-      };
+    if (!settings.apiKey.trim()) return undefined;
+
+    const transcript: Array<{
+      step: number;
+      toolCalls: QqAgentToolCall[];
+      toolResults: ReturnType<typeof compactToolResult>[];
+    }> = [];
+    const allResults: ToolResult[] = [];
+    let totalToolCalls = 0;
+
+    try {
+      for (let step = 0; step < MAX_AGENT_STEPS; step += 1) {
+        const plan = await this.aiPlan(message, session, agent, profile, transcript);
+        if (plan.finish || !plan.toolCalls.length) {
+          if (plan.reply) return plan.reply;
+          if (allResults.length) {
+            return await this.aiReplyFromToolResults(message, session, agent, plan, allResults, profile)
+              ?? allResults.map((result) => result.message).join("\n\n");
+          }
+          return undefined;
+        }
+
+        const remainingCalls = MAX_AGENT_TOTAL_TOOL_CALLS - totalToolCalls;
+        if (remainingCalls <= 0) break;
+        const toolCalls = plan.toolCalls.slice(0, Math.min(MAX_TOOL_CALLS, remainingCalls));
+        const stepResults: ToolResult[] = [];
+        for (const call of toolCalls) {
+          const result = await this.executeTool(call, session, agent, false);
+          stepResults.push(result);
+          allResults.push(result);
+          this.rememberToolResult(session, result);
+          if (result.pendingAction) {
+            session.pendingAction = result.pendingAction;
+            return result.message;
+          }
+        }
+        totalToolCalls += toolCalls.length;
+        transcript.push({
+          step: step + 1,
+          toolCalls,
+          toolResults: stepResults.map(compactToolResult)
+        });
+      }
+
+      if (allResults.length) {
+        return await this.aiReplyFromToolResults(message, session, agent, { toolCalls: [] }, allResults, profile)
+          ?? allResults.map((result) => result.message).join("\n\n");
+      }
+      return undefined;
+    } catch (error) {
+      const safeMessage = error instanceof Error ? error.message : String(error);
+      recordQqAgentEvent({
+        userOpenId: session.userOpenId,
+        kind: "plan",
+        status: "failed",
+        message: safeMessage
+      });
+      return undefined;
     }
+  }
+
+  private async aiPlan(
+    message: string,
+    session: AgentSession,
+    agent: QqAgentSettings,
+    profile: AgentProfile,
+    transcript: Array<{
+      step: number;
+      toolCalls: QqAgentToolCall[];
+      toolResults: ReturnType<typeof compactToolResult>[];
+    }>
+  ): Promise<AgentPlan> {
+    const settings = readSettings().ai;
 
     const systemPrompt = [
       "你是自动邮件系统的 QQ 智能体。你通过 QQ 单聊帮助已绑定用户查看和处理邮件。",
       "只能输出严格 JSON，不要把 JSON 包在 Markdown 代码块里。",
-      "JSON 字段：reply, toolCalls。reply 是无需工具时的简短中文 QQ Markdown 回复；toolCalls 是工具调用数组。",
-      "不要编造邮件内容。需要邮件数据时必须调用工具。",
+      "JSON 字段：finish, reply, toolCalls。",
+      "finish=true 表示你已经完成本次回答；reply 必须是最终给用户看的中文 QQ Markdown。",
+      "finish=false 表示你还需要工具；此时 toolCalls 必须给出下一步工具调用，reply 可以为空。",
+      "不要编造邮件内容。需要邮件数据时必须调用工具；拿到工具结果后再判断是否继续调用工具或 finish。",
+      "你可以多轮调用工具：搜索、列表、详情、统计、通知队列等可以组合使用，直到信息足够再结束。",
       "写操作可以提出工具调用，后端会自动二次确认。",
       "当用户问你能做什么、功能、帮助时，不需要工具，直接用清晰 Markdown 列出能力和例句。",
+      "如果用户使用“学校”等模糊词，要优先使用 userProfile.aliases 或 userProfile.schoolName 展开。若没有对应记忆，finish=true 并请用户先说“记住我的学校是 ...”。",
+      "“最近/最新”默认表示按收到时间倒序看最近邮件，不要擅自限制为本周；只有用户明确说今天、昨天、本周才设置 period。",
+      "当一次查询没有结果但用户意图明确，可以换一个合理关键词或查询变体再试；不要返回无关邮件来凑答案。",
       "可用工具：",
-      "mail.search { query, category?, mailboxId?, period?, limit?, offset? }",
+      "mail.search { query?, queries?, category?, mailboxId?, period?, limit?, offset? }",
       "mail.listRecent { mailboxId?, period?, limit?, offset? }",
       "mail.getDetail { emailId? 或 index? }",
       "mail.listByCategory { category, mailboxId?, period?, limit?, offset? }",
@@ -797,18 +1052,16 @@ export class QqAgentService {
       "category 只能是 important、secondary、ignore。period 只能是 today、yesterday、week、all。"
     ].join("\n");
 
-    const prompt = [
-      `当前时间：${new Date(this.now()).toISOString()}`,
-      `每次列表最多返回：${agent.maxResults}`,
-      "最近邮件序号：",
-      session.lastEmails.map((item) => `${item.index}. ${item.id} ${item.subject}`).join("\n") || "(无)",
-      "最近通知序号：",
-      session.lastNotifications.map((item) => `${item.index}. ${item.id} ${item.subject ?? item.emailId ?? ""}`).join("\n") || "(无)",
-      "最近对话：",
-      session.history.slice(-6).map((item) => `${item.role}: ${item.content}`).join("\n") || "(无)",
-      "",
-      `用户消息：${message}`
-    ].join("\n");
+    const prompt = JSON.stringify({
+      now: new Date(this.now()).toISOString(),
+      maxResults: agent.maxResults,
+      userProfile: profilePrompt(profile),
+      recentEmailRefs: session.lastEmails,
+      recentNotificationRefs: session.lastNotifications,
+      recentConversation: session.history.slice(-8),
+      toolTranscript: transcript,
+      userMessage: message
+    });
 
     const protocol = resolveAiProtocol(settings, "text");
     const { url, init } = buildProviderRequest({
@@ -856,7 +1109,8 @@ export class QqAgentService {
     session: AgentSession,
     agent: QqAgentSettings,
     plan: AgentPlan,
-    results: ToolResult[]
+    results: ToolResult[],
+    profile: AgentProfile
   ): Promise<string | undefined> {
     if (!results.length || results.some((result) => result.pendingAction)) return undefined;
 
@@ -885,6 +1139,7 @@ export class QqAgentService {
       now: new Date(this.now()).toISOString(),
       userMessage: message,
       maxResults: agent.maxResults,
+      userProfile: profilePrompt(profile),
       plannedReply: plan.reply,
       toolCalls: plan.toolCalls,
       toolResults: toolPayload,
@@ -1123,21 +1378,51 @@ export class QqAgentService {
 
   private toolSearchMail(call: QqAgentToolCall, args: Record<string, unknown>, limit: number, offset: number): ToolResult {
     const query = text(args.query) ?? text(args.q);
-    if (!query) return { name: call.name, ok: false, message: "请告诉我要搜索什么关键词。" };
-    const result = queryProcessedEmails({ ...this.queryOptions(args, limit, offset), q: query });
+    const queries = [...new Set([query, ...textArray(args.queries)].filter((item): item is string => Boolean(item)))].slice(0, 6);
+    if (!queries.length) return { name: call.name, ok: false, message: "请告诉我要搜索什么关键词。" };
+    const result = queries.length === 1
+      ? queryProcessedEmails({ ...this.queryOptions(args, limit, offset), q: queries[0] })
+      : this.queryProcessedEmailsByAnyQuery(args, queries, limit, offset);
     const mailboxes = readMailboxes();
-    const message = formatEmails(`搜索“${truncate(query, 30)}”的结果：`, result.items, mailboxes, offset);
+    const message = formatEmails(`搜索“${truncate(query ?? queries[0], 30)}”的结果：`, result.items, mailboxes, offset);
     return {
       name: call.name,
       ok: true,
       message: result.hasMoreAfter ? `${message}\n\n回复“继续”查看更多。` : message,
       emailRefs: emailRefs(result.items, offset),
-      nextPageTool: result.hasMoreAfter ? { toolCall: { ...call, arguments: { ...args, offset: offset + result.items.length } }, nextOffset: offset + result.items.length } : undefined,
+      nextPageTool: result.hasMoreAfter ? { toolCall: { ...call, arguments: { ...args, query: query ?? queries[0], queries, offset: offset + result.items.length } }, nextOffset: offset + result.items.length } : undefined,
       data: {
         total: result.total,
         hasMoreAfter: result.hasMoreAfter,
+        queries,
         emails: emailSummariesForAi(result.items, mailboxes, offset)
       }
+    };
+  }
+
+  private queryProcessedEmailsByAnyQuery(args: Record<string, unknown>, queries: string[], limit: number, offset: number) {
+    const unique = new Map<string, ProcessedEmail>();
+    const fetchLimit = Math.min(100, Math.max(limit + offset, limit));
+    for (const query of queries) {
+      const result = queryProcessedEmails({
+        ...this.queryOptions(args, fetchLimit, 0),
+        q: query,
+        offset: 0,
+        limit: fetchLimit
+      });
+      for (const email of result.items) {
+        if (!unique.has(email.id)) unique.set(email.id, email);
+      }
+    }
+    const items = [...unique.values()].sort(compareEmailsDesc);
+    const page = items.slice(offset, offset + limit);
+    return {
+      items: page,
+      total: items.length,
+      offset,
+      limit,
+      hasMoreBefore: offset > 0,
+      hasMoreAfter: offset + page.length < items.length
     };
   }
 
@@ -1462,6 +1747,31 @@ export class QqAgentService {
     );
   }
 
+  private applyMemoryCommand(command: AgentMemoryCommand, profile: AgentProfile) {
+    if (command.kind === "forgetSchool") {
+      delete profile.facts.schoolName;
+      delete profile.aliases.school;
+      delete profile.aliases["学校"];
+      profile.updatedAt = new Date(this.now()).toISOString();
+      return [
+        "**已忘记学校记忆**",
+        "",
+        "之后如果你再说 `学校邮件`，我会先问你学校名称。"
+      ].join("\n");
+    }
+
+    profile.facts.schoolName = command.value;
+    profile.aliases.school = command.value;
+    profile.aliases["学校"] = command.value;
+    profile.updatedAt = new Date(this.now()).toISOString();
+    return [
+      "**记住了**",
+      `学校：**${command.value}**`,
+      "",
+      "之后你说 `学校邮件`、`来自学校的邮件`，我会优先按这个名称和常见连字符写法搜索。"
+    ].join("\n");
+  }
+
   private readSession(userOpenId: string, agent: QqAgentSettings): AgentSession {
     const saved = readQqState<Partial<AgentSession>>(sessionKey(userOpenId));
     const expired = saved?.updatedAt && Date.parse(saved.updatedAt) + SESSION_TTL_MS < this.now();
@@ -1483,6 +1793,30 @@ export class QqAgentService {
           updatedAt: saved.updatedAt ?? new Date(this.now()).toISOString()
         };
     return session;
+  }
+
+  private readProfile(userOpenId: string): AgentProfile {
+    const saved = readQqState<Partial<AgentProfile>>(profileKey(userOpenId));
+    const facts = isRecord(saved?.facts) ? saved.facts : {};
+    const aliases = isRecord(saved?.aliases) ? saved.aliases : {};
+    const schoolName = text(facts.schoolName);
+    return {
+      facts: {
+        ...(schoolName ? { schoolName } : {})
+      },
+      aliases: Object.fromEntries(
+        Object.entries(aliases).flatMap(([key, value]) => {
+          const aliasValue = text(value);
+          return key.trim() && aliasValue ? [[key.trim().slice(0, 40), aliasValue.slice(0, 80)]] : [];
+        })
+      ),
+      updatedAt: text(saved?.updatedAt) ?? new Date(this.now()).toISOString()
+    };
+  }
+
+  private saveProfile(userOpenId: string, profile: AgentProfile) {
+    profile.updatedAt = new Date(this.now()).toISOString();
+    updateQqState(profileKey(userOpenId), profile);
   }
 
   private saveSession(session: AgentSession, agent: QqAgentSettings) {
