@@ -1,8 +1,5 @@
 import { publishAppEvent } from "../events";
 import {
-  createQqEmailReadAction,
-  deleteQqEmailReadAction,
-  finalizeQqEmailReadAction,
   readQqBotConfig,
   recordQqNotificationReference,
   resumePausedNotificationDeliveries
@@ -13,12 +10,10 @@ import { createQqButtonReadService, type QqButtonReadService } from "./button-re
 import { createQqClient } from "./client";
 import { createTokenProvider } from "./credentials";
 import { createQqGateway } from "./gateway";
-import { createQqMarkdownAsset, removeQqMarkdownAsset } from "./markdown-assets";
 import { createQqQuoteReadService, type QqQuoteReadService } from "./quote-read";
 import type {
   QqBotPublicStatus,
   QqDirectImageInput,
-  QqDirectMarkdownImageInput,
   QqDirectMessageInput,
   QqDispatchEvent,
   QqGatewayStatus,
@@ -43,7 +38,6 @@ type QqManagerButtonReadService = Pick<QqButtonReadService, "handleDispatchEvent
 type QqManagerClient = {
   sendDirectMessage(input: QqDirectMessageInput): Promise<QqSendResult>;
   sendDirectImage(input: QqDirectImageInput): Promise<QqSendResult>;
-  sendDirectMarkdownImage(input: QqDirectMarkdownImageInput): Promise<QqSendResult>;
   acknowledgeInteraction(interactionId: string): Promise<void>;
 };
 
@@ -55,11 +49,6 @@ export type QqManagerDependencies = {
   buttonReadService?: QqManagerButtonReadService;
   client?: QqManagerClient;
   recordMessageReference?: typeof recordQqNotificationReference;
-  createReadAction?: typeof createQqEmailReadAction;
-  finalizeReadAction?: typeof finalizeQqEmailReadAction;
-  deleteReadAction?: typeof deleteQqEmailReadAction;
-  createMarkdownAsset?: typeof createQqMarkdownAsset;
-  removeMarkdownAsset?: typeof removeQqMarkdownAsset;
   onStatus?: (status: QqBotPublicStatus) => void;
   onBindingReady?: () => void;
 };
@@ -92,11 +81,6 @@ export class QqManager {
   private readonly buttonReadService: QqManagerButtonReadService;
   private readonly client: QqManagerClient;
   private readonly recordMessageReference: typeof recordQqNotificationReference;
-  private readonly createReadAction: typeof createQqEmailReadAction;
-  private readonly finalizeReadAction: typeof finalizeQqEmailReadAction;
-  private readonly deleteReadAction: typeof deleteQqEmailReadAction;
-  private readonly createMarkdownAsset: typeof createQqMarkdownAsset;
-  private readonly removeMarkdownAsset: typeof removeQqMarkdownAsset;
   private readonly onStatusChange?: (status: QqBotPublicStatus) => void;
   private readonly onBindingReady?: () => void;
   private started = false;
@@ -119,11 +103,6 @@ export class QqManager {
       client: this.client
     });
     this.recordMessageReference = dependencies.recordMessageReference ?? recordQqNotificationReference;
-    this.createReadAction = dependencies.createReadAction ?? createQqEmailReadAction;
-    this.finalizeReadAction = dependencies.finalizeReadAction ?? finalizeQqEmailReadAction;
-    this.deleteReadAction = dependencies.deleteReadAction ?? deleteQqEmailReadAction;
-    this.createMarkdownAsset = dependencies.createMarkdownAsset ?? createQqMarkdownAsset;
-    this.removeMarkdownAsset = dependencies.removeMarkdownAsset ?? removeQqMarkdownAsset;
     this.onStatusChange = dependencies.onStatus;
     this.onBindingReady = dependencies.onBindingReady;
   }
@@ -185,66 +164,11 @@ export class QqManager {
     const binding = this.bindingService.readBinding();
     if (!binding) throw new Error("QQ notification recipient is not bound");
 
-    let action = emailId ? this.createReadAction({ emailId, userOpenId: binding.userOpenId }) : undefined;
-    let markdownAsset: ReturnType<typeof createQqMarkdownAsset> | undefined;
-    let result: QqSendResult | undefined;
-    let actionMessageResult: QqSendResult | undefined;
-
-    try {
-      result = await this.client.sendDirectImage({
-        userOpenId: binding.userOpenId,
-        image,
-        fileName: "mail-summary.png"
-      });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.warn(`QQ media image notification unavailable; using Markdown URL fallback: ${reason.slice(0, 180)}`);
-    }
-
-    if (action && !result) {
-      try {
-        markdownAsset = this.createMarkdownAsset(image);
-        result = await this.client.sendDirectMarkdownImage({
-          userOpenId: binding.userOpenId,
-          imageUrl: markdownAsset.url,
-          imageWidth: markdownAsset.width,
-          imageHeight: markdownAsset.height,
-          readActionToken: action.token
-        });
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        console.warn(`QQ Markdown image notification unavailable; retained read action because delivery is uncertain: ${reason.slice(0, 180)}`);
-      }
-    }
-
-    if (!result) {
-      throw new Error("QQ image notification failed: media and Markdown delivery were unavailable");
-    }
-
-    if (action && !markdownAsset) {
-      try {
-        actionMessageResult = await this.client.sendDirectMessage({
-          userOpenId: binding.userOpenId,
-          content: "点击下方按钮可将上一封邮件标记为系统已读。",
-          ...(result.messageId ? { messageReferenceId: result.messageId } : {}),
-          readActionToken: action.token
-        });
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        console.warn(`QQ read button message unavailable; image notification was still delivered: ${reason.slice(0, 180)}`);
-      }
-    }
-
-    if (action) {
-      try {
-        this.finalizeReadAction(action.token, {
-          messageId: actionMessageResult?.messageId ?? result.messageId,
-          refIndex: actionMessageResult?.refIndex ?? result.refIndex
-        });
-      } catch {
-        // The notification is delivered; action mapping failure must not trigger a duplicate retry.
-      }
-    }
+    const result = await this.client.sendDirectImage({
+      userOpenId: binding.userOpenId,
+      image,
+      fileName: "mail-summary.png"
+    });
     if (emailId && (result.messageId || result.refIndex)) {
       try {
         this.recordMessageReference({
