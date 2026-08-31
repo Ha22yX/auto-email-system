@@ -1357,14 +1357,13 @@ body.resizing-detail iframe {
   font-style: normal;
 }
 
-.timeline-email-entry,
 .email-list-entry {
   display: grid;
   gap: 10px;
   min-width: 0;
 }
 
-.timeline-day-divider {
+.email-day-divider {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1374,20 +1373,16 @@ body.resizing-detail iframe {
   font-size: 12px;
 }
 
-.timeline-day-divider span {
+.email-day-divider span {
   color: var(--ink);
   font-weight: 800;
 }
 
-.timeline-day-divider em {
+.email-day-divider em {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-style: normal;
-}
-
-.email-row.timeline-row {
-  grid-template-columns: 1fr;
 }
 
 .email-skeleton {

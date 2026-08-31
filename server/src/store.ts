@@ -39,7 +39,8 @@ const JSON_DATA_FILE = path.join(DATA_DIR, "app.db.json");
 const SQLITE_FILE = path.join(DATA_DIR, "app.sqlite");
 const SCHEMA_VERSION = 2;
 const PANEL_READ_UNDO_TTL_MS = 10_000;
-const EMAIL_RECEIVED_ORDER_SQL = "COALESCE(receivedAt, processedAt) ASC, processedAt ASC, id ASC";
+const EMAIL_DISPLAY_RECEIVED_ORDER_SQL = "COALESCE(receivedAt, processedAt) DESC, processedAt DESC, id DESC";
+const EMAIL_QUEUE_RECEIVED_ORDER_SQL = "COALESCE(receivedAt, processedAt) ASC, processedAt ASC, id ASC";
 const NOTIFICATION_DELIVERY_RECEIVED_ORDER_SQL = [
   "COALESCE(emails.receivedAt, emails.processedAt, notification_deliveries.createdAt) ASC",
   "notification_deliveries.createdAt ASC",
@@ -579,7 +580,7 @@ function getAllMailboxes() {
 }
 
 function getAllEmails() {
-  return (db.prepare(`SELECT data FROM emails ORDER BY ${EMAIL_RECEIVED_ORDER_SQL}`).all() as SqlRow[]).map(rowToEmail);
+  return (db.prepare(`SELECT data FROM emails ORDER BY ${EMAIL_DISPLAY_RECEIVED_ORDER_SQL}`).all() as SqlRow[]).map(rowToEmail);
 }
 
 function getRuns(limit = 100) {
@@ -1024,7 +1025,7 @@ export function queryProcessedEmails(options: {
   const limit = Math.min(100, Math.max(20, Math.floor(options.limit ?? 40)));
   const offset = Math.max(0, Math.floor(options.offset ?? 0));
   const rows = db
-    .prepare(`SELECT data FROM emails ${whereSql} ORDER BY ${EMAIL_RECEIVED_ORDER_SQL} LIMIT ? OFFSET ?`)
+    .prepare(`SELECT data FROM emails ${whereSql} ORDER BY ${EMAIL_DISPLAY_RECEIVED_ORDER_SQL} LIMIT ? OFFSET ?`)
     .all(...params, limit, offset) as SqlRow[];
 
   const total = Number(totalRow.total ?? 0);
@@ -1062,7 +1063,7 @@ export function getDashboardData(mailboxId?: string) {
   );
   const allTotal = Number((db.prepare("SELECT COUNT(*) AS total FROM emails").get() as SqlRow).total ?? 0);
   const recentEmails = (
-    db.prepare(`SELECT data FROM emails ${whereSql} ORDER BY ${EMAIL_RECEIVED_ORDER_SQL} LIMIT 8`).all(...params) as SqlRow[]
+    db.prepare(`SELECT data FROM emails ${whereSql} ORDER BY ${EMAIL_DISPLAY_RECEIVED_ORDER_SQL} LIMIT 8`).all(...params) as SqlRow[]
   ).map(rowToEmail);
   const currentRunRow = db
     .prepare("SELECT data FROM runs WHERE status = ? ORDER BY startedAt DESC LIMIT 1")
@@ -1099,7 +1100,7 @@ export function getPendingNotificationEmails(limit = 20) {
       .prepare(
         `SELECT data FROM emails
          WHERE COALESCE(notificationError, '') <> '' AND notifiedAt IS NULL
-         ORDER BY ${EMAIL_RECEIVED_ORDER_SQL}
+         ORDER BY ${EMAIL_QUEUE_RECEIVED_ORDER_SQL}
          LIMIT ?`
       )
       .all(limit) as SqlRow[]

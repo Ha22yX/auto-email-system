@@ -342,7 +342,7 @@ test("bulk panel read updates only the selected mailbox and category", () => {
   assert.equal(undoProcessedEmailsPanelRead(result.operationId!), undefined);
 });
 
-test("processed email queries sort by received time across mailboxes", () => {
+test("processed email queries show newest received mail first across mailboxes", () => {
   const suffix = `${process.pid}-${Date.now()}`;
   const first = `received-first-${suffix}`;
   const second = `received-second-${suffix}`;
@@ -374,7 +374,7 @@ test("processed email queries sort by received time across mailboxes", () => {
     limit: 20
   });
 
-  assert.deepEqual(result.items.map((email) => email.id), [first, second, third]);
+  assert.deepEqual(result.items.map((email) => email.id), [third, second, first]);
 });
 
 test("email state updates preserve QQ button actions and message references", () => {

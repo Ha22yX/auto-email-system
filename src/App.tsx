@@ -61,7 +61,7 @@ import type {
   WeclawStatus
 } from "./types";
 
-type View = "mail" | "timeline" | "notifications" | "settings";
+type View = "mail" | "notifications" | "settings";
 type NotificationQueueStatus = NotificationDeliveryStatus | "failed";
 type EmailContextMenu = {
   x: number;
@@ -905,7 +905,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   }, [loadDashboard]);
 
   useEffect(() => {
-    if (view === "mail" || view === "timeline") {
+    if (view === "mail") {
       void loadEmails().catch((error) => setToast(error.message));
     }
   }, [view, loadEmails]);
@@ -1013,7 +1013,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
         const nearLatest =
           emailOffsetRef.current === 0 &&
           (!emailListRef.current || emailListRef.current.scrollTop < EMAIL_SCROLL_THRESHOLD);
-        if ((view === "mail" || view === "timeline") && nearLatest) {
+        if (view === "mail" && nearLatest) {
           void loadEmails(true).catch(() => undefined);
         }
         if (view === "notifications") {
@@ -1057,7 +1057,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
       void loadDashboard().catch(() => undefined);
       const nearLatest =
         emailOffsetRef.current === 0 && (!emailListRef.current || emailListRef.current.scrollTop < EMAIL_SCROLL_THRESHOLD);
-      if ((view === "mail" || view === "timeline") && nearLatest) {
+      if (view === "mail" && nearLatest) {
         void loadEmails(true).catch(() => undefined);
       }
     }, 10000);
@@ -1081,14 +1081,13 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
   const activeMailboxName =
     selectedMailbox === "all" ? "全部邮箱" : mailboxMap.get(selectedMailbox)?.name || "当前邮箱";
-  const pageEyebrow = view === "mail" || view === "timeline"
+  const pageEyebrow = view === "mail"
     ? activeMailboxName
     : view === "notifications"
       ? "QQ 通知"
       : "系统配置";
   const pageTitle = {
     mail: "邮件处理台",
-    timeline: "邮件时间线",
     notifications: "通知队列",
     settings: "管理设置"
   }[view];
@@ -1099,7 +1098,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     dashboard?.currentRun,
     Boolean(dashboard?.processorRunning)
   );
-  const mailNavExpanded = view === "mail" || view === "timeline";
+  const mailNavExpanded = view === "mail";
   const loadedEmailStart = emailTotal ? emailOffset + 1 : 0;
   const loadedEmailEnd = emailOffset + emails.length;
   const unloadedEarlierCount = emailOffset;
@@ -1123,13 +1122,6 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
             <button className={view === "mail" ? "nav-item active" : "nav-item"} onClick={() => setView("mail")}>
               <SealCheck size={18} />
               处理台
-            </button>
-            <button
-              className={view === "timeline" ? "nav-item active" : "nav-item"}
-              onClick={() => setView("timeline")}
-            >
-              <ClockCounterClockwise size={18} />
-              时间线
             </button>
             <div
               className={mailNavExpanded ? "mailbox-submenu expanded" : "mailbox-submenu collapsed"}
@@ -1209,7 +1201,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
           </div>
         </header>
 
-        {view === "mail" || view === "timeline" ? (
+        {view === "mail" ? (
           <section ref={mailLayoutRef} className="mail-layout" style={mailLayoutStyle}>
             <div className="mail-main">
               <div className="metric-grid">
@@ -1246,8 +1238,8 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
               <div className="list-toolbar">
                 <div>
-                  <h2>{view === "timeline" ? "按收到时间排列" : `${categoryMeta[activeCategory].label}邮件`}</h2>
-                  <p>{view === "timeline" ? "跨邮箱按真实收件时间从早到晚展示" : categoryMeta[activeCategory].helper}</p>
+                  <h2>{categoryMeta[activeCategory].label}邮件</h2>
+                  <p>{categoryMeta[activeCategory].helper}</p>
                 </div>
                 <div className="list-toolbar-actions">
                   <button
@@ -1301,19 +1293,17 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                     {(unloadedEarlierCount > 0 || emailWindowLoading === "newer") && (
                       <div className="email-window-edge">
                         {emailWindowLoading === "newer"
-                          ? "正在换入更早邮件..."
-                          : `向上滚动可换入 ${unloadedEarlierCount} 封更早邮件`}
+                          ? "正在换入更新邮件..."
+                          : `向上滚动可换入 ${unloadedEarlierCount} 封更新邮件`}
                       </div>
                     )}
                     {emails.map((email, index) => {
                     const CategoryIcon = categoryMeta[email.category].icon;
                     const day = formatDay(email.receivedAt || email.processedAt);
                     const showDay =
-                      view === "timeline" &&
                       (index === 0 || formatDay(emails[index - 1]?.receivedAt || emails[index - 1]?.processedAt) !== day);
                     const rowClassName = [
                       "email-row",
-                      view === "timeline" ? "timeline-row" : "",
                       email.category,
                       selectedEmailId === email.id ? "active" : "",
                       email.panelRead ? "panel-read" : "panel-unread"
@@ -1322,9 +1312,9 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                       .join(" ");
 
                     return (
-                      <div className={view === "timeline" ? "timeline-email-entry" : "email-list-entry"} key={email.id}>
+                      <div className="email-list-entry" key={email.id}>
                         {showDay && (
-                          <div className="timeline-day-divider">
+                          <div className="email-day-divider">
                             <span>{day}</span>
                             <em>{activeMailboxName}</em>
                           </div>
@@ -1373,8 +1363,8 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                     {(unloadedLaterCount > 0 || emailWindowLoading === "older") && (
                       <div className="email-window-edge">
                         {emailWindowLoading === "older"
-                          ? "正在加载更晚邮件..."
-                          : `向下滚动可加载 ${unloadedLaterCount} 封更晚邮件`}
+                          ? "正在加载更早邮件..."
+                          : `向下滚动可加载 ${unloadedLaterCount} 封更早邮件`}
                       </div>
                     )}
                   </>
