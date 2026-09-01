@@ -7,6 +7,7 @@ import type {
 } from "react";
 import {
   Archive,
+  ArrowLeft,
   BellRinging,
   CaretDown,
   CheckCircle,
@@ -429,7 +430,9 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const [bulkReadUndoSeconds, setBulkReadUndoSeconds] = useState(0);
   const [bulkReadUndoBusy, setBulkReadUndoBusy] = useState(false);
   const [toast, setToast] = useState("");
-  const [detailWidth, setDetailWidth] = useState(720);
+  const [detailWidth, setDetailWidth] = useState(640);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [singlePane, setSinglePane] = useState(() => window.matchMedia("(max-width: 1320px)").matches);
   const [contextMenu, setContextMenu] = useState<EmailContextMenu | null>(null);
   const [autoReadSuppressedId, setAutoReadSuppressedId] = useState<string | null>(null);
   const mailLayoutRef = useRef<HTMLElement | null>(null);
@@ -445,10 +448,10 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
   const clampDetailWidth = useCallback((nextWidth: number) => {
     const layoutWidth = mailLayoutRef.current?.getBoundingClientRect().width;
-    const minDetailWidth = 560;
+    const minDetailWidth = 480;
     const maxDetailWidth = layoutWidth
-      ? Math.max(minDetailWidth, Math.min(1040, layoutWidth - 500))
-      : 1040;
+      ? Math.max(minDetailWidth, Math.min(960, layoutWidth - 400))
+      : 960;
 
     return Math.round(Math.min(Math.max(nextWidth, minDetailWidth), maxDetailWidth));
   }, []);
@@ -506,6 +509,30 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   useEffect(() => {
     emailWindowLoadingRef.current = emailWindowLoading;
   }, [emailWindowLoading]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1320px)");
+    const update = () => setSinglePane(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    setDetailOpen(false);
+  }, [activeCategory, selectedMailbox]);
+
+  useEffect(() => {
+    if (view !== "mail") setDetailOpen(false);
+  }, [view]);
+
+  useEffect(() => {
+    if (!detailOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDetailOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [detailOpen]);
 
   useEffect(
     () => () => {
@@ -893,6 +920,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
   const selectEmail = useCallback(
     (email: EmailListItem) => {
       setSelectedEmailId(email.id);
+      setDetailOpen(true);
       if (email.category === "secondary" && !email.panelRead) {
         void updateEmailReadState(email.id, true, { silent: true }).catch((error) => setToast(error.message));
       }
@@ -945,6 +973,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     if (!detail || detail.panelRead || !shouldAutoMarkPanelRead(detail.category)) return;
+    if (singlePane && !detailOpen) return;
     if (detail.id === autoReadSuppressedId) return;
 
     const timer = window.setTimeout(() => {
@@ -952,7 +981,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     }, 2000);
 
     return () => window.clearTimeout(timer);
-  }, [autoReadSuppressedId, detail?.id, detail?.panelRead, detail?.category, updateEmailReadState]);
+  }, [autoReadSuppressedId, detail?.id, detail?.panelRead, detail?.category, detailOpen, singlePane, updateEmailReadState]);
 
   useEffect(() => {
     if (!bulkReadConfirmation) return;
@@ -1191,9 +1220,15 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
               <span />
               {runStatusText}
             </div>
-            <button className="primary-button" disabled={busy} onClick={runProcessing}>
+            <button
+              className={view === "mail" ? "primary-button" : "primary-button contextual-run-action"}
+              disabled={busy}
+              onClick={runProcessing}
+              aria-label={busy ? "正在处理邮件" : "立即处理邮件"}
+              title={busy ? "正在处理邮件" : "立即处理邮件"}
+            >
               <Play size={18} weight="fill" />
-              {busy ? "处理中" : "立即处理"}
+              <span className="button-label">{busy ? "处理中" : "立即处理"}</span>
             </button>
             <button className="ghost-button icon-button" onClick={onLogout} title="退出登录" aria-label="退出登录">
               <SignOut size={18} />
@@ -1202,7 +1237,11 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
         </header>
 
         {view === "mail" ? (
-          <section ref={mailLayoutRef} className="mail-layout" style={mailLayoutStyle}>
+          <section
+            ref={mailLayoutRef}
+            className={detailOpen ? "mail-layout detail-open" : "mail-layout"}
+            style={mailLayoutStyle}
+          >
             <div className="mail-main">
               <div className="metric-grid">
                 {(Object.keys(categoryMeta) as MailCategory[]).map((category) => {
@@ -1237,9 +1276,25 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
               <ProcessingProgress run={dashboard?.currentRun} running={showProcessingProgress} />
 
               <div className="list-toolbar">
-                <div>
-                  <h2>{categoryMeta[activeCategory].label}邮件</h2>
-                  <p>{categoryMeta[activeCategory].helper}</p>
+                <div className="list-toolbar-heading">
+                  <div>
+                    <h2>{categoryMeta[activeCategory].label}邮件</h2>
+                    <p>{categoryMeta[activeCategory].helper}</p>
+                  </div>
+                  <label className="mobile-mailbox-filter">
+                    <MailboxIcon size={16} />
+                    <select
+                      aria-label="选择邮箱"
+                      value={selectedMailbox}
+                      onChange={(event) => setSelectedMailbox(event.target.value)}
+                    >
+                      <option value="all">全部邮箱</option>
+                      {dashboard?.mailboxes.map((mailbox) => (
+                        <option value={mailbox.id} key={mailbox.id}>{mailbox.name}</option>
+                      ))}
+                    </select>
+                    <CaretDown size={14} />
+                  </label>
                 </div>
                 <div className="list-toolbar-actions">
                   <button
@@ -1260,7 +1315,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                     <input
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
-                      placeholder="搜索主题、发件人、中文概况"
+                      placeholder="搜索邮件"
                     />
                   </label>
                 </div>
@@ -1399,12 +1454,15 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
               <span />
             </div>
 
-            <EmailDetail
-              detail={detail}
-              loading={detailLoading}
-              mailbox={detail ? mailboxMap.get(detail.mailboxId) : undefined}
-              autoLoadRemoteImages={Boolean(dashboard?.settings.system.autoLoadRemoteImages)}
-            />
+            <div className="mail-detail-pane" aria-hidden={singlePane && !detailOpen}>
+              <EmailDetail
+                detail={detail}
+                loading={detailLoading}
+                mailbox={detail ? mailboxMap.get(detail.mailboxId) : undefined}
+                autoLoadRemoteImages={Boolean(dashboard?.settings.system.autoLoadRemoteImages)}
+                onClose={() => setDetailOpen(false)}
+              />
+            </div>
           </section>
         ) : view === "notifications" ? (
           <NotificationQueuePanel
@@ -1421,6 +1479,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
             onRetryAll={retryAllQqNotifications}
             onOpenEmail={(emailId) => {
               setSelectedEmailId(emailId);
+              setDetailOpen(true);
               setView("mail");
             }}
           />
@@ -1435,6 +1494,36 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
           />
         )}
       </main>
+
+      <nav className="mobile-tabbar" aria-label="主导航">
+        <button
+          type="button"
+          className={view === "mail" ? "active" : ""}
+          onClick={() => {
+            setView("mail");
+            setDetailOpen(false);
+          }}
+        >
+          <SealCheck size={20} weight={view === "mail" ? "fill" : "regular"} />
+          <span>处理台</span>
+        </button>
+        <button
+          type="button"
+          className={view === "notifications" ? "active" : ""}
+          onClick={() => setView("notifications")}
+        >
+          <BellRinging size={20} weight={view === "notifications" ? "fill" : "regular"} />
+          <span>通知</span>
+        </button>
+        <button
+          type="button"
+          className={view === "settings" ? "active" : ""}
+          onClick={() => setView("settings")}
+        >
+          <GearSix size={20} weight={view === "settings" ? "fill" : "regular"} />
+          <span>设置</span>
+        </button>
+      </nav>
 
       {bulkReadConfirmation && (
         <div
@@ -1791,12 +1880,14 @@ function EmailDetail({
   detail,
   loading,
   mailbox,
-  autoLoadRemoteImages
+  autoLoadRemoteImages,
+  onClose
 }: {
   detail: ProcessedEmail | null;
   loading: boolean;
   mailbox?: Mailbox;
   autoLoadRemoteImages: boolean;
+  onClose: () => void;
 }) {
   const [originalMode, setOriginalMode] = useState<"rendered" | "source">("rendered");
   const [loadImages, setLoadImages] = useState(autoLoadRemoteImages);
@@ -1852,6 +1943,13 @@ function EmailDetail({
     <aside className={loading ? "detail-panel is-loading-next" : "detail-panel"} ref={panelRef}>
       {loading && <span className="detail-switch-indicator" aria-hidden="true" />}
       <div className="detail-content-switch" key={detail.id}>
+        <div className="detail-mobile-bar">
+          <button type="button" onClick={onClose} aria-label="返回邮件列表">
+            <ArrowLeft size={19} />
+          </button>
+          <strong>邮件详情</strong>
+          <time>{formatTime(detail.receivedAt || detail.processedAt)}</time>
+        </div>
         <div className="detail-header">
           <div className="detail-pills">
             <span className={`category-pill ${detail.category}`}>{categoryMeta[detail.category].label}</span>
