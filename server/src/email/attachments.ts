@@ -34,6 +34,17 @@ export type ResolvedAgentAttachment = AgentAttachment & {
   content: Buffer;
 };
 
+export type AgentAttachmentSelector = {
+  attachmentId?: string;
+  attachmentIds?: string[];
+  attachmentIndex?: number;
+  attachmentIndexes?: number[];
+  filename?: string;
+  filenames?: string[];
+  includeInline?: boolean;
+  all?: boolean;
+};
+
 function extension(filename: string) {
   return filename.toLowerCase().match(/\.([a-z0-9]{1,12})$/)?.[1] ?? "";
 }
@@ -112,21 +123,57 @@ async function parsedAgentAttachments(email: ProcessedEmail, includeInline: bool
   }));
 }
 
-export async function resolveAgentAttachment(
-  email: ProcessedEmail,
-  selector: { attachmentId?: string; attachmentIndex?: number; filename?: string; includeInline?: boolean }
-) {
+export async function resolveAgentAttachments(email: ProcessedEmail, selector: AgentAttachmentSelector) {
   const attachments = await parsedAgentAttachments(email, Boolean(selector.includeInline));
-  const requestedId = selector.attachmentId?.trim();
-  const requestedName = selector.filename?.trim().toLowerCase();
-  const requestedIndex = Math.max(0, Math.floor(selector.attachmentIndex ?? 0));
-  const attachment = requestedId
-    ? attachments.find((item) => item.id === requestedId)
-    : requestedName
-      ? attachments.find((item) => item.filename.toLowerCase() === requestedName || item.safeFilename.toLowerCase() === requestedName)
-      : requestedIndex > 0
-        ? attachments[requestedIndex - 1]
-        : attachments[0];
+  const requestedIds = [...new Set([selector.attachmentId, ...(selector.attachmentIds ?? [])]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value)))];
+  const requestedNames = [...new Set([selector.filename, ...(selector.filenames ?? [])]
+    .map((value) => value?.trim().toLowerCase())
+    .filter((value): value is string => Boolean(value)))];
+  const requestedIndexes = [...new Set([selector.attachmentIndex, ...(selector.attachmentIndexes ?? [])]
+    .map((value) => Math.max(0, Math.floor(value ?? 0)))
+    .filter((value) => value > 0))];
+
+  if (selector.all) {
+    if (!attachments.length) throw new Error("这封邮件没有可发送的附件。");
+    return attachments;
+  }
+
+  const selected: ResolvedAgentAttachment[] = [];
+  const append = (attachment: ResolvedAgentAttachment | undefined) => {
+    if (attachment && !selected.some((item) => item.id === attachment.id && item.index === attachment.index)) {
+      selected.push(attachment);
+    }
+  };
+  let missingSelector = false;
+  for (const id of requestedIds) {
+    const attachment = attachments.find((item) => item.id === id);
+    if (!attachment) missingSelector = true;
+    append(attachment);
+  }
+  for (const name of requestedNames) {
+    const attachment = attachments.find((item) => item.filename.toLowerCase() === name || item.safeFilename.toLowerCase() === name);
+    if (!attachment) missingSelector = true;
+    append(attachment);
+  }
+  for (const index of requestedIndexes) {
+    const attachment = attachments[index - 1];
+    if (!attachment) missingSelector = true;
+    append(attachment);
+  }
+
+  const hasSelector = requestedIds.length > 0 || requestedNames.length > 0 || requestedIndexes.length > 0;
+  if (!hasSelector) append(attachments[0]);
+  if (!selected.length || missingSelector) {
+    throw new Error("没有找到全部指定附件。请先列出附件，再按序号选择。");
+  }
+  return selected;
+}
+
+export async function resolveAgentAttachment(email: ProcessedEmail, selector: AgentAttachmentSelector) {
+  const attachments = await resolveAgentAttachments(email, selector);
+  const attachment = attachments[0];
   if (!attachment) throw new Error("没有找到指定附件。请先列出附件，再按序号选择。");
   return attachment;
 }

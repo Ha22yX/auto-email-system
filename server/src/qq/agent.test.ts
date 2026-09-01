@@ -99,6 +99,35 @@ function email(input: {
   };
 }
 
+function rawSourceWithAttachments(
+  subject: string,
+  attachments: Array<{ filename: string; contentType: string; body: string }>
+) {
+  const boundary = `agent-attachments-${subject.replace(/[^a-z0-9]/gi, "-")}`;
+  return [
+    "From: School <school@example.com>",
+    "To: user@example.com",
+    `Subject: ${subject}`,
+    "MIME-Version: 1.0",
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "See attachments.",
+    ...attachments.flatMap((attachment) => [
+      `--${boundary}`,
+      `Content-Type: ${attachment.contentType}; name="${attachment.filename}"`,
+      `Content-Disposition: attachment; filename="${attachment.filename}"`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from(attachment.body).toString("base64")
+    ]),
+    `--${boundary}--`,
+    ""
+  ].join("\r\n");
+}
+
 function harness(options: {
   config?: QqBotConfig;
   currentBinding?: QqBotBinding;
@@ -436,22 +465,29 @@ test("QQ Agent can search and send a mail image across AI tool rounds", async ()
           message: {
             content: JSON.stringify({
               finish: false,
+              progress: "**正在定位邮件**\n找到后会直接发送图片。",
               toolCalls: [{ name: "mail.search", arguments: { query: suffix, limit: 1 } }]
             })
           }
         }]
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    assert.match(prompt, /Requested receipt/);
+    if (callCount === 2) {
+      assert.match(prompt, /Requested receipt/);
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              finish: false,
+              toolCalls: [{ name: "mail.sendImage", arguments: { index: 1 } }]
+            })
+          }
+        }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    assert.match(prompt, /mediaSent/);
     return new Response(JSON.stringify({
-      choices: [{
-        message: {
-          content: JSON.stringify({
-            finish: false,
-            toolCalls: [{ name: "mail.sendImage", arguments: { index: 1 } }]
-          })
-        }
-      }]
+      choices: [{ message: { content: JSON.stringify({ finish: true, toolCalls: [] }) } }]
     }), { status: 200, headers: { "content-type": "application/json" } });
   };
 
@@ -464,10 +500,154 @@ test("QQ Agent can search and send a mail image across AI tool rounds", async ()
     ));
 
     assert.deepEqual(result, { kind: "handled" });
-    assert.equal(callCount, 2);
+    assert.equal(callCount, 3);
     assert.equal(target.sentImages.length, 1);
     assert.equal(target.sent.length, 0);
-    assert.equal(target.sentMarkdown.length, 0);
+    assert.equal(target.sentMarkdown.length, 1);
+    assert.match(target.sentMarkdown[0]?.markdown ?? "", /正在定位邮件/);
+    assert.equal(target.sentMarkdown[0]?.msgId, `message-ai-image-${suffix}`);
+  } finally {
+    updateAiSettings({ apiKey: " ", protocol: "auto" });
+  }
+});
+
+test("QQ Agent skips a repeated media tool call within the same run", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `ai-media-dedupe-user-${suffix}`;
+  addProcessedEmail(email({
+    id: `agent-ai-media-dedupe-${suffix}`,
+    subject: `One image only ${suffix}`,
+    receivedAt: "2026-08-31T09:55:00.000Z"
+  }));
+  updateAiSettings({
+    apiKey: "agent-test-key",
+    baseUrl: "https://api.example.test/v1/chat/completions",
+    model: "agent-test-model",
+    protocol: "openai-chat"
+  });
+  let callCount = 0;
+  const fetch = async () => {
+    callCount += 1;
+    const content = callCount === 1
+      ? { finish: false, toolCalls: [{ name: "mail.search", arguments: { query: suffix, limit: 1 } }] }
+      : callCount <= 3
+        ? { finish: false, toolCalls: [{ name: "mail.sendImage", arguments: { index: 1 } }] }
+        : { finish: true, toolCalls: [] };
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+
+  try {
+    const target = harness({ fetch, markdown: true, userOpenId });
+    await target.service.handleDispatchEvent(event(
+      `找到 ${suffix} 的邮件并把图片发给我`,
+      `ai-media-dedupe-${suffix}`,
+      userOpenId
+    ));
+
+    assert.equal(callCount, 4);
+    assert.equal(target.sentImages.length, 1);
+  } finally {
+    updateAiSettings({ apiKey: " ", protocol: "auto" });
+  }
+});
+
+test("QQ Agent autonomously finds the newest mail with attachments and sends every file", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `ai-multi-file-user-${suffix}`;
+  const files = [
+    { filename: "events.pdf", contentType: "application/pdf", body: `Events ${suffix}` },
+    { filename: "timeline.pdf", contentType: "application/pdf", body: `Timeline ${suffix}` }
+  ];
+  addProcessedEmail(email({
+    id: `agent-ai-no-attachment-${suffix}`,
+    subject: `Newest message without files ${suffix}`,
+    receivedAt: "2026-08-31T11:50:00.000Z"
+  }));
+  addProcessedEmail(email({
+    id: `agent-ai-with-attachments-${suffix}`,
+    subject: `College counseling documents ${suffix}`,
+    receivedAt: "2026-08-31T11:45:00.000Z",
+    rawSource: rawSourceWithAttachments(`College counseling documents ${suffix}`, files),
+    attachments: files.map((file, index) => ({
+      id: `attachment-${index + 1}`,
+      filename: file.filename,
+      contentType: file.contentType,
+      size: Buffer.byteLength(file.body),
+      related: false,
+      supportedForVision: true
+    }))
+  }));
+  updateAiSettings({
+    apiKey: "agent-test-key",
+    baseUrl: "https://api.example.test/v1/chat/completions",
+    model: "agent-test-model",
+    protocol: "openai-chat"
+  });
+  let callCount = 0;
+  const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+    callCount += 1;
+    const body = JSON.parse(String(init?.body ?? "{}")) as { messages?: Array<{ content?: string }> };
+    const prompt = body.messages?.at(-1)?.content ?? "";
+    if (callCount === 1) {
+      assert.match(body.messages?.[0]?.content ?? "", /找到第一封有普通附件/);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        finish: false,
+        progress: "**正在检查最近的重要邮件**\n我会找到第一封带附件的邮件并直接发送。",
+        toolCalls: [{ name: "mail.search", arguments: { query: suffix, category: "important", limit: 2 } }]
+      }) } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (callCount === 2) {
+      assert.match(prompt, /Newest message without files/);
+      assert.match(prompt, /College counseling documents/);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        finish: false,
+        toolCalls: [{ name: "mail.listAttachments", arguments: { index: 1 } }]
+      }) } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (callCount === 3) {
+      assert.match(prompt, /没有普通附件/);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        finish: false,
+        progress: "第 1 封没有普通附件，继续检查下一封。",
+        toolCalls: [{ name: "mail.listAttachments", arguments: { index: 2 } }]
+      }) } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (callCount === 4) {
+      assert.match(prompt, /events\.pdf/);
+      assert.match(prompt, /timeline\.pdf/);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        finish: false,
+        toolCalls: [{ name: "mail.sendAttachment", arguments: { index: 2, allAttachments: true } }]
+      }) } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    assert.match(prompt, /"mediaCount":2/);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ finish: true, toolCalls: [] }) } }]
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  try {
+    const target = harness({ fetch, markdown: true, userOpenId });
+    const result = await target.service.handleDispatchEvent(event(
+      `找到最近一封有附件的重要邮件，把所有附件发给我 ${suffix}`,
+      `ai-multi-file-${suffix}`,
+      userOpenId
+    ));
+
+    assert.deepEqual(result, { kind: "handled" });
+    assert.equal(callCount, 5, JSON.stringify({
+      result,
+      markdown: target.sentMarkdown.map((item) => item.markdown),
+      text: target.sent.map((item) => item.content),
+      files: target.sentFiles.map((item) => item.fileName)
+    }));
+    assert.deepEqual(target.sentFiles.map((file) => file.fileName), files.map((file) => file.filename));
+    assert.equal(target.sentMarkdown.length, 2);
+    assert.match(target.sentMarkdown[0]?.markdown ?? "", /正在检查最近的重要邮件/);
+    assert.match(target.sentMarkdown[1]?.markdown ?? "", /继续检查下一封/);
   } finally {
     updateAiSettings({ apiKey: " ", protocol: "auto" });
   }
@@ -617,4 +797,81 @@ test("QQ Agent sends a selected original attachment without a duplicate text rep
   assert.equal(target.sentFiles[0]?.fileName, "receipt.txt");
   assert.equal(target.sentFiles[0]?.file.toString(), attachmentBody);
   assert.equal(target.sent.length + target.sentMarkdown.length, repliesBefore);
+});
+
+test("QQ Agent sends all attachments from one request in their original order", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `all-attachments-user-${suffix}`;
+  const files = [
+    { filename: "school-events.pdf", contentType: "application/pdf", body: `Events ${suffix}` },
+    { filename: "application-timeline.pdf", contentType: "application/pdf", body: `Timeline ${suffix}` }
+  ];
+  addProcessedEmail(email({
+    id: `agent-all-attachments-${suffix}`,
+    subject: `School documents ${suffix}`,
+    receivedAt: "2026-08-31T11:35:00.000Z",
+    rawSource: rawSourceWithAttachments(`School documents ${suffix}`, files),
+    attachments: files.map((file, index) => ({
+      id: `attachment-${index + 1}`,
+      filename: file.filename,
+      contentType: file.contentType,
+      size: Buffer.byteLength(file.body),
+      related: false,
+      supportedForVision: true
+    }))
+  }));
+
+  const target = harness({ markdown: true, userOpenId });
+  await target.service.handleDispatchEvent(event(`搜索 ${suffix}`, `all-attachment-search-${suffix}`, userOpenId));
+  const repliesBefore = target.sent.length + target.sentMarkdown.length;
+  await target.service.handleDispatchEvent(event("把附件都发给我", `all-attachment-send-${suffix}`, userOpenId));
+
+  assert.deepEqual(target.sentFiles.map((file) => file.fileName), files.map((file) => file.filename));
+  assert.deepEqual(target.sentFiles.map((file) => file.file.toString()), files.map((file) => file.body));
+  assert.equal(target.sent.length + target.sentMarkdown.length, repliesBefore);
+});
+
+test("QQ Agent keeps the full attachment context after sending one file", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `attachment-context-user-${suffix}`;
+  const files = [
+    { filename: "first.txt", contentType: "text/plain", body: `First ${suffix}` },
+    { filename: "second.txt", contentType: "text/plain", body: `Second ${suffix}` }
+  ];
+  addProcessedEmail(email({
+    id: `agent-attachment-context-newer-${suffix}`,
+    subject: `Newer mail without attachments ${suffix}`,
+    receivedAt: "2026-08-31T11:59:59.000Z"
+  }));
+  addProcessedEmail(email({
+    id: `agent-attachment-context-${suffix}`,
+    subject: `Two attachments ${suffix}`,
+    receivedAt: "2026-08-31T11:59:58.000Z",
+    rawSource: rawSourceWithAttachments(`Two attachments ${suffix}`, files),
+    attachments: files.map((file, index) => ({
+      id: `attachment-${index + 1}`,
+      filename: file.filename,
+      contentType: file.contentType,
+      size: Buffer.byteLength(file.body),
+      related: false,
+      supportedForVision: false
+    }))
+  }));
+
+  const target = harness({ markdown: true, userOpenId });
+  await target.service.handleDispatchEvent(event(`搜索 ${suffix}`, `context-search-${suffix}`, userOpenId));
+  await target.service.handleDispatchEvent(event("继续", `context-continue-${suffix}`, userOpenId));
+  await target.service.handleDispatchEvent(event("列出第二封邮件的附件", `context-list-${suffix}`, userOpenId));
+  await target.service.handleDispatchEvent(event("把第一个附件发给我", `context-first-${suffix}`, userOpenId));
+  await target.service.handleDispatchEvent(event("发第二个", `context-second-${suffix}`, userOpenId));
+
+  assert.deepEqual(
+    target.sentFiles.map((file) => file.fileName),
+    ["first.txt", "second.txt"],
+    JSON.stringify({
+      markdown: target.sentMarkdown.map((item) => item.markdown),
+      text: target.sent.map((item) => item.content)
+    })
+  );
+  assert.deepEqual(target.sentFiles.map((file) => file.file.toString()), files.map((file) => file.body));
 });
