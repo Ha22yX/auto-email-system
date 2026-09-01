@@ -3,8 +3,8 @@ import type { MailCategory } from "../types";
 import type { EmailNotificationModel } from "./format";
 
 const WIDTH = 1080;
-const MIN_HEIGHT = 980;
-const MAX_HEIGHT = 1600;
+const MIN_HEIGHT = 1040;
+const MAX_HEIGHT = 1900;
 const PAD = 64;
 const CONTENT_WIDTH = WIDTH - PAD * 2;
 const CARD_RENDER_LIMIT = 2;
@@ -31,6 +31,7 @@ function releaseCardRenderSlot() {
 
 type Palette = { accent: string; dark: string; tint: string; line: string; eyebrow: string };
 type Highlight = { label: string; value: string };
+export type CardSummaryBlock = { kind: "paragraph" | "bullet"; lines: string[] };
 
 const palettes: Record<MailCategory, Palette> = {
   important: { accent: "#D45B45", dark: "#8E3327", tint: "#FFF0EB", line: "#F1C9BF", eyebrow: "需要优先处理" },
@@ -44,6 +45,16 @@ function escapeXml(value: string) {
 
 function compact(value: string) {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function stripInlineMarkdown(value: string) {
+  return value
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/\\([\\`*{}\[\]()#+\-.!_>])/g, "$1")
+    .replace(/(`{1,3}|\*{1,3}|_{1,3}|~~)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function charWidth(character: string) {
@@ -107,6 +118,44 @@ export function wrapCardText(value: string, maxUnits: number, maxLines: number):
   return lines.slice(0, maxLines);
 }
 
+export function parseCardSummary(value: string, maxLines = 9): CardSummaryBlock[] {
+  const rows = value
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^\|?\s*:?-{3,}/.test(line))
+    .map((line) => {
+      const bullet = line.match(/^(?:[-+*]|\d+[.)])\s+(.+)$/);
+      const kind = bullet ? "bullet" as const : "paragraph" as const;
+      const withoutPrefix = bullet?.[1] ?? line.replace(/^#{1,6}\s+/, "").replace(/^>\s?/, "");
+      const normalized = withoutPrefix.includes("|")
+        ? withoutPrefix.split("|").map(stripInlineMarkdown).filter(Boolean).join(" · ")
+        : stripInlineMarkdown(withoutPrefix);
+      return { kind, value: normalized };
+    })
+    .filter((row) => row.value);
+
+  if (!rows.length) return [{ kind: "paragraph", lines: ["暂无邮件分析。"] }];
+
+  const blocks: CardSummaryBlock[] = [];
+  let usedLines = 0;
+  for (let index = 0; index < rows.length && usedLines < maxLines; index += 1) {
+    const row = rows[index];
+    const remaining = maxLines - usedLines;
+    const lines = wrapCardText(row.value, row.kind === "bullet" ? 31 : 35, remaining);
+    if (!lines.length) continue;
+    const hasMoreRows = index < rows.length - 1;
+    if (usedLines + lines.length >= maxLines && hasMoreRows) {
+      const lastIndex = lines.length - 1;
+      lines[lastIndex] = `${lines[lastIndex].replace(/[.,，。;；:：…\s]+$/u, "")}…`;
+    }
+    blocks.push({ kind: row.kind, lines });
+    usedLines += lines.length;
+  }
+  return blocks;
+}
+
 export function extractNotificationHighlights(model: EmailNotificationModel): Highlight[] {
   const source = compact([model.subject, model.summary, ...model.actions].join(" "));
   const found: Highlight[] = [];
@@ -144,12 +193,23 @@ function metadata(label: string, value: string, x: number, y: number) {
 }
 
 function layout(model: EmailNotificationModel) {
-  const title = wrapCardText(model.subject, 20, 3);
-  const summary = wrapCardText(model.summary, 35, 7);
-  const actions = model.actions.slice(0, 3).map((item) => wrapCardText(item, 31, 3));
+  const title = wrapCardText(stripInlineMarkdown(model.subject), 20, 3);
+  const summary = parseCardSummary(model.summary);
+  const actions = model.actions.slice(0, 3).map((item) => wrapCardText(stripInlineMarkdown(item), 31, 3));
   const highlights = extractNotificationHighlights(model);
-  const desired = 418 + Math.max(1, title.length) * 58 + 148 + (highlights.length ? 154 : 0) + 98 + Math.max(1, summary.length) * 42 + 92 + actions.reduce((sum, lines) => sum + Math.max(76, lines.length * 38 + 32) + 14, 0) + 108;
-  return { title, summary, actions, highlights, height: Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, desired)) };
+  const summaryContentHeight = summary.reduce((sum, block, index) =>
+    sum + block.lines.length * 40 + (index ? 12 : 0), 0);
+  const summaryHeight = Math.max(96, summaryContentHeight + 54);
+  const actionHeight = actions.reduce((sum, lines) => sum + Math.max(76, lines.length * 38 + 32) + 14, 0);
+  const desired = 726 + Math.max(1, title.length) * 58 + (highlights.length ? 154 : 0) + summaryHeight + actionHeight;
+  return {
+    title,
+    summary,
+    summaryHeight,
+    actions,
+    highlights,
+    height: Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, desired))
+  };
 }
 
 export function buildEmailNotificationCardSvg(model: EmailNotificationModel) {
@@ -178,11 +238,21 @@ export function buildEmailNotificationCardSvg(model: EmailNotificationModel) {
     });
     y += 154;
   }
-  output.push(section("中文概况", PAD, y + 28, palette.accent));
+  output.push(section("邮件要点", PAD, y + 28, palette.accent));
   const summaryY = y + 54;
-  const summaryHeight = 48 + Math.max(1, card.summary.length) * 42;
-  output.push(`<rect x="${PAD}" y="${summaryY}" width="${CONTENT_WIDTH}" height="${summaryHeight}" rx="18" fill="${palette.tint}" stroke="${palette.line}"/>${text(card.summary, PAD + 30, summaryY + 49, 27, 42, "#26312D", 560)}`);
-  y = summaryY + summaryHeight + 48;
+  output.push(`<rect x="${PAD}" y="${summaryY}" width="${CONTENT_WIDTH}" height="${card.summaryHeight}" rx="18" fill="${palette.tint}" stroke="${palette.line}"/>`);
+  let summaryTextY = summaryY + 46;
+  card.summary.forEach((block, index) => {
+    if (index) summaryTextY += 12;
+    if (block.kind === "bullet") {
+      output.push(`<circle cx="${PAD + 32}" cy="${summaryTextY - 9}" r="5" fill="${palette.accent}"/>`);
+      output.push(text(block.lines, PAD + 54, summaryTextY, 26, 40, "#26312D", 580));
+    } else {
+      output.push(text(block.lines, PAD + 30, summaryTextY, 27, 40, "#26312D", 600));
+    }
+    summaryTextY += block.lines.length * 40;
+  });
+  y = summaryY + card.summaryHeight + 48;
   output.push(section("建议动作", PAD, y + 28, palette.accent));
   y += 58;
   card.actions.forEach((lines, index) => {
@@ -191,7 +261,7 @@ export function buildEmailNotificationCardSvg(model: EmailNotificationModel) {
     output.push(`<rect x="${PAD}" y="${y}" width="${CONTENT_WIDTH}" height="${rowHeight}" rx="16" fill="#F4F6F4"/><circle cx="${PAD + 38}" cy="${y + 38}" r="22" fill="${palette.accent}"/><text x="${PAD + 38}" y="${y + 46}" text-anchor="middle" fill="#FFFFFF" font-size="19" font-weight="850">${String(index + 1).padStart(2, "0")}</text>${text(lines, PAD + 82, y + 44, 25, 38, "#26312D", 620)}`);
     y += rowHeight + 14;
   });
-  output.push(`<line x1="${PAD}" y1="${card.height - 82}" x2="1016" y2="${card.height - 82}" stroke="#DDE4E0" stroke-width="2"/><text x="${PAD}" y="${card.height - 48}" fill="#7D8A84" font-size="18" font-weight="600">邮件已由 AI 整理 · 请在处理台查看原文</text><text x="1016" y="${card.height - 48}" text-anchor="end" fill="${palette.dark}" font-size="18" font-weight="750">${escapeXml(model.urgencyLabel)}</text></svg>`);
+  output.push(`<line x1="${PAD}" y1="${card.height - 82}" x2="1016" y2="${card.height - 82}" stroke="#DDE4E0" stroke-width="2"/><text x="${PAD}" y="${card.height - 48}" fill="#7D8A84" font-size="18" font-weight="600">邮件已由 AI 整理 · 完整分析见处理台</text><text x="1016" y="${card.height - 48}" text-anchor="end" fill="${palette.dark}" font-size="18" font-weight="750">${escapeXml(model.urgencyLabel)}</text></svg>`);
   return output.join("");
 }
 

@@ -36,6 +36,7 @@ import DOMPurify from "dompurify";
 import QRCode from "qrcode";
 import { api } from "./api";
 import { parseEmailReadStateEvent } from "./app-events";
+import { MarkdownContent } from "./MarkdownContent";
 import { QqNotificationPanel } from "./QqNotificationPanel";
 import {
   AI_PROVIDER_PRESETS,
@@ -46,6 +47,7 @@ import {
   updateAiProviderField as applyAiProviderFieldUpdate
 } from "./ai-presets";
 import { buildOptimisticPanelReadPatch } from "./read-state";
+import { markdownToPlainText } from "./markdown";
 import type {
   AiSettings,
   Dashboard,
@@ -1422,7 +1424,7 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
                           <span>{senderName(email)}</span>
                           <span>{mailboxMap.get(email.mailboxId)?.name || "邮箱"}</span>
                         </div>
-                        <p>{email.summaryZh}</p>
+                        <p>{markdownToPlainText(email.summaryZh)}</p>
                         <div className="email-row-bottom">
                           <div className="email-row-statuses">
                             <span className={email.panelRead ? "panel-state read" : "panel-state unread"}>
@@ -1959,7 +1961,7 @@ function EmailDetail({
         <div>
           <EnvelopeSimple size={38} />
           <h2>选择一封邮件</h2>
-          <p>这里会显示中文概况、处理理由、动作项和邮件原件。</p>
+          <p>这里会显示完整分析、判断理由、动作项和邮件原件。</p>
         </div>
       </aside>
     );
@@ -1994,14 +1996,14 @@ function EmailDetail({
           {detail.toText && <span>收件人：{detail.toText}</span>}
         </div>
 
-        <section className="summary-block">
-          <p className="section-kicker">中文概况</p>
-          <p>{detail.summaryZh}</p>
+        <section className="summary-block analysis-block">
+          <p className="section-kicker">完整分析</p>
+          <MarkdownContent content={detail.summaryZh} />
         </section>
 
         <section className="summary-block">
           <p className="section-kicker">判断理由</p>
-          <p>{detail.reasonZh}</p>
+          <MarkdownContent content={detail.reasonZh} />
         </section>
 
         {detail.actionItemsZh.length > 0 && (
@@ -2009,7 +2011,9 @@ function EmailDetail({
             <p className="section-kicker">建议动作</p>
             <ul className="action-list">
               {detail.actionItemsZh.map((item) => (
-                <li key={item}>{item}</li>
+                <li key={item}>
+                  <MarkdownContent content={item} compact />
+                </li>
               ))}
             </ul>
           </section>
@@ -2188,7 +2192,11 @@ function NotificationQueuePanel({
                     <span>{email?.fromName || email?.fromAddress || "未知发件人"}</span>
                     <time>{formatTime(email?.receivedAt || email?.processedAt || delivery.createdAt)}</time>
                   </div>
-                  <p>{delivery.lastError ? safeErrorLabel(delivery.lastError) : email?.summaryZh || "暂无失败原因"}</p>
+                  <p>
+                    {delivery.lastError
+                      ? safeErrorLabel(delivery.lastError)
+                      : markdownToPlainText(email?.summaryZh || "暂无失败原因")}
+                  </p>
                   <div className="queue-row-foot">
                     <span>尝试 {delivery.attemptCount} 次</span>
                     {delivery.nextAttemptAt && <span>下次 {formatTime(delivery.nextAttemptAt)}</span>}

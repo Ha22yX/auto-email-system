@@ -30,6 +30,14 @@ test("important and secondary notifications have visibly distinct headers", () =
 
 test("notification messages retain the Chinese summary and numbered actions", () => {
   const message = renderEmailNotification(buildEmailNotificationModel(email("important")));
-  assert.match(message, /中文概况\n这封邮件需要查看。/);
+  assert.match(message, /完整分析\n这封邮件需要查看。/);
   assert.match(message, /建议动作\n1\. 打开邮件/);
+});
+
+test("notification model preserves structured Markdown line breaks", () => {
+  const structured = email("important");
+  structured.summaryZh = "**核心结论**：需要查看。\n\n- **截止时间**：9 月 3 日";
+  const model = buildEmailNotificationModel(structured);
+
+  assert.equal(model.summary, structured.summaryZh);
 });

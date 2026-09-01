@@ -6,6 +6,7 @@ import {
   buildEmailNotificationCardSvg,
   emailNotificationCardSize,
   extractNotificationHighlights,
+  parseCardSummary,
   renderEmailNotificationCard,
   wrapCardText
 } from "./card";
@@ -64,4 +65,24 @@ test("notification card keeps the three highest-priority actions visible", () =>
   assert.match(svg, /第二项动作/);
   assert.match(svg, /第三项动作/);
   assert.doesNotMatch(svg, /第四项动作/);
+});
+
+test("notification card preserves Markdown hierarchy without exposing syntax", () => {
+  const summary = [
+    "**核心结论**：学校更新了着装规则。",
+    "",
+    "- **截止时间**：9 月 3 日",
+    "- **附件**：[完整规则](https://example.com/rules.pdf)"
+  ].join("\n");
+  assert.deepEqual(parseCardSummary(summary), [
+    { kind: "paragraph", lines: ["核心结论：学校更新了着装规则。"] },
+    { kind: "bullet", lines: ["截止时间：9 月 3 日"] },
+    { kind: "bullet", lines: ["附件：完整规则"] }
+  ]);
+
+  const svg = buildEmailNotificationCardSvg(model({ summary, actions: ["在 **9 月 3 日** 前确认。"] }));
+  assert.match(svg, /邮件要点/);
+  assert.match(svg, /截止时间：9 月 3 日/);
+  assert.doesNotMatch(svg, /\*\*/);
+  assert.doesNotMatch(svg, /https:\/\/example\.com/);
 });

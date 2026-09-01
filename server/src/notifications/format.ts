@@ -19,6 +19,15 @@ function compact(value: string | undefined, maxLength: number, fallback: string)
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1).trim()}...`;
 }
 
+function compactMarkdown(value: string | undefined, maxLength: number, fallback: string) {
+  const text = (value ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim() || fallback;
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
 function formatDateTime(value?: string) {
   if (!value) return "未知时间";
   try {
@@ -54,9 +63,9 @@ export function buildEmailNotificationModel(email: ProcessedEmail, mailbox?: Mai
     mailbox: compact(mailbox?.name, 60, "未知邮箱"),
     ...(email.toText ? { recipient: compact(email.toText, 100, "") } : {}),
     receivedAt: formatDateTime(email.receivedAt || email.processedAt),
-    summary: compact(email.summaryZh, 260, "暂无中文概况。"),
+    summary: compactMarkdown(email.summaryZh, 1200, "暂无邮件分析。"),
     actions: email.actionItemsZh?.length
-      ? email.actionItemsZh.slice(0, 5).map((item) => compact(item, 100, ""))
+      ? email.actionItemsZh.slice(0, 5).map((item) => compactMarkdown(item, 260, ""))
       : ["暂无明确动作，请打开邮件详情确认。"]
   };
 }
@@ -74,7 +83,7 @@ export function renderEmailNotification(model: EmailNotificationModel) {
     `主题：${model.subject}`,
     ...metadata,
     "",
-    "中文概况",
+    "完整分析",
     model.summary,
     "",
     "建议动作",

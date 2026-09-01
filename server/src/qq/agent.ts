@@ -396,12 +396,11 @@ function truncateReply(value: string, limit: number) {
 
 function stripMarkdown(value: string) {
   return value
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/^\s*>\s?/gm, "")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-+*]\s+|\d+[.)]\s+)/gm, "")
+    .replace(/(`{1,3}|\*{1,3}|_{1,3}|~~)/g, "")
+    .replace(/\|/g, " ")
     .trim();
 }
 
@@ -883,7 +882,7 @@ function formatEmails(title: string, emails: ProcessedEmail[], mailboxes: Mailbo
     return [
       `${number}. **[${categoryLabels[email.category]}] ${safeSubject(email)}**`,
       `   ${formatAt(email.receivedAt || email.processedAt)} · ${mailbox} · ${truncate(sender, 32)}`,
-      `   ${truncate(email.summaryZh || "无摘要", 90)}`
+      `   ${truncate(stripMarkdown(email.summaryZh || "无摘要"), 90)}`
     ].join("\n");
   });
   return `**${title}**\n${lines.join("\n")}`;
@@ -907,9 +906,9 @@ function emailSummariesForAi(emails: ProcessedEmail[], mailboxes: Mailbox[], off
     mailboxName: mailboxMap.get(email.mailboxId)?.name ?? "未知邮箱",
     from: email.fromName || email.fromAddress || "未知发件人",
     receivedAt: email.receivedAt || email.processedAt,
-    summaryZh: truncate(email.summaryZh || "无摘要", 180),
-    reasonZh: truncate(email.reasonZh || "", 160),
-    actionItemsZh: email.actionItemsZh.slice(0, 4).map((item) => truncate(item, 120)),
+    summaryZh: truncate(stripMarkdown(email.summaryZh || "无摘要"), 180),
+    reasonZh: truncate(stripMarkdown(email.reasonZh || ""), 160),
+    actionItemsZh: email.actionItemsZh.slice(0, 4).map((item) => truncate(stripMarkdown(item), 120)),
     panelRead: Boolean(email.panelRead),
     readMarked: Boolean(email.readMarked)
   }));
@@ -2347,7 +2346,7 @@ export class QqAgentService {
     return {
       name: call.name,
       ok: true,
-      message: `已重新分类《${safeSubject(updated)}》：${categoryLabels[updated.category]}\n摘要：${truncate(updated.summaryZh, 160)}`,
+      message: `已重新分类《${safeSubject(updated)}》：${categoryLabels[updated.category]}\n摘要：${truncate(stripMarkdown(updated.summaryZh), 160)}`,
       emailRefs: [{ index: 1, id: updated.id, subject: safeSubject(updated) }],
       data: { emailId: updated.id, category: updated.category }
     };
