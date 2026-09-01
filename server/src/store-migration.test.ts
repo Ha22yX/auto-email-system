@@ -83,6 +83,7 @@ const uniqueDeliveryIndex = db.prepare("PRAGMA index_list('notification_deliveri
   return columns.join(",") === "emailId,channel";
 });
 const agentEventColumns = db.prepare("PRAGMA table_info('qq_agent_events')").all().map((column) => column.name);
+const ftsEmailIds = db.prepare("SELECT emailId FROM email_fts ORDER BY emailId").all().map((row) => row.emailId);
 const beforeEnqueue = db.prepare("SELECT emailId, channel, status FROM notification_deliveries ORDER BY emailId").all();
 const sentDelivery = store.enqueueNotificationDelivery("legacy-sent", "wechat");
 const afterEnqueue = db.prepare("SELECT emailId, channel, status FROM notification_deliveries ORDER BY emailId").all();
@@ -95,7 +96,8 @@ const result = {
   tableNames,
   indexNames,
   uniqueDeliveryIndex,
-  agentEventColumns
+  agentEventColumns,
+  ftsEmailIds
 };
 db.close();
 process.stdout.write(JSON.stringify(result));
@@ -129,6 +131,7 @@ function runFixture(dataDir: string, seedSchemaV1: boolean) {
     indexNames: string[];
     uniqueDeliveryIndex: boolean;
     agentEventColumns: string[];
+    ftsEmailIds: string[];
   };
 }
 
@@ -169,6 +172,7 @@ test("schema-v1 migration creates durable channel state idempotently", () => {
   assert.deepEqual(first.afterEnqueue, first.beforeEnqueue);
   assert.equal(first.uniqueDeliveryIndex, true);
   assert.deepEqual(["runId", "step", "durationMs"].every((column) => first.agentEventColumns.includes(column)), true);
+  assert.deepEqual(first.ftsEmailIds, ["legacy-retry", "legacy-sent"]);
   assert.deepEqual(
     ["credentials", "qq_state", "qq_event_dedupe", "notification_deliveries", "qq_notification_refs", "qq_email_read_actions", "qq_agent_runs", "qq_agent_events", "email_fts"].every((table) => first.tableNames.includes(table)),
     true

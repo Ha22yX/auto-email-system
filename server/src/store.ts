@@ -369,7 +369,8 @@ for (const run of interruptedAgentRuns) {
 }
 
 type EmailFtsMode = "trigram" | "unicode61" | "disabled";
-const EMAIL_FTS_VERSION = "1";
+const EMAIL_FTS_VERSION = "2";
+const EMAIL_FTS_REBUILD_BATCH_SIZE = 16;
 let emailFtsMode: EmailFtsMode = "disabled";
 
 function initializeEmailFts() {
@@ -445,15 +446,14 @@ function emailSearchDocument(email: ProcessedEmail) {
   };
 }
 
-function indexEmailForSearch(email: ProcessedEmail) {
+function writeEmailSearchIndex(emailId: string, document: ReturnType<typeof emailSearchDocument>, replace = true) {
   if (emailFtsMode === "disabled") return;
-  const document = emailSearchDocument(email);
-  db.prepare("DELETE FROM email_fts WHERE emailId = ?").run(email.id);
+  if (replace) db.prepare("DELETE FROM email_fts WHERE emailId = ?").run(emailId);
   db.prepare(
     `INSERT INTO email_fts (emailId, subject, sender, recipients, summary, body, attachmentNames)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    email.id,
+    emailId,
     document.subject,
     document.sender,
     document.recipients,
@@ -461,6 +461,10 @@ function indexEmailForSearch(email: ProcessedEmail) {
     document.body,
     document.attachmentNames
   );
+}
+
+function indexEmailForSearch(email: ProcessedEmail) {
+  writeEmailSearchIndex(email.id, emailSearchDocument(email));
 }
 
 function ftsMatchQuery(value: string) {
@@ -772,14 +776,58 @@ function rebuildEmailSearchIndexIfNeeded() {
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM email_fts").run();
-    const rows = db.prepare("SELECT data FROM emails").all() as SqlRow[];
-    for (const row of rows) {
-      try {
-        const email = parseJson<ProcessedEmail>(row.data);
-        if (email.id) indexEmailForSearch(email);
-      } catch {
-        // A malformed legacy row remains available through normal column filters.
+    const selectBatch = db.prepare(`
+      SELECT
+        rowid AS sourceRowId,
+        id AS emailId,
+        COALESCE(subject, '') AS subject,
+        trim(COALESCE(fromName, '') || ' ' || COALESCE(fromAddress, '')) AS sender,
+        COALESCE(toText, '') AS recipients,
+        COALESCE(summaryZh, '') AS summaryZh,
+        CASE WHEN json_valid(data) THEN COALESCE(json_extract(data, '$.reasonZh'), '') ELSE '' END AS reasonZh,
+        COALESCE((
+          SELECT group_concat(value, char(10))
+          FROM json_each(CASE WHEN json_valid(emails.data) THEN emails.data ELSE '{}' END, '$.actionItemsZh')
+        ), '') AS actionItemsZh,
+        CASE WHEN json_valid(data) THEN COALESCE(json_extract(data, '$.multimodalAnalysis.summaryZh'), '') ELSE '' END AS multimodalSummaryZh,
+        CASE WHEN json_valid(data) THEN COALESCE(json_extract(data, '$.multimodalAnalysis.reasonZh'), '') ELSE '' END AS multimodalReasonZh,
+        COALESCE((
+          SELECT group_concat(value, char(10))
+          FROM json_each(CASE WHEN json_valid(emails.data) THEN emails.data ELSE '{}' END, '$.multimodalAnalysis.importantSignalsZh')
+        ), '') AS multimodalSignalsZh,
+        CASE WHEN json_valid(data) THEN COALESCE(json_extract(data, '$.originalText'), '') ELSE '' END AS body,
+        COALESCE((
+          SELECT group_concat(json_extract(value, '$.filename'), char(10))
+          FROM json_each(CASE WHEN json_valid(emails.data) THEN emails.data ELSE '{}' END, '$.attachments')
+          WHERE json_extract(value, '$.filename') IS NOT NULL
+        ), '') AS attachmentNames
+      FROM emails
+      WHERE rowid > ?
+      ORDER BY rowid ASC
+      LIMIT ?
+    `);
+    let cursor = 0;
+    while (true) {
+      const rows = selectBatch.all(cursor, EMAIL_FTS_REBUILD_BATCH_SIZE) as SqlRow[];
+      if (!rows.length) break;
+      for (const row of rows) {
+        writeEmailSearchIndex(String(row.emailId), {
+          subject: String(row.subject ?? ""),
+          sender: String(row.sender ?? ""),
+          recipients: String(row.recipients ?? ""),
+          summary: [
+            row.summaryZh,
+            row.reasonZh,
+            row.actionItemsZh,
+            row.multimodalSummaryZh,
+            row.multimodalReasonZh,
+            row.multimodalSignalsZh
+          ].filter(Boolean).join("\n"),
+          body: String(row.body ?? ""),
+          attachmentNames: String(row.attachmentNames ?? "")
+        }, false);
       }
+      cursor = Number(rows.at(-1)?.sourceRowId ?? cursor);
     }
     setMeta("emailFtsVersion", EMAIL_FTS_VERSION);
     db.exec("COMMIT");
