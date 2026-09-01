@@ -2200,8 +2200,10 @@ body.resizing-detail iframe {
 }
 
 .settings-column {
-  display: contents;
+  display: grid;
+  align-content: start;
   min-width: 0;
+  gap: 12px;
 }
 
 .settings-panel {
@@ -2231,15 +2233,13 @@ body.resizing-detail iframe {
   min-width: 0;
   overflow: hidden;
   padding: 0;
+  container-name: settings-section;
+  container-type: inline-size;
 }
 
 .settings-section.is-collapsed {
   align-self: stretch;
   height: 100%;
-}
-
-.settings-section.is-open {
-  grid-column: 1 / -1;
 }
 
 .settings-section-toggle {
@@ -3284,6 +3284,51 @@ body.resizing-detail iframe {
   white-space: normal !important;
 }
 
+@container settings-section (max-width: 760px) {
+  .mailbox-field-grid,
+  .mailbox-connection-grid,
+  .mailbox-form-section,
+  .mailbox-run-section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mailbox-form-section-head p {
+    max-width: none;
+  }
+
+  .mailbox-connection-grid .mailbox-switch-card,
+  .mailbox-settings-panel .full-span {
+    grid-column: auto;
+  }
+
+  .mailbox-run-section .form-actions {
+    width: 100%;
+    justify-self: stretch;
+    justify-content: flex-start;
+  }
+
+  .mailbox-run-section .form-actions button {
+    width: 100%;
+  }
+}
+
+@container settings-section (max-width: 620px) {
+  .form-grid,
+  .notification-workspace,
+  .weclaw-token-health {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .full-span {
+    grid-column: auto;
+  }
+
+  .system-settings-panel .secondary-button.full-span {
+    width: 100%;
+    justify-self: stretch;
+  }
+}
+
 .toast {
   position: fixed;
   right: 22px;
@@ -3454,6 +3499,12 @@ body.resizing-detail iframe {
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 240px minmax(0, 1fr);
+  }
+
+  .settings-grid.layout-auto,
+  .settings-grid.layout-two,
+  .settings-grid.layout-one {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mail-layout {

@@ -419,3 +419,27 @@
   .qq-quote-read-toggle .switch-track,
   .qq-quote-read-toggle .switch-track > span { transition: none; }
 }
+
+@container settings-section (max-width: 640px) {
+  .qq-field-grid,
+  .qq-category-row,
+  .qq-status-grid,
+  .qq-agent-controls,
+  .qq-agent-permission-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .qq-status-grid > div + div {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .qq-binding-code {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .qq-binding-code strong {
+    grid-row: auto;
+    grid-column: auto;
+  }
+}

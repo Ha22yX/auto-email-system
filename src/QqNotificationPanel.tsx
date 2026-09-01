@@ -277,7 +277,10 @@ export function QqNotificationPanel({
   }
 
   return (
-    <section className={`settings-panel settings-section qq-notification-panel ${open ? "is-open" : "is-collapsed"}`}>
+    <section
+      className={`settings-panel settings-section qq-notification-panel ${open ? "is-open" : "is-collapsed"}`}
+      data-settings-section="qq"
+    >
       <button
         type="button"
         className="settings-section-toggle"

@@ -2274,7 +2274,10 @@ function SettingsSection({
   const contentId = `settings-section-${id}`;
 
   return (
-    <section className={`settings-panel settings-section ${open ? "is-open" : "is-collapsed"} ${className}`.trim()}>
+    <section
+      className={`settings-panel settings-section ${open ? "is-open" : "is-collapsed"} ${className}`.trim()}
+      data-settings-section={id}
+    >
       <button
         type="button"
         className="settings-section-toggle"
@@ -3046,7 +3049,9 @@ function SettingsPanel({
             </button>
           </div>
         </SettingsSection>
+        </div>
 
+        <div className="settings-column integration-column">
         <SettingsSection
           id="wechat"
           kicker="微信通知"
@@ -3277,9 +3282,7 @@ function SettingsPanel({
           open={openSections.qq}
           onToggle={() => toggleSettingsSection("qq")}
         />
-      </div>
 
-      <div className="settings-column mailbox-column wide">
         <SettingsSection
           id="mailboxes"
           kicker="多邮箱"
@@ -3480,7 +3483,7 @@ function SettingsPanel({
             )}
           </div>
         </SettingsSection>
-      </div>
+        </div>
       </div>
     </section>
   );
