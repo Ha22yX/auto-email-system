@@ -1,5 +1,6 @@
 import type { AiSettings, EmailAttachment, IncomingEmail, MailCategory, MultimodalAnalysis } from "./types";
 import { buildProviderRequest, extractProviderText } from "./ai-adapters";
+import { executeTrackedAiRequest } from "./ai-usage";
 import { resolveAiEndpoint, resolveAiProtocol } from "./ai-protocol";
 import { compactTextPreservingEnds } from "./analysis-text";
 
@@ -207,14 +208,17 @@ export async function analyzeEmailAttachments(
         : []
     )
   });
-  const response = await fetchWithTimeout(url, init, options.timeoutMs ?? 90000);
-
-  if (!response.ok) {
-    const detail = (await response.text()).replaceAll(apiKey, "[REDACTED]");
-    throw new Error(`多模态 AI 请求失败 ${response.status}: ${detail.slice(0, 300)}`);
-  }
-
-  const text = extractProviderText(protocol, await response.json());
+  const payload = await executeTrackedAiRequest({
+    scope: "email",
+    purpose: "email_multimodal",
+    provider: settings.providerName,
+    protocol,
+    model,
+    apiKey,
+    errorLabel: "多模态 AI 请求失败",
+    request: () => fetchWithTimeout(url, init, options.timeoutMs ?? 90000)
+  });
+  const text = extractProviderText(protocol, payload);
   const jsonText = extractJson(text);
   if (!jsonText) {
     const safeText = text.replaceAll(apiKey, "[REDACTED]");

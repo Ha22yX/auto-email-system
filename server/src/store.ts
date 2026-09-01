@@ -4,10 +4,20 @@ import { tmpdir } from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { createAuthSettings, verifyPassword } from "./auth-crypto";
-import { encryptCredential } from "./credential-crypto";
+import { decryptCredential, encryptCredential } from "./credential-crypto";
 import { publishAppEvent } from "./events";
 import type {
   AiSettings,
+  AiBillingProvider,
+  AiCostSnapshot,
+  AiUsageDashboard,
+  AiUsageEventInput,
+  AiUsageModelBreakdown,
+  AiUsageRange,
+  AiUsageScope,
+  AiUsageScopeBreakdown,
+  AiUsageTimelinePoint,
+  AiUsageTotals,
   AppState,
   AuthSettings,
   ClassificationResult,
@@ -43,7 +53,7 @@ const DEFAULT_DATA_DIR = process.env.NODE_TEST_CONTEXT
 const DATA_DIR = path.resolve(process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
 const JSON_DATA_FILE = path.join(DATA_DIR, "app.db.json");
 const SQLITE_FILE = path.join(DATA_DIR, "app.sqlite");
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const PANEL_READ_UNDO_TTL_MS = 10_000;
 const EMAIL_DISPLAY_RECEIVED_ORDER_SQL = "COALESCE(receivedAt, processedAt) DESC, processedAt DESC, id DESC";
 const EMAIL_QUEUE_RECEIVED_ORDER_SQL = "COALESCE(receivedAt, processedAt) ASC, processedAt ASC, id ASC";
@@ -338,6 +348,46 @@ db.exec(`
     ON qq_agent_events(userOpenId, createdAt DESC);
   CREATE INDEX IF NOT EXISTS idx_qq_agent_events_tool
     ON qq_agent_events(toolName, createdAt DESC);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ai_usage_events (
+    id TEXT PRIMARY KEY,
+    occurredAt TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    protocol TEXT NOT NULL,
+    model TEXT NOT NULL,
+    inputTokens INTEGER NOT NULL DEFAULT 0,
+    outputTokens INTEGER NOT NULL DEFAULT 0,
+    cachedInputTokens INTEGER NOT NULL DEFAULT 0,
+    cacheWriteTokens INTEGER NOT NULL DEFAULT 0,
+    totalTokens INTEGER NOT NULL DEFAULT 0,
+    usageReported INTEGER NOT NULL DEFAULT 0,
+    success INTEGER NOT NULL DEFAULT 1,
+    latencyMs INTEGER NOT NULL DEFAULT 0,
+    requestId TEXT,
+    error TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_ai_usage_occurred
+    ON ai_usage_events(occurredAt DESC);
+  CREATE INDEX IF NOT EXISTS idx_ai_usage_scope_occurred
+    ON ai_usage_events(scope, occurredAt DESC);
+  CREATE INDEX IF NOT EXISTS idx_ai_usage_model_occurred
+    ON ai_usage_events(provider, model, occurredAt DESC);
+
+  CREATE TABLE IF NOT EXISTS ai_cost_snapshots (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    rangeKey TEXT NOT NULL,
+    startAt TEXT NOT NULL,
+    endAt TEXT NOT NULL,
+    queriedAt TEXT NOT NULL,
+    data TEXT NOT NULL,
+    UNIQUE(provider, rangeKey)
+  );
 `);
 
 function ensureColumn(table: string, column: string, definition: string) {
@@ -1766,6 +1816,314 @@ export function getEmailNotificationSummary(emailId: string, channel: Notificati
     .prepare("SELECT channel, status, attemptCount, nextAttemptAt, sentAt, lastError FROM notification_deliveries WHERE emailId = ? AND channel = ? LIMIT 1")
     .get(emailId, channel) as SqlRow | undefined;
   return row ? rowToNotificationSummary(row) : undefined;
+}
+
+function safeUsageInteger(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+function usageTotalsFromRow(row: SqlRow | undefined): AiUsageTotals {
+  const inputTokens = safeUsageInteger(row?.inputTokens);
+  const cachedInputTokens = safeUsageInteger(row?.cachedInputTokens);
+  return {
+    calls: safeUsageInteger(row?.calls),
+    successfulCalls: safeUsageInteger(row?.successfulCalls),
+    failedCalls: safeUsageInteger(row?.failedCalls),
+    usageReportedCalls: safeUsageInteger(row?.usageReportedCalls),
+    inputTokens,
+    outputTokens: safeUsageInteger(row?.outputTokens),
+    cachedInputTokens,
+    cacheWriteTokens: safeUsageInteger(row?.cacheWriteTokens),
+    totalTokens: safeUsageInteger(row?.totalTokens),
+    cacheHitRate: inputTokens > 0 ? Math.min(1, cachedInputTokens / inputTokens) : 0
+  };
+}
+
+const usageAggregateSql = `
+  COUNT(*) AS calls,
+  SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS successfulCalls,
+  SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failedCalls,
+  SUM(CASE WHEN usageReported = 1 THEN 1 ELSE 0 END) AS usageReportedCalls,
+  COALESCE(SUM(inputTokens), 0) AS inputTokens,
+  COALESCE(SUM(outputTokens), 0) AS outputTokens,
+  COALESCE(SUM(cachedInputTokens), 0) AS cachedInputTokens,
+  COALESCE(SUM(cacheWriteTokens), 0) AS cacheWriteTokens,
+  COALESCE(SUM(totalTokens), 0) AS totalTokens
+`;
+
+export function recordAiUsageEvent(input: AiUsageEventInput) {
+  const occurredAt = input.occurredAt && Number.isFinite(Date.parse(input.occurredAt))
+    ? new Date(input.occurredAt).toISOString()
+    : new Date().toISOString();
+  const saved = {
+    ...input,
+    id: randomUUID(),
+    occurredAt,
+    provider: input.provider.trim().slice(0, 120) || "未命名服务",
+    model: input.model.trim().slice(0, 160) || "未知模型",
+    inputTokens: safeUsageInteger(input.inputTokens),
+    outputTokens: safeUsageInteger(input.outputTokens),
+    cachedInputTokens: safeUsageInteger(input.cachedInputTokens),
+    cacheWriteTokens: safeUsageInteger(input.cacheWriteTokens),
+    totalTokens: safeUsageInteger(input.totalTokens),
+    latencyMs: safeUsageInteger(input.latencyMs),
+    requestId: input.requestId?.slice(0, 200),
+    error: input.error?.replace(/\s+/g, " ").trim().slice(0, 300)
+  };
+
+  db.prepare(
+    `INSERT INTO ai_usage_events (
+      id, occurredAt, scope, purpose, provider, protocol, model,
+      inputTokens, outputTokens, cachedInputTokens, cacheWriteTokens, totalTokens,
+      usageReported, success, latencyMs, requestId, error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    saved.id,
+    saved.occurredAt,
+    saved.scope,
+    saved.purpose,
+    saved.provider,
+    saved.protocol,
+    saved.model,
+    saved.inputTokens,
+    saved.outputTokens,
+    saved.cachedInputTokens,
+    saved.cacheWriteTokens,
+    saved.totalTokens,
+    bool(saved.usageReported),
+    bool(saved.success),
+    saved.latencyMs,
+    saved.requestId ?? null,
+    saved.error ?? null
+  );
+  publishAppEvent("ai-usage", { id: saved.id, scope: saved.scope });
+  return clone(saved);
+}
+
+function aiUsageWhere(startAt?: string, endAt?: string) {
+  const clauses: string[] = [];
+  const params: SQLInputValue[] = [];
+  if (startAt) {
+    clauses.push("occurredAt >= ?");
+    params.push(startAt);
+  }
+  if (endAt) {
+    clauses.push("occurredAt < ?");
+    params.push(endAt);
+  }
+  return {
+    sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",
+    params
+  };
+}
+
+function validTimeZone(value?: string) {
+  const fallback = "UTC";
+  if (!value) return fallback;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    return value;
+  } catch {
+    return fallback;
+  }
+}
+
+function timelineBucket(value: string, range: AiUsageRange, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    ...(range === "today" ? { hour: "2-digit", hourCycle: "h23" as const } : {})
+  }).formatToParts(new Date(value));
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "00";
+  const day = `${part("year")}-${part("month")}-${part("day")}`;
+  if (range === "today") return `${day}T${part("hour")}`;
+  if (range === "all") return day.slice(0, 7);
+  return day;
+}
+
+function readBillingProvider(): AiBillingProvider {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get("ai.billing") as SqlRow | undefined;
+  if (!row) return "none";
+  try {
+    const parsed = parseJson<{ provider?: unknown }>(row.value);
+    return parsed.provider === "openai" || parsed.provider === "anthropic" ? parsed.provider : "none";
+  } catch {
+    return "none";
+  }
+}
+
+function billingCredentialKey(provider: Exclude<AiBillingProvider, "none">) {
+  return `ai-billing-${provider}-admin-key`;
+}
+
+export function publicAiBillingSettings() {
+  const provider = readBillingProvider();
+  const envelope = provider === "none" ? "" : readStoredCredentialEnvelope(billingCredentialKey(provider));
+  return {
+    provider,
+    hasAdminKey: Boolean(envelope),
+    maskedAdminKey: envelope ? "已安全保存" : ""
+  };
+}
+
+export function updateAiBillingSettings(input: { provider: AiBillingProvider; adminKey?: string }) {
+  const provider = input.provider;
+  const adminKey = input.adminKey?.trim() ?? "";
+  const now = new Date().toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
+      "ai.billing",
+      JSON.stringify({ provider })
+    );
+    if (provider !== "none" && adminKey) {
+      db.prepare("INSERT OR REPLACE INTO credentials (key, envelope, updatedAt) VALUES (?, ?, ?)").run(
+        billingCredentialKey(provider),
+        encryptCredential(adminKey),
+        now
+      );
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  publishAppEvent("settings", { key: "ai.billing" });
+  return publicAiBillingSettings();
+}
+
+export function readAiBillingAdminKey(provider: Exclude<AiBillingProvider, "none">) {
+  const envelope = readStoredCredentialEnvelope(billingCredentialKey(provider));
+  return envelope ? decryptCredential(envelope) : "";
+}
+
+export function saveAiCostSnapshot(snapshot: AiCostSnapshot) {
+  db.prepare(
+    `INSERT OR REPLACE INTO ai_cost_snapshots (
+      id, provider, rangeKey, startAt, endAt, queriedAt, data
+    ) VALUES (
+      COALESCE((SELECT id FROM ai_cost_snapshots WHERE provider = ? AND rangeKey = ?), ?),
+      ?, ?, ?, ?, ?, ?
+    )`
+  ).run(
+    snapshot.provider,
+    snapshot.range,
+    randomUUID(),
+    snapshot.provider,
+    snapshot.range,
+    snapshot.startAt,
+    snapshot.endAt,
+    snapshot.queriedAt,
+    JSON.stringify(snapshot)
+  );
+  publishAppEvent("ai-usage", { billing: snapshot.provider, range: snapshot.range });
+  return clone(snapshot);
+}
+
+function latestAiCostSnapshot(provider: AiBillingProvider, range: AiUsageRange) {
+  if (provider === "none") return undefined;
+  const row = db.prepare(
+    "SELECT data FROM ai_cost_snapshots WHERE provider = ? AND rangeKey = ? LIMIT 1"
+  ).get(provider, range) as SqlRow | undefined;
+  return row ? parseJson<AiCostSnapshot>(row.data) : undefined;
+}
+
+export function firstAiUsageOccurredAt() {
+  const row = db.prepare("SELECT MIN(occurredAt) AS occurredAt FROM ai_usage_events").get() as SqlRow;
+  return typeof row.occurredAt === "string" ? row.occurredAt : undefined;
+}
+
+export function queryAiUsageDashboard(input: {
+  range: AiUsageRange;
+  startAt?: string;
+  endAt: string;
+  timeZone?: string;
+  recentLimit?: number;
+}): AiUsageDashboard {
+  const { sql: whereSql, params } = aiUsageWhere(input.startAt, input.endAt);
+  const totalRow = db.prepare(`SELECT ${usageAggregateSql} FROM ai_usage_events ${whereSql}`).get(...params) as SqlRow;
+  const totals = usageTotalsFromRow(totalRow);
+
+  const scopeRows = db.prepare(
+    `SELECT scope, ${usageAggregateSql} FROM ai_usage_events ${whereSql} GROUP BY scope`
+  ).all(...params) as SqlRow[];
+  const scopeMap = new Map(scopeRows.map((row) => [String(row.scope), usageTotalsFromRow(row)]));
+  const scopes: AiUsageScope[] = ["email", "agent", "system"];
+  const byScope: AiUsageScopeBreakdown[] = scopes.map((scope) => ({
+    scope,
+    ...(scopeMap.get(scope) ?? usageTotalsFromRow(undefined))
+  }));
+
+  const modelRows = db.prepare(
+    `SELECT provider, protocol, model, ${usageAggregateSql}
+     FROM ai_usage_events ${whereSql}
+     GROUP BY provider, protocol, model
+     ORDER BY totalTokens DESC, calls DESC, provider ASC, model ASC`
+  ).all(...params) as SqlRow[];
+  const byModel: AiUsageModelBreakdown[] = modelRows.map((row) => ({
+    key: `${String(row.provider)}\u0000${String(row.protocol)}\u0000${String(row.model)}`,
+    provider: String(row.provider),
+    protocol: String(row.protocol) as AiUsageModelBreakdown["protocol"],
+    model: String(row.model),
+    ...usageTotalsFromRow(row)
+  }));
+
+  const timeZone = validTimeZone(input.timeZone);
+  const timelineRows = db.prepare(
+    `SELECT occurredAt, totalTokens FROM ai_usage_events ${whereSql} ORDER BY occurredAt ASC`
+  ).all(...params) as SqlRow[];
+  const timelineMap = new Map<string, AiUsageTimelinePoint>();
+  for (const row of timelineRows) {
+    const bucket = timelineBucket(String(row.occurredAt), input.range, timeZone);
+    const current = timelineMap.get(bucket) ?? { bucket, calls: 0, totalTokens: 0 };
+    current.calls += 1;
+    current.totalTokens += safeUsageInteger(row.totalTokens);
+    timelineMap.set(bucket, current);
+  }
+
+  const recentLimit = Math.min(100, Math.max(1, Math.floor(input.recentLimit ?? 30)));
+  const recentRows = db.prepare(
+    `SELECT * FROM ai_usage_events ${whereSql} ORDER BY occurredAt DESC, id DESC LIMIT ?`
+  ).all(...params, recentLimit) as SqlRow[];
+  const recent = recentRows.map((row) => ({
+    id: String(row.id),
+    occurredAt: String(row.occurredAt),
+    scope: String(row.scope) as AiUsageEventInput["scope"],
+    purpose: String(row.purpose) as AiUsageEventInput["purpose"],
+    provider: String(row.provider),
+    protocol: String(row.protocol) as AiUsageEventInput["protocol"],
+    model: String(row.model),
+    inputTokens: safeUsageInteger(row.inputTokens),
+    outputTokens: safeUsageInteger(row.outputTokens),
+    cachedInputTokens: safeUsageInteger(row.cachedInputTokens),
+    cacheWriteTokens: safeUsageInteger(row.cacheWriteTokens),
+    totalTokens: safeUsageInteger(row.totalTokens),
+    usageReported: parseBool(row.usageReported),
+    success: parseBool(row.success),
+    latencyMs: safeUsageInteger(row.latencyMs),
+    requestId: typeof row.requestId === "string" ? row.requestId : undefined,
+    error: typeof row.error === "string" ? row.error : undefined
+  }));
+  const billingSettings = publicAiBillingSettings();
+
+  return {
+    range: input.range,
+    startAt: input.startAt,
+    endAt: input.endAt,
+    generatedAt: new Date().toISOString(),
+    totals,
+    byScope,
+    byModel,
+    timeline: [...timelineMap.values()],
+    recent,
+    billing: {
+      settings: billingSettings,
+      latestCost: latestAiCostSnapshot(billingSettings.provider, input.range)
+    }
+  };
 }
 
 export function readStoredCredentialEnvelope(key: string) {

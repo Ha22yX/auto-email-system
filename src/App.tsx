@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   BellRinging,
   CaretDown,
+  ChartLineUp,
   CheckCircle,
   ClockCounterClockwise,
   EnvelopeSimple,
@@ -37,6 +38,7 @@ import QRCode from "qrcode";
 import { api } from "./api";
 import { parseEmailReadStateEvent } from "./app-events";
 import { MarkdownContent } from "./MarkdownContent";
+import { ModelUsagePage } from "./ModelUsagePage";
 import { QqNotificationPanel } from "./QqNotificationPanel";
 import {
   AI_PROVIDER_PRESETS,
@@ -64,7 +66,7 @@ import type {
   WeclawStatus
 } from "./types";
 
-type View = "mail" | "notifications" | "settings";
+type View = "mail" | "notifications" | "usage" | "settings";
 type NotificationQueueStatus = NotificationDeliveryStatus | "failed";
 type EmailContextMenu = {
   x: number;
@@ -1142,10 +1144,13 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
     ? activeMailboxName
     : view === "notifications"
       ? "QQ 通知"
-      : "系统配置";
+      : view === "usage"
+        ? "AI 可观测性"
+        : "系统配置";
   const pageTitle = {
     mail: "邮件处理台",
     notifications: "通知队列",
+    usage: "模型用量",
     settings: "管理设置"
   }[view];
   const runStatusText = dashboard?.processorRunning
@@ -1217,6 +1222,13 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
           >
             <BellRinging size={18} />
             通知队列
+          </button>
+          <button
+            className={view === "usage" ? "nav-item active" : "nav-item"}
+            onClick={() => setView("usage")}
+          >
+            <ChartLineUp size={18} />
+            模型用量
           </button>
           <button
             className={view === "settings" ? "nav-item active" : "nav-item"}
@@ -1511,6 +1523,8 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
               setView("mail");
             }}
           />
+        ) : view === "usage" ? (
+          <ModelUsagePage />
         ) : (
           <SettingsPanel
             dashboard={dashboard}
@@ -1542,6 +1556,14 @@ function ConsoleApp({ onLogout }: { onLogout: () => void }) {
         >
           <BellRinging size={20} weight={view === "notifications" ? "fill" : "regular"} />
           <span>通知</span>
+        </button>
+        <button
+          type="button"
+          className={view === "usage" ? "active" : ""}
+          onClick={() => setView("usage")}
+        >
+          <ChartLineUp size={20} weight={view === "usage" ? "fill" : "regular"} />
+          <span>用量</span>
         </button>
         <button
           type="button"

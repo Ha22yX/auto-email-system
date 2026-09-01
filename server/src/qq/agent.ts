@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { classifyEmail } from "../ai";
 import { buildProviderRequest, extractProviderText } from "../ai-adapters";
+import { executeTrackedAiRequest } from "../ai-usage";
 import { resolveAiEndpoint, resolveAiProtocol } from "../ai-protocol";
 import { countUnreadImap } from "../email/imap";
 import { countUnreadPop3 } from "../email/pop3";
@@ -1499,12 +1500,18 @@ export class QqAgentService {
       systemPrompt,
       userPrompt: prompt
     });
-    const response = await this.fetchWithTimeout(url, init, 30000);
-    if (!response.ok) {
-      const detail = (await response.text()).replaceAll(settings.apiKey, "[REDACTED]");
-      throw new Error(`QQ Agent AI 请求失败 ${response.status}: ${detail.slice(0, 240)}`);
-    }
-    const jsonText = parseJsonObject(extractProviderText(protocol, await response.json()));
+    const payload = await executeTrackedAiRequest({
+      scope: "agent",
+      purpose: "agent_orchestration",
+      provider: settings.providerName,
+      protocol,
+      model: settings.model,
+      apiKey: settings.apiKey,
+      errorLabel: "QQ Agent AI 请求失败",
+      detailLimit: 240,
+      request: () => this.fetchWithTimeout(url, init, 30000)
+    });
+    const jsonText = parseJsonObject(extractProviderText(protocol, payload));
     if (!jsonText) return { reply: "我没能理解这条消息。你可以说“帮助”看可用指令。", toolCalls: [] };
     return normalizePlan(JSON.parse(jsonText));
   }
@@ -1619,12 +1626,18 @@ export class QqAgentService {
     });
 
     try {
-      const response = await this.fetchWithTimeout(url, init, 30000);
-      if (!response.ok) {
-        const detail = (await response.text()).replaceAll(settings.apiKey, "[REDACTED]");
-        throw new Error(`QQ Agent 回复生成失败 ${response.status}: ${detail.slice(0, 240)}`);
-      }
-      const jsonText = parseJsonObject(extractProviderText(protocol, await response.json()));
+      const payload = await executeTrackedAiRequest({
+        scope: "agent",
+        purpose: "agent_response",
+        provider: settings.providerName,
+        protocol,
+        model: settings.model,
+        apiKey: settings.apiKey,
+        errorLabel: "QQ Agent 回复生成失败",
+        detailLimit: 240,
+        request: () => this.fetchWithTimeout(url, init, 30000)
+      });
+      const jsonText = parseJsonObject(extractProviderText(protocol, payload));
       if (!jsonText) return undefined;
       const parsed = JSON.parse(jsonText);
       const reply = isRecord(parsed) ? text(parsed.reply) : undefined;
@@ -2138,12 +2151,18 @@ export class QqAgentService {
         contentBase64: attachment.content.toString("base64")
       }] : undefined
     });
-    const response = await this.fetchWithTimeout(url, init, 60000);
-    if (!response.ok) {
-      const detail = (await response.text()).replaceAll(apiKey, "[REDACTED]");
-      throw new Error(`附件分析请求失败 ${response.status}: ${detail.slice(0, 180)}`);
-    }
-    const responseText = extractProviderText(protocol, await response.json());
+    const payload = await executeTrackedAiRequest({
+      scope: "agent",
+      purpose: "agent_attachment",
+      provider: settings.providerName,
+      protocol,
+      model: useMultimodal ? settings.multimodalModel || settings.model : settings.model,
+      apiKey,
+      errorLabel: "附件分析请求失败",
+      detailLimit: 180,
+      request: () => this.fetchWithTimeout(url, init, 60000)
+    });
+    const responseText = extractProviderText(protocol, payload);
     const jsonText = parseJsonObject(responseText);
     if (!jsonText) throw new Error("附件分析模型没有返回有效 JSON。");
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;

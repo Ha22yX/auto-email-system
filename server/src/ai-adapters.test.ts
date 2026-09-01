@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildProviderRequest, extractProviderText } from "./ai-adapters";
+import { buildProviderRequest, extractProviderText, extractProviderUsage } from "./ai-adapters";
 
 const image = {
   filename: "invoice.png",
@@ -222,4 +222,110 @@ test("concatenates string and text-part content from every OpenAI Chat choice", 
     }),
     "first choice\nsecond choice\nthird choice"
   );
+});
+
+test("normalizes token usage and cache metrics from every supported provider", () => {
+  assert.deepEqual(
+    extractProviderUsage("openai-chat", {
+      id: "chat-request",
+      model: "gpt-chat",
+      usage: {
+        prompt_tokens: 120,
+        completion_tokens: 30,
+        total_tokens: 150,
+        prompt_tokens_details: { cached_tokens: 80, cache_write_tokens: 10 }
+      }
+    }),
+    {
+      inputTokens: 120,
+      outputTokens: 30,
+      cachedInputTokens: 80,
+      cacheWriteTokens: 10,
+      totalTokens: 150,
+      usageReported: true,
+      responseModel: "gpt-chat",
+      requestId: "chat-request"
+    }
+  );
+
+  assert.deepEqual(
+    extractProviderUsage("openai-responses", {
+      id: "response-request",
+      model: "gpt-responses",
+      usage: {
+        input_tokens: 210,
+        output_tokens: 40,
+        total_tokens: 250,
+        input_tokens_details: { cached_tokens: 160 }
+      }
+    }),
+    {
+      inputTokens: 210,
+      outputTokens: 40,
+      cachedInputTokens: 160,
+      cacheWriteTokens: 0,
+      totalTokens: 250,
+      usageReported: true,
+      responseModel: "gpt-responses",
+      requestId: "response-request"
+    }
+  );
+
+  assert.deepEqual(
+    extractProviderUsage("anthropic", {
+      id: "claude-request",
+      model: "claude-test",
+      usage: {
+        input_tokens: 100,
+        cache_read_input_tokens: 70,
+        cache_creation_input_tokens: 20,
+        output_tokens: 25
+      }
+    }),
+    {
+      inputTokens: 190,
+      outputTokens: 25,
+      cachedInputTokens: 70,
+      cacheWriteTokens: 20,
+      totalTokens: 215,
+      usageReported: true,
+      responseModel: "claude-test",
+      requestId: "claude-request"
+    }
+  );
+
+  assert.deepEqual(
+    extractProviderUsage("gemini", {
+      modelVersion: "gemini-test",
+      usageMetadata: {
+        promptTokenCount: 90,
+        candidatesTokenCount: 12,
+        cachedContentTokenCount: 50,
+        totalTokenCount: 102
+      }
+    }),
+    {
+      inputTokens: 90,
+      outputTokens: 12,
+      cachedInputTokens: 50,
+      cacheWriteTokens: 0,
+      totalTokens: 102,
+      usageReported: true,
+      responseModel: "gemini-test",
+      requestId: undefined
+    }
+  );
+});
+
+test("returns an explicit zero usage record when a proxy omits usage metadata", () => {
+  assert.deepEqual(extractProviderUsage("openai-chat", { model: "proxy-model" }), {
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    usageReported: false,
+    responseModel: "proxy-model",
+    requestId: undefined
+  });
 });

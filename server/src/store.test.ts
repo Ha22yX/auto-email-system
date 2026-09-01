@@ -18,6 +18,7 @@ const {
   findQqNotificationReference,
   normalizeAiSettings,
   publicAiSettings,
+  publicAiBillingSettings,
   publicQqBotSettings,
   pauseNotificationDelivery,
   queryNotificationDeliveries,
@@ -29,9 +30,11 @@ const {
   readQqState,
   resumePausedNotificationDeliveries,
   readSettings,
+  readAiBillingAdminKey,
   readState,
   readStoredCredentialEnvelope,
   updateAiSettings,
+  updateAiBillingSettings,
   updateProcessedEmailReadMark,
   updateQqBotSettings,
   updateQqState,
@@ -46,6 +49,9 @@ const {
   recordQqAgentEvent,
   startQqAgentRun,
   finishQqAgentRun,
+  queryAiUsageDashboard,
+  recordAiUsageEvent,
+  saveAiCostSnapshot,
   undoProcessedEmailsPanelRead
 } = await import("./store");
 
@@ -151,6 +157,104 @@ test("retains both saved keys when an update submits blank key fields", () => {
 
   assert.equal(digest(saved.apiKey), digest("stored-primary-value"));
   assert.equal(digest(saved.multimodalApiKey ?? ""), digest("stored-multimodal-value"));
+});
+
+test("records usage by business scope and preserves historical provider-model snapshots", () => {
+  recordAiUsageEvent({
+    scope: "email",
+    purpose: "email_classification",
+    provider: "Provider Alpha",
+    protocol: "openai-responses",
+    model: "model-alpha",
+    inputTokens: 100,
+    outputTokens: 25,
+    cachedInputTokens: 40,
+    cacheWriteTokens: 5,
+    totalTokens: 125,
+    usageReported: true,
+    success: true,
+    latencyMs: 900,
+    occurredAt: "2040-01-02T10:15:00.000Z"
+  });
+  recordAiUsageEvent({
+    scope: "agent",
+    purpose: "agent_orchestration",
+    provider: "Provider Beta",
+    protocol: "anthropic",
+    model: "model-beta",
+    inputTokens: 50,
+    outputTokens: 10,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 60,
+    usageReported: true,
+    success: true,
+    latencyMs: 1200,
+    occurredAt: "2040-01-02T11:30:00.000Z"
+  });
+  recordAiUsageEvent({
+    scope: "agent",
+    purpose: "agent_response",
+    provider: "Provider Beta",
+    protocol: "anthropic",
+    model: "model-beta",
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    usageReported: false,
+    success: false,
+    latencyMs: 30000,
+    error: "request timed out",
+    occurredAt: "2040-01-02T11:31:00.000Z"
+  });
+
+  const dashboard = queryAiUsageDashboard({
+    range: "today",
+    startAt: "2040-01-02T00:00:00.000Z",
+    endAt: "2040-01-03T00:00:00.000Z",
+    timeZone: "UTC"
+  });
+
+  assert.equal(dashboard.totals.calls, 3);
+  assert.equal(dashboard.totals.successfulCalls, 2);
+  assert.equal(dashboard.totals.failedCalls, 1);
+  assert.equal(dashboard.totals.inputTokens, 150);
+  assert.equal(dashboard.totals.outputTokens, 35);
+  assert.equal(dashboard.totals.cachedInputTokens, 40);
+  assert.equal(dashboard.totals.totalTokens, 185);
+  assert.equal(dashboard.totals.cacheHitRate, 40 / 150);
+  assert.equal(dashboard.byScope.find((item) => item.scope === "email")?.calls, 1);
+  assert.equal(dashboard.byScope.find((item) => item.scope === "agent")?.calls, 2);
+  assert.deepEqual(dashboard.byModel.map((item) => item.model).sort(), ["model-alpha", "model-beta"]);
+  assert.deepEqual(dashboard.timeline.map((item) => item.bucket), ["2040-01-02T10", "2040-01-02T11"]);
+  assert.equal(dashboard.recent[0]?.success, false);
+});
+
+test("encrypts provider admin keys and retains the latest cost snapshot per range", () => {
+  const saved = updateAiBillingSettings({ provider: "openai", adminKey: "sk-admin-test-secret" });
+  assert.equal(saved.provider, "openai");
+  assert.equal(saved.hasAdminKey, true);
+  assert.equal(JSON.stringify(saved).includes("sk-admin-test-secret"), false);
+  assert.equal(readAiBillingAdminKey("openai"), "sk-admin-test-secret");
+  assert.equal(publicAiBillingSettings().maskedAdminKey, "已安全保存");
+
+  saveAiCostSnapshot({
+    provider: "openai",
+    range: "today",
+    startAt: "2040-01-02T00:00:00.000Z",
+    endAt: "2040-01-03T00:00:00.000Z",
+    amounts: [{ currency: "USD", amount: 1.2345 }],
+    queriedAt: "2040-01-03T00:01:00.000Z"
+  });
+  const dashboard = queryAiUsageDashboard({
+    range: "today",
+    startAt: "2040-01-02T00:00:00.000Z",
+    endAt: "2040-01-03T00:00:00.000Z",
+    timeZone: "UTC"
+  });
+  assert.deepEqual(dashboard.billing.latestCost?.amounts, [{ currency: "USD", amount: 1.2345 }]);
 });
 
 

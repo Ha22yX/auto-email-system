@@ -1,6 +1,7 @@
 import type { AiSettings, ClassificationResult, IncomingEmail, MailCategory } from "./types";
 import { compactTextPreservingEnds } from "./analysis-text";
 import { buildProviderRequest, extractProviderText } from "./ai-adapters";
+import { executeTrackedAiRequest } from "./ai-usage";
 import { resolveAiEndpoint, resolveAiProtocol } from "./ai-protocol";
 
 const categoryValues = new Set<MailCategory>(["important", "secondary", "ignore"]);
@@ -141,7 +142,11 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 export async function classifyEmail(
   email: IncomingEmail,
   settings: AiSettings,
-  options: { timeoutMs?: number } = {}
+  options: {
+    timeoutMs?: number;
+    usageScope?: "email" | "system";
+    usagePurpose?: "email_classification" | "system_test";
+  } = {}
 ): Promise<ClassificationResult> {
   if (!settings.apiKey.trim()) {
     throw new Error("AI API Key 未配置，无法进行 AI 分类。");
@@ -157,14 +162,17 @@ export async function classifyEmail(
     systemPrompt,
     userPrompt: buildEmailClassificationPrompt(email)
   });
-  const response = await fetchWithTimeout(url, init, options.timeoutMs ?? 90000);
-
-  if (!response.ok) {
-    const detail = (await response.text()).replaceAll(settings.apiKey, "[REDACTED]");
-    throw new Error(`AI 请求失败 ${response.status}: ${detail.slice(0, 300)}`);
-  }
-
-  const content = extractProviderText(protocol, await response.json());
+  const payload = await executeTrackedAiRequest({
+    scope: options.usageScope ?? "email",
+    purpose: options.usagePurpose ?? "email_classification",
+    provider: settings.providerName,
+    protocol,
+    model: settings.model,
+    apiKey: settings.apiKey,
+    errorLabel: "AI 请求失败",
+    request: () => fetchWithTimeout(url, init, options.timeoutMs ?? 90000)
+  });
+  const content = extractProviderText(protocol, payload);
 
   const jsonText = extractJson(content);
   if (!jsonText) {

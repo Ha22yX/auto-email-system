@@ -2,6 +2,7 @@ import express from "express";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { classifyEmail } from "./ai";
+import { queryProviderCosts } from "./ai-costs";
 import { resolveAiEndpoint, resolveAiProtocol } from "./ai-protocol";
 import { clearAuthCookie, isAuthenticated, requireAuth, setAuthCookie } from "./auth";
 import { handleAppEvents } from "./events";
@@ -11,17 +12,21 @@ import { fetchUnreadPop3 } from "./email/pop3";
 import { isProcessorRunning, processMailboxes } from "./email/processor";
 import { checkLoginAllowed, registerLoginFailure, registerLoginSuccess } from "./security";
 import {
-  publicAiSettings,
-  publicAuthSettings,
-  publicMailbox,
-  publicQqBotSettings,
+  firstAiUsageOccurredAt,
   getDashboardData,
   getEmailNotificationSummary,
   getProcessedEmailById,
   markProcessedEmailsPanelRead,
   pauseNotificationDelivery,
+  publicAiBillingSettings,
+  publicAiSettings,
+  publicAuthSettings,
+  publicMailbox,
+  publicQqBotSettings,
+  queryAiUsageDashboard,
   queryNotificationDeliveries,
   queryProcessedEmails,
+  readAiBillingAdminKey,
   readMailboxes,
   readProcessingRuns,
   readQqAgentRuns,
@@ -32,12 +37,14 @@ import {
   retryNotificationDelivery,
   resumePausedNotificationDeliveries,
   resumeNotificationDelivery,
+  saveAiCostSnapshot,
+  undoProcessedEmailsPanelRead,
+  updateAiBillingSettings,
   updateAuthPassword,
   updateAiSettings,
   updateNotificationSettings,
   updateQqBotSettings,
   updateProcessedEmailPanelRead,
-  undoProcessedEmailsPanelRead,
   updateSystemSettings,
   upsertMailbox,
   verifyAdminPassword
@@ -65,6 +72,7 @@ import {
 } from "./weclaw/manager";
 import type {
   AiSettings,
+  AiUsageRange,
   ClassificationResult,
   MailCategory,
   NotificationChannel,
@@ -110,6 +118,38 @@ export const aiSchema = z.object({
   multimodalMaxAttachmentMb: z.coerce.number().min(1).max(32).optional().default(8),
   multimodalMaxTotalMb: z.coerce.number().min(1).max(64).optional().default(18)
 });
+
+const aiUsageRangeSchema = z.enum(["today", "7d", "30d", "all"]);
+const aiBillingSchema = z.object({
+  provider: z.enum(["none", "openai", "anthropic"]),
+  adminKey: z.string().optional().default("")
+});
+const aiCostSyncSchema = z.object({
+  range: aiUsageRangeSchema,
+  startAt: z.string().datetime().optional(),
+  endAt: z.string().datetime().optional()
+});
+
+function fallbackUsageStart(range: AiUsageRange, endAt: Date) {
+  if (range === "all") return undefined;
+  const start = new Date(endAt);
+  if (range === "today") start.setUTCHours(0, 0, 0, 0);
+  if (range === "7d") start.setUTCDate(start.getUTCDate() - 7);
+  if (range === "30d") start.setUTCDate(start.getUTCDate() - 30);
+  return start.toISOString();
+}
+
+function resolveUsageWindow(input: { range: AiUsageRange; startAt?: string; endAt?: string }) {
+  const endAt = input.endAt ? new Date(input.endAt) : new Date();
+  const startAt = input.startAt ?? fallbackUsageStart(input.range, endAt);
+  if (!Number.isFinite(endAt.getTime()) || (startAt && !Number.isFinite(Date.parse(startAt)))) {
+    throw new Error("模型用量时间范围无效。");
+  }
+  if (startAt && Date.parse(startAt) >= endAt.getTime()) {
+    throw new Error("模型用量开始时间必须早于结束时间。");
+  }
+  return { startAt, endAt: endAt.toISOString() };
+}
 
 export function withSavedAiTestKeys(submitted: AiSettings, saved: AiSettings): AiSettings {
   return {
@@ -513,6 +553,71 @@ router.get(
 );
 
 router.get(
+  "/ai-usage",
+  asyncRoute((req, res) => {
+    const range = aiUsageRangeSchema.parse(req.query.range ?? "today");
+    const window = resolveUsageWindow({
+      range,
+      startAt: typeof req.query.startAt === "string" ? req.query.startAt : undefined,
+      endAt: typeof req.query.endAt === "string" ? req.query.endAt : undefined
+    });
+    res.json(queryAiUsageDashboard({
+      range,
+      ...window,
+      timeZone: typeof req.query.timeZone === "string" ? req.query.timeZone : undefined,
+      recentLimit: 40
+    }));
+  })
+);
+
+router.get(
+  "/ai-usage/billing",
+  asyncRoute((_req, res) => {
+    res.json(publicAiBillingSettings());
+  })
+);
+
+router.put(
+  "/ai-usage/billing",
+  asyncRoute((req, res) => {
+    res.json(updateAiBillingSettings(aiBillingSchema.parse(req.body)));
+  })
+);
+
+router.post(
+  "/ai-usage/costs/sync",
+  asyncRoute(async (req, res) => {
+    const parsed = aiCostSyncSchema.parse(req.body);
+    const billing = publicAiBillingSettings();
+    if (billing.provider === "none") {
+      res.status(400).json({ error: "请先选择 OpenAI 或 Anthropic 账单来源。" });
+      return;
+    }
+    const adminKey = readAiBillingAdminKey(billing.provider);
+    if (!adminKey) {
+      res.status(400).json({ error: "请先保存账单管理员密钥。" });
+      return;
+    }
+    const window = resolveUsageWindow(parsed);
+    const startAt = window.startAt ?? firstAiUsageOccurredAt() ?? new Date(Date.parse(window.endAt) - 86400000).toISOString();
+    const amounts = await queryProviderCosts({
+      provider: billing.provider,
+      adminKey,
+      startAt,
+      endAt: window.endAt
+    });
+    res.json(saveAiCostSnapshot({
+      provider: billing.provider,
+      range: parsed.range,
+      startAt,
+      endAt: window.endAt,
+      amounts,
+      queriedAt: new Date().toISOString()
+    }));
+  })
+);
+
+router.get(
   "/settings/ai",
   asyncRoute((_req, res) => {
     res.json(publicAiSettings(readSettings().ai));
@@ -552,7 +657,7 @@ router.post(
           "这是一封用于测试 AI API 连通性的邮件。请判断它是否重要，并用中文返回简短概况。"
       },
       settings,
-      { timeoutMs: 20000 }
+      { timeoutMs: 20000, usageScope: "system", usagePurpose: "system_test" }
     );
 
     const diagnostics = buildAiTestDiagnostics(settings, result);

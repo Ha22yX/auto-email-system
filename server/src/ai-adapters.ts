@@ -20,6 +20,17 @@ export type ProviderRequestInput = {
   attachments?: ProviderAttachment[];
 };
 
+export type ProviderUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  usageReported: boolean;
+  responseModel?: string;
+  requestId?: string;
+};
+
 function attachmentDataUrl(attachment: ProviderAttachment) {
   return `data:${attachment.contentType};base64,${attachment.contentBase64}`;
 }
@@ -260,5 +271,102 @@ export function extractProviderText(protocol: AiProtocol, payload: unknown): str
         : "";
     case "auto":
       return "";
+  }
+}
+
+function tokenCount(value: unknown) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+export function extractProviderUsage(protocol: AiProtocol, payload: unknown): ProviderUsage {
+  const item = objectValue(payload);
+  const empty: ProviderUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    usageReported: false,
+    responseModel: typeof item.model === "string"
+      ? item.model
+      : typeof item.modelVersion === "string"
+        ? item.modelVersion
+        : undefined,
+    requestId: typeof item.id === "string" ? item.id : undefined
+  };
+
+  switch (protocol) {
+    case "openai-chat": {
+      const usage = objectValue(item.usage);
+      if (!Object.keys(usage).length) return empty;
+      const details = objectValue(usage.prompt_tokens_details);
+      const inputTokens = tokenCount(usage.prompt_tokens);
+      const outputTokens = tokenCount(usage.completion_tokens);
+      return {
+        ...empty,
+        inputTokens,
+        outputTokens,
+        cachedInputTokens: tokenCount(details.cached_tokens),
+        cacheWriteTokens: tokenCount(details.cache_write_tokens),
+        totalTokens: tokenCount(usage.total_tokens) || inputTokens + outputTokens,
+        usageReported: true
+      };
+    }
+    case "openai-responses": {
+      const usage = objectValue(item.usage);
+      if (!Object.keys(usage).length) return empty;
+      const details = objectValue(usage.input_tokens_details);
+      const inputTokens = tokenCount(usage.input_tokens);
+      const outputTokens = tokenCount(usage.output_tokens);
+      return {
+        ...empty,
+        inputTokens,
+        outputTokens,
+        cachedInputTokens: tokenCount(details.cached_tokens),
+        cacheWriteTokens: tokenCount(details.cache_write_tokens),
+        totalTokens: tokenCount(usage.total_tokens) || inputTokens + outputTokens,
+        usageReported: true
+      };
+    }
+    case "anthropic": {
+      const usage = objectValue(item.usage);
+      if (!Object.keys(usage).length) return empty;
+      const uncachedInputTokens = tokenCount(usage.input_tokens);
+      const cachedInputTokens = tokenCount(usage.cache_read_input_tokens);
+      const cacheWriteTokens = tokenCount(usage.cache_creation_input_tokens);
+      const inputTokens = uncachedInputTokens + cachedInputTokens + cacheWriteTokens;
+      const outputTokens = tokenCount(usage.output_tokens);
+      return {
+        ...empty,
+        inputTokens,
+        outputTokens,
+        cachedInputTokens,
+        cacheWriteTokens,
+        totalTokens: inputTokens + outputTokens,
+        usageReported: true
+      };
+    }
+    case "gemini": {
+      const usage = objectValue(item.usageMetadata);
+      if (!Object.keys(usage).length) return empty;
+      const inputTokens = tokenCount(usage.promptTokenCount);
+      const outputTokens = tokenCount(usage.candidatesTokenCount);
+      return {
+        ...empty,
+        inputTokens,
+        outputTokens,
+        cachedInputTokens: tokenCount(usage.cachedContentTokenCount),
+        cacheWriteTokens: 0,
+        totalTokens: tokenCount(usage.totalTokenCount) || inputTokens + outputTokens,
+        usageReported: true
+      };
+    }
+    case "auto":
+      return empty;
   }
 }

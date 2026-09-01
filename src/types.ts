@@ -166,6 +166,103 @@ export type AiSettings = {
   maskedMultimodalApiKey?: string;
 };
 
+export type AiUsageScope = "email" | "agent" | "system";
+export type AiUsagePurpose =
+  | "email_classification"
+  | "email_multimodal"
+  | "agent_orchestration"
+  | "agent_response"
+  | "agent_attachment"
+  | "system_test";
+export type AiUsageRange = "today" | "7d" | "30d" | "all";
+export type AiBillingProvider = "none" | "openai" | "anthropic";
+
+export type AiUsageTotals = {
+  calls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  usageReportedCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  cacheHitRate: number;
+};
+
+export type AiUsageScopeBreakdown = AiUsageTotals & {
+  scope: AiUsageScope;
+};
+
+export type AiUsageModelBreakdown = AiUsageTotals & {
+  key: string;
+  provider: string;
+  protocol: AiProtocol;
+  model: string;
+};
+
+export type AiUsageTimelinePoint = {
+  bucket: string;
+  calls: number;
+  totalTokens: number;
+};
+
+export type AiUsageRecentItem = {
+  id: string;
+  scope: AiUsageScope;
+  purpose: AiUsagePurpose;
+  provider: string;
+  protocol: AiProtocol;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  usageReported: boolean;
+  success: boolean;
+  latencyMs: number;
+  requestId?: string;
+  error?: string;
+  occurredAt: string;
+};
+
+export type PublicAiBillingSettings = {
+  provider: AiBillingProvider;
+  hasAdminKey: boolean;
+  maskedAdminKey: string;
+};
+
+export type AiCostAmount = {
+  currency: string;
+  amount: number;
+};
+
+export type AiCostSnapshot = {
+  provider: Exclude<AiBillingProvider, "none">;
+  range: AiUsageRange;
+  startAt: string;
+  endAt: string;
+  amounts: AiCostAmount[];
+  queriedAt: string;
+};
+
+export type AiUsageDashboard = {
+  range: AiUsageRange;
+  startAt?: string;
+  endAt: string;
+  generatedAt: string;
+  totals: AiUsageTotals;
+  byScope: AiUsageScopeBreakdown[];
+  byModel: AiUsageModelBreakdown[];
+  timeline: AiUsageTimelinePoint[];
+  recent: AiUsageRecentItem[];
+  billing: {
+    settings: PublicAiBillingSettings;
+    latestCost?: AiCostSnapshot;
+  };
+};
+
 export type ClassificationResult = {
   category: MailCategory;
   summaryZh: string;

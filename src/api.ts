@@ -1,5 +1,9 @@
 import type {
   AiSettings,
+  AiBillingProvider,
+  AiCostSnapshot,
+  AiUsageDashboard,
+  AiUsageRange,
   AuthSettings,
   ClassificationResult,
   Dashboard,
@@ -14,6 +18,7 @@ import type {
   ProcessedEmail,
   ProcessingRun,
   PublicQqBotSettings,
+  PublicAiBillingSettings,
   QqBindingChallenge,
   QqAgentRun,
   QqBotPublicStatus,
@@ -72,6 +77,23 @@ export const api = {
   },
   dashboard(mailboxId = "all") {
     return request<Dashboard>(`/api/dashboard?mailboxId=${encodeURIComponent(mailboxId)}`);
+  },
+  aiUsage(range: AiUsageRange, startAt: string | undefined, endAt: string, timeZone: string) {
+    const params = new URLSearchParams({ range, endAt, timeZone });
+    if (startAt) params.set("startAt", startAt);
+    return request<AiUsageDashboard>(`/api/ai-usage?${params.toString()}`);
+  },
+  updateAiBilling(provider: AiBillingProvider, adminKey = "") {
+    return request<PublicAiBillingSettings>("/api/ai-usage/billing", {
+      method: "PUT",
+      body: JSON.stringify({ provider, adminKey })
+    });
+  },
+  syncAiCosts(range: AiUsageRange, startAt: string | undefined, endAt: string) {
+    return request<AiCostSnapshot>("/api/ai-usage/costs/sync", {
+      method: "POST",
+      body: JSON.stringify({ range, startAt, endAt })
+    });
   },
   emails(category: MailCategory, mailboxId: string, q: string, offset = 0, limit = 40) {
     const params = new URLSearchParams({
