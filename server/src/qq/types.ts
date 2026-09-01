@@ -52,6 +52,12 @@ export type QqDirectImageInput = {
   fileName?: string;
 };
 
+export type QqDirectFileInput = {
+  userOpenId: string;
+  file: Buffer;
+  fileName: string;
+};
+
 export type QqDirectMarkdownImageInput = {
   userOpenId: string;
   imageUrl: string;

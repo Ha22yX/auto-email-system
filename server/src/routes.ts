@@ -24,6 +24,7 @@ import {
   queryProcessedEmails,
   readMailboxes,
   readProcessingRuns,
+  readQqAgentRuns,
   readQqBotConfig,
   readSettings,
   removeMailbox,
@@ -194,6 +195,8 @@ export const qqNotificationSchema = z.object({
         .object({
           readMail: z.coerce.boolean().default(true),
           sendMailImages: z.coerce.boolean().default(true),
+          readAttachments: z.coerce.boolean().default(true),
+          sendAttachments: z.coerce.boolean().default(true),
           manageReadState: z.coerce.boolean().default(true),
           manageNotifications: z.coerce.boolean().default(true),
           runProcessing: z.coerce.boolean().default(true),
@@ -646,6 +649,14 @@ router.get(
       settings: publicQqBotSettings(readQqBotConfig()),
       status: getQqManagerStatus()
     });
+  })
+);
+
+router.get(
+  "/qq/agent/runs",
+  asyncRoute((req, res) => {
+    const limit = Math.min(50, Math.max(1, Math.floor(Number(req.query.limit ?? 12) || 12)));
+    res.json({ items: readQqAgentRuns(limit) });
   })
 );
 

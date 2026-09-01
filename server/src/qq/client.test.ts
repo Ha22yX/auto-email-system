@@ -213,6 +213,8 @@ test("a delayed 401 for token A does not discard a refreshed token B", async () 
         permissions: {
           readMail: true,
           sendMailImages: true,
+          readAttachments: true,
+          sendAttachments: true,
           manageReadState: true,
           manageNotifications: true,
           runProcessing: true,
@@ -281,6 +283,32 @@ test("direct images use the official rich-media upload and media message flow", 
     msg_seq: 1,
     media: { file_info: "uploaded-file-reference" }
 
+  });
+});
+
+test("direct files use QQ rich-media file upload without an extra text message", async () => {
+  const file = Buffer.from("receipt-content");
+  const fake = createMessageFetch([
+    new Response(JSON.stringify({ file_info: "uploaded-file-reference" }), { status: 200 }),
+    new Response(JSON.stringify({ id: "file-message", ext_info: { ref_idx: "REFIDX_FILE" } }), { status: 200 })
+  ]);
+  const client = createQqClient({ fetch: fake.fetch, tokenProvider: createTokenProvider() });
+
+  assert.deepEqual(await client.sendDirectFile({
+    userOpenId: "user-openid",
+    file,
+    fileName: "receipt.txt"
+  }), { messageId: "file-message", refIndex: "REFIDX_FILE" });
+  assert.deepEqual(JSON.parse(String(fake.calls[0].init?.body)), {
+    file_type: 4,
+    file_data: file.toString("base64"),
+    file_name: "receipt.txt",
+    srv_send_msg: false
+  });
+  assert.deepEqual(JSON.parse(String(fake.calls[1].init?.body)), {
+    msg_type: 7,
+    msg_seq: 1,
+    media: { file_info: "uploaded-file-reference" }
   });
 });
 

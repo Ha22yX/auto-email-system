@@ -5,8 +5,10 @@ import {
   CheckCircle,
   FloppyDisk,
   LinkSimple,
+  LockSimple,
   PaperPlaneTilt,
   Plugs,
+  Pulse,
   Robot,
   SealCheck,
   ShieldCheck,
@@ -18,6 +20,7 @@ import "./qq-notification.css";
 import type {
   MailCategory,
   QqAgentPermission,
+  QqAgentRun,
   QqAgentSettings,
   PublicQqBotSettings,
   QqBindingChallenge,
@@ -36,6 +39,8 @@ type QqForm = {
 const defaultAgentPermissions: Record<QqAgentPermission, boolean> = {
   readMail: true,
   sendMailImages: true,
+  readAttachments: true,
+  sendAttachments: true,
   manageReadState: true,
   manageNotifications: true,
   runProcessing: true,
@@ -67,6 +72,8 @@ const agentPermissions: Array<{
 }> = [
   { id: "readMail", label: "查看/搜索邮件", detail: "最近邮件、分类列表、详情、统计" },
   { id: "sendMailImages", label: "发送邮件图片", detail: "生成邮件卡片并通过 QQ 富媒体发送" },
+  { id: "readAttachments", label: "读取/概括附件", detail: "列出附件，读取文本，隔离分析图片和 PDF" },
+  { id: "sendAttachments", label: "发送原附件", detail: "通过 QQ 文件富媒体发送安全附件，单个不超过 4 MB" },
   { id: "manageReadState", label: "修改已读状态", detail: "单封、分类、邮箱批量标记已读" },
   { id: "manageNotifications", label: "管理通知队列", detail: "查看失败、重试、暂停、恢复" },
   { id: "runProcessing", label: "手动处理邮箱", detail: "处理全部、指定邮箱、同步新邮件" },
@@ -125,17 +132,32 @@ function formatExpiry(value?: string) {
   }).format(new Date(value));
 }
 
+function agentEventStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    received: "已接收",
+    success: "成功",
+    failed: "失败",
+    blocked: "已拦截",
+    pending: "待确认",
+    local: "本地规划",
+    "markdown-fallback": "文本降级"
+  };
+  return labels[status] ?? status;
+}
+
 export function QqNotificationPanel({ setToast }: { setToast: (message: string) => void }) {
   const [saved, setSaved] = useState<PublicQqBotSettings | null>(null);
   const [status, setStatus] = useState<QqBotPublicStatus | null>(null);
   const [form, setForm] = useState<QqForm | null>(null);
   const [binding, setBinding] = useState<QqBindingChallenge | null>(null);
   const [busy, setBusy] = useState("");
+  const [agentRuns, setAgentRuns] = useState<QqAgentRun[]>([]);
 
   const refresh = useCallback(async () => {
-    const response = await api.qqStatus();
+    const [response, runs] = await Promise.all([api.qqStatus(), api.qqAgentRuns(8)]);
     setSaved(response.settings);
     setStatus(response.status);
+    setAgentRuns(runs.items);
     setForm((current) => current ?? formFromSettings(response.settings));
   }, []);
 
@@ -413,6 +435,50 @@ export function QqNotificationPanel({ setToast }: { setToast: (message: string) 
                   </button>
                 );
               })}
+            </div>
+
+            <div className="qq-agent-isolation-status">
+              <LockSimple size={18} weight="duotone" />
+              <span>
+                <strong>严格安全隔离</strong>
+                <small>邮件和附件只作为不可信数据读取；写操作及文件导出必须由当前消息明确授权</small>
+              </span>
+              <em>强制</em>
+            </div>
+
+            <div className="qq-agent-runs">
+              <div className="qq-agent-runs-heading">
+                <span>
+                  <Pulse size={18} />
+                  智能体运行记录
+                </span>
+                <small>保留最近 200 次，日志自动脱敏</small>
+              </div>
+              {agentRuns.length ? agentRuns.map((run) => (
+                <details className="qq-agent-run" key={run.id}>
+                  <summary>
+                    <span className={`qq-agent-run-state ${run.status}`} />
+                    <strong>{run.message}</strong>
+                    <small>
+                      {new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(run.startedAt))}
+                      {` · ${run.durationMs === undefined ? "运行中" : `${Math.max(1, Math.round(run.durationMs / 100) / 10)} 秒`}`}
+                      {` · ${run.toolCallCount} 个工具`}
+                    </small>
+                  </summary>
+                  <div className="qq-agent-run-events">
+                    {run.events.map((event) => (
+                      <div key={event.id}>
+                        <span>{event.step === undefined ? "-" : event.step}</span>
+                        <strong>{event.toolName ?? event.kind}</strong>
+                        <em>{agentEventStatusLabel(event.status)}</em>
+                        <small>{event.durationMs === undefined ? event.message : `${event.message ?? "完成"} · ${event.durationMs} ms`}</small>
+                      </div>
+                    ))}
+                    {!run.events.length && <p>正在等待第一条执行记录。</p>}
+                    {run.error && <p className="qq-agent-run-error">{run.error}</p>}
+                  </div>
+                </details>
+              )) : <p className="qq-agent-runs-empty">还没有智能体运行记录。</p>}
             </div>
           </section>
 

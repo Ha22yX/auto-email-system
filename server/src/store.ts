@@ -27,6 +27,9 @@ import type {
   QqBotConfig,
   QqBotSettingsInput,
   QqAgentPermission,
+  QqAgentEvent,
+  QqAgentRun,
+  QqAgentRunStatus,
   QqAgentSettings,
   QqGatewayState,
   QqEmailReadAction,
@@ -40,7 +43,7 @@ const DEFAULT_DATA_DIR = process.env.NODE_TEST_CONTEXT
 const DATA_DIR = path.resolve(process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
 const JSON_DATA_FILE = path.join(DATA_DIR, "app.db.json");
 const SQLITE_FILE = path.join(DATA_DIR, "app.sqlite");
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const PANEL_READ_UNDO_TTL_MS = 10_000;
 const EMAIL_DISPLAY_RECEIVED_ORDER_SQL = "COALESCE(receivedAt, processedAt) DESC, processedAt DESC, id DESC";
 const EMAIL_QUEUE_RECEIVED_ORDER_SQL = "COALESCE(receivedAt, processedAt) ASC, processedAt ASC, id ASC";
@@ -66,6 +69,8 @@ const defaultNotifyCategories: Record<MailCategory, boolean> = {
 const defaultQqAgentPermissions: Record<QqAgentPermission, boolean> = {
   readMail: true,
   sendMailImages: true,
+  readAttachments: true,
+  sendAttachments: true,
   manageReadState: true,
   manageNotifications: true,
   runProcessing: true,
@@ -296,14 +301,36 @@ db.exec(`
 `);
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS qq_agent_runs (
+    id TEXT PRIMARY KEY,
+    userOpenId TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT NOT NULL,
+    reply TEXT,
+    error TEXT,
+    startedAt TEXT NOT NULL,
+    finishedAt TEXT,
+    durationMs INTEGER,
+    stepCount INTEGER NOT NULL DEFAULT 0,
+    toolCallCount INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_qq_agent_runs_started
+    ON qq_agent_runs(startedAt DESC);
+  CREATE INDEX IF NOT EXISTS idx_qq_agent_runs_user
+    ON qq_agent_runs(userOpenId, startedAt DESC);
+
   CREATE TABLE IF NOT EXISTS qq_agent_events (
     id TEXT PRIMARY KEY,
+    runId TEXT,
     userOpenId TEXT NOT NULL,
     kind TEXT NOT NULL,
     toolName TEXT,
     status TEXT NOT NULL,
     message TEXT,
     data TEXT NOT NULL,
+    step INTEGER,
+    durationMs INTEGER,
     createdAt TEXT NOT NULL
   );
 
@@ -312,6 +339,143 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_qq_agent_events_tool
     ON qq_agent_events(toolName, createdAt DESC);
 `);
+
+function ensureColumn(table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as SqlRow[];
+  if (columns.some((item) => String(item.name) === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+ensureColumn("qq_agent_events", "runId", "TEXT");
+ensureColumn("qq_agent_events", "step", "INTEGER");
+ensureColumn("qq_agent_events", "durationMs", "INTEGER");
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_qq_agent_events_run
+    ON qq_agent_events(runId, createdAt ASC);
+`);
+const interruptedAgentRuns = db.prepare("SELECT id, startedAt FROM qq_agent_runs WHERE status = 'running'").all() as SqlRow[];
+const interruptedAgentRunAt = new Date().toISOString();
+for (const run of interruptedAgentRuns) {
+  db.prepare(
+    `UPDATE qq_agent_runs
+     SET status = 'failed', error = ?, finishedAt = ?, durationMs = ?
+     WHERE id = ?`
+  ).run(
+    "服务重启，上一轮智能体运行已中断。",
+    interruptedAgentRunAt,
+    Math.max(0, Date.parse(interruptedAgentRunAt) - Date.parse(String(run.startedAt))),
+    String(run.id)
+  );
+}
+
+type EmailFtsMode = "trigram" | "unicode61" | "disabled";
+const EMAIL_FTS_VERSION = "1";
+let emailFtsMode: EmailFtsMode = "disabled";
+
+function initializeEmailFts() {
+  const existing = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'email_fts'").get() as
+    | SqlRow
+    | undefined;
+  if (existing?.sql) {
+    emailFtsMode = String(existing.sql).includes("trigram") ? "trigram" : "unicode61";
+  } else {
+    try {
+      db.exec(`
+        CREATE VIRTUAL TABLE email_fts USING fts5(
+          emailId UNINDEXED,
+          subject,
+          sender,
+          recipients,
+          summary,
+          body,
+          attachmentNames,
+          tokenize = 'trigram'
+        );
+      `);
+      emailFtsMode = "trigram";
+    } catch {
+      try {
+        db.exec(`
+          CREATE VIRTUAL TABLE email_fts USING fts5(
+            emailId UNINDEXED,
+            subject,
+            sender,
+            recipients,
+            summary,
+            body,
+            attachmentNames,
+            tokenize = 'unicode61'
+          );
+        `);
+        emailFtsMode = "unicode61";
+      } catch {
+        emailFtsMode = "disabled";
+      }
+    }
+  }
+
+  if (emailFtsMode !== "disabled") {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS emails_fts_delete
+      AFTER DELETE ON emails
+      BEGIN
+        DELETE FROM email_fts WHERE emailId = OLD.id;
+      END;
+    `);
+  }
+}
+
+function emailSearchDocument(email: ProcessedEmail) {
+  const attachmentNames = (email.attachments ?? []).map((attachment) => attachment.filename).join("\n");
+  const multimodal = email.multimodalAnalysis;
+  return {
+    subject: email.subject || "",
+    sender: [email.fromName, email.fromAddress].filter(Boolean).join(" "),
+    recipients: email.toText || "",
+    summary: [
+      email.summaryZh,
+      email.reasonZh,
+      ...(email.actionItemsZh ?? []),
+      multimodal?.summaryZh,
+      multimodal?.reasonZh,
+      ...(multimodal?.importantSignalsZh ?? [])
+    ].filter(Boolean).join("\n"),
+    body: email.originalText || "",
+    attachmentNames
+  };
+}
+
+function indexEmailForSearch(email: ProcessedEmail) {
+  if (emailFtsMode === "disabled") return;
+  const document = emailSearchDocument(email);
+  db.prepare("DELETE FROM email_fts WHERE emailId = ?").run(email.id);
+  db.prepare(
+    `INSERT INTO email_fts (emailId, subject, sender, recipients, summary, body, attachmentNames)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    email.id,
+    document.subject,
+    document.sender,
+    document.recipients,
+    document.summary,
+    document.body,
+    document.attachmentNames
+  );
+}
+
+function ftsMatchQuery(value: string) {
+  if (emailFtsMode !== "trigram") return undefined;
+  const tokens = value
+    .trim()
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 3)
+    .slice(0, 12);
+  if (!tokens.length) return undefined;
+  return tokens.map((item) => `"${item.replaceAll('"', '""')}"`).join(" AND ");
+}
+
+initializeEmailFts();
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -338,6 +502,8 @@ function normalizeQqAgentSettings(input: Partial<QqAgentSettings> | undefined): 
     permissions: {
       readMail: Boolean(permissions.readMail),
       sendMailImages: Boolean(permissions.sendMailImages),
+      readAttachments: Boolean(permissions.readAttachments),
+      sendAttachments: Boolean(permissions.sendAttachments),
       manageReadState: Boolean(permissions.manageReadState),
       manageNotifications: Boolean(permissions.manageNotifications),
       runProcessing: Boolean(permissions.runProcessing),
@@ -512,6 +678,7 @@ function insertEmail(email: ProcessedEmail) {
     emailContentFingerprint(normalized),
     JSON.stringify(normalized)
   );
+  indexEmailForSearch(normalized);
 }
 
 function insertRun(run: ProcessingRun) {
@@ -595,6 +762,34 @@ function migrateQqNotificationState() {
 }
 
 migrateQqNotificationState();
+
+function rebuildEmailSearchIndexIfNeeded() {
+  if (emailFtsMode === "disabled") return;
+  const emailCount = Number((db.prepare("SELECT COUNT(*) AS total FROM emails").get() as SqlRow).total ?? 0);
+  const ftsCount = Number((db.prepare("SELECT COUNT(*) AS total FROM email_fts").get() as SqlRow).total ?? 0);
+  if (getMeta("emailFtsVersion") === EMAIL_FTS_VERSION && emailCount === ftsCount) return;
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM email_fts").run();
+    const rows = db.prepare("SELECT data FROM emails").all() as SqlRow[];
+    for (const row of rows) {
+      try {
+        const email = parseJson<ProcessedEmail>(row.data);
+        if (email.id) indexEmailForSearch(email);
+      } catch {
+        // A malformed legacy row remains available through normal column filters.
+      }
+    }
+    setMeta("emailFtsVersion", EMAIL_FTS_VERSION);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+rebuildEmailSearchIndexIfNeeded();
 
 function getSetting<T>(key: keyof AppState["settings"], fallback: T): T {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(String(key)) as SqlRow | undefined;
@@ -1105,9 +1300,15 @@ export function queryProcessedEmails(options: {
     params.push(options.mailboxId);
   }
   if (options.q?.trim()) {
-    where.push("(subject LIKE ? OR fromName LIKE ? OR fromAddress LIKE ? OR summaryZh LIKE ? OR data LIKE ?)");
-    const query = `%${options.q.trim()}%`;
-    params.push(query, query, query, query, query);
+    const matchQuery = ftsMatchQuery(options.q);
+    if (matchQuery) {
+      where.push("id IN (SELECT emailId FROM email_fts WHERE email_fts MATCH ?)");
+      params.push(matchQuery);
+    } else {
+      where.push("(subject LIKE ? OR fromName LIKE ? OR fromAddress LIKE ? OR summaryZh LIKE ? OR data LIKE ?)");
+      const query = `%${options.q.trim()}%`;
+      params.push(query, query, query, query, query);
+    }
   }
   if (options.since) {
     where.push("COALESCE(receivedAt, processedAt) >= ?");
@@ -1281,41 +1482,183 @@ export function recordProcessingEvent(input: {
   return event;
 }
 
+const sensitiveAgentDataKeys = new Set([
+  "apiKey",
+  "appSecret",
+  "authorization",
+  "bodyExcerpt",
+  "contentBase64",
+  "originalHtml",
+  "originalText",
+  "password",
+  "rawSource",
+  "textExcerpt",
+  "token"
+]);
+
+function redactAgentLogText(value: string, limit: number) {
+  return value
+    .replace(/\b(api[_ -]?key|app[_ -]?secret|password|token|authorization)\s*[:=：]\s*\S+/gi, "$1=[REDACTED]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, limit);
+}
+
+function sanitizeAgentEventData(value: unknown, depth = 0): unknown {
+  if (depth > 5) return "[TRUNCATED]";
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim().slice(0, 320);
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => sanitizeAgentEventData(item, depth + 1));
+  if (!value || typeof value !== "object") return undefined;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .slice(0, 40)
+      .map(([key, entry]) => [
+        key.slice(0, 80),
+        sensitiveAgentDataKeys.has(key) ? "[REDACTED]" : sanitizeAgentEventData(entry, depth + 1)
+      ])
+  );
+}
+
+function maskAgentUser(userOpenId: string) {
+  if (userOpenId.length <= 8) return "****";
+  return `${userOpenId.slice(0, 4)}...${userOpenId.slice(-4)}`;
+}
+
+function rowToQqAgentEvent(row: SqlRow): QqAgentEvent {
+  return {
+    id: String(row.id),
+    runId: row.runId ? String(row.runId) : undefined,
+    kind: String(row.kind),
+    toolName: row.toolName ? String(row.toolName) : undefined,
+    status: String(row.status),
+    message: row.message ? String(row.message) : undefined,
+    data: row.data ? parseJson<unknown>(row.data) : {},
+    step: row.step === null || row.step === undefined ? undefined : Number(row.step),
+    durationMs: row.durationMs === null || row.durationMs === undefined ? undefined : Number(row.durationMs),
+    createdAt: String(row.createdAt)
+  };
+}
+
+export function startQqAgentRun(input: { userOpenId: string; message: string }) {
+  const run = {
+    id: randomUUID(),
+    userOpenId: input.userOpenId,
+    status: "running" as QqAgentRunStatus,
+    message: redactAgentLogText(input.message, 600),
+    startedAt: new Date().toISOString()
+  };
+  db.prepare(
+    `INSERT INTO qq_agent_runs (id, userOpenId, status, message, startedAt)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(run.id, run.userOpenId, run.status, run.message, run.startedAt);
+  publishAppEvent("qq-agent-run", { id: run.id, status: run.status, startedAt: run.startedAt });
+  return run;
+}
+
+export function finishQqAgentRun(
+  id: string,
+  input: { status: Exclude<QqAgentRunStatus, "running">; reply?: string; error?: string }
+) {
+  const row = db.prepare("SELECT startedAt FROM qq_agent_runs WHERE id = ?").get(id) as SqlRow | undefined;
+  if (!row) return undefined;
+  const finishedAt = new Date().toISOString();
+  const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(String(row.startedAt)));
+  const counts = db.prepare(
+    `SELECT COALESCE(MAX(step), 0) AS stepCount,
+            SUM(CASE WHEN kind = 'tool' AND status <> 'pending' THEN 1 ELSE 0 END) AS toolCallCount
+     FROM qq_agent_events WHERE runId = ?`
+  ).get(id) as SqlRow;
+  db.prepare(
+    `UPDATE qq_agent_runs
+     SET status = ?, reply = ?, error = ?, finishedAt = ?, durationMs = ?, stepCount = ?, toolCallCount = ?
+     WHERE id = ?`
+  ).run(
+    input.status,
+    input.reply ? redactAgentLogText(input.reply, 600) : null,
+    input.error ? redactAgentLogText(input.error, 400) : null,
+    finishedAt,
+    durationMs,
+    Number(counts.stepCount ?? 0),
+    Number(counts.toolCallCount ?? 0),
+    id
+  );
+
+  const staleRuns = db.prepare("SELECT id FROM qq_agent_runs ORDER BY startedAt DESC LIMIT -1 OFFSET 200").all() as SqlRow[];
+  for (const stale of staleRuns) {
+    db.prepare("DELETE FROM qq_agent_events WHERE runId = ?").run(String(stale.id));
+    db.prepare("DELETE FROM qq_agent_runs WHERE id = ?").run(String(stale.id));
+  }
+  publishAppEvent("qq-agent-run", { id, status: input.status, finishedAt, durationMs });
+  return { id, status: input.status, finishedAt, durationMs };
+}
+
+export function readQqAgentRuns(limit = 12): QqAgentRun[] {
+  const boundedLimit = Math.min(50, Math.max(1, Math.floor(limit)));
+  const rows = db.prepare("SELECT * FROM qq_agent_runs ORDER BY startedAt DESC LIMIT ?").all(boundedLimit) as SqlRow[];
+  const eventsStatement = db.prepare("SELECT * FROM qq_agent_events WHERE runId = ? ORDER BY createdAt ASC, id ASC");
+  return rows.map((row) => ({
+    id: String(row.id),
+    status: String(row.status) as QqAgentRunStatus,
+    maskedUser: maskAgentUser(String(row.userOpenId)),
+    message: String(row.message),
+    reply: row.reply ? String(row.reply) : undefined,
+    error: row.error ? String(row.error) : undefined,
+    startedAt: String(row.startedAt),
+    finishedAt: row.finishedAt ? String(row.finishedAt) : undefined,
+    durationMs: row.durationMs === null || row.durationMs === undefined ? undefined : Number(row.durationMs),
+    stepCount: Number(row.stepCount ?? 0),
+    toolCallCount: Number(row.toolCallCount ?? 0),
+    events: (eventsStatement.all(String(row.id)) as SqlRow[]).map(rowToQqAgentEvent)
+  }));
+}
+
 export function recordQqAgentEvent(input: {
   userOpenId: string;
+  runId?: string;
   kind: string;
   status: string;
   toolName?: string;
   message?: string;
   data?: unknown;
+  step?: number;
+  durationMs?: number;
 }) {
   const event = {
     id: randomUUID(),
+    runId: input.runId,
     userOpenId: input.userOpenId,
     kind: input.kind.slice(0, 64),
     toolName: input.toolName?.slice(0, 80),
     status: input.status.slice(0, 32),
-    message: input.message?.replace(/\s+/g, " ").trim().slice(0, 240),
-    data: input.data ?? {},
+    message: input.message ? redactAgentLogText(input.message, 240) : undefined,
+    data: sanitizeAgentEventData(input.data ?? {}),
+    step: input.step,
+    durationMs: input.durationMs,
     createdAt: new Date().toISOString()
   };
   db.prepare(
-    `INSERT INTO qq_agent_events (id, userOpenId, kind, toolName, status, message, data, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO qq_agent_events (id, runId, userOpenId, kind, toolName, status, message, data, step, durationMs, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     event.id,
+    event.runId ?? null,
     event.userOpenId,
     event.kind,
     event.toolName ?? null,
     event.status,
     event.message ?? null,
     JSON.stringify(event.data).slice(0, 12000),
+    event.step ?? null,
+    event.durationMs ?? null,
     event.createdAt
   );
   publishAppEvent("qq-agent", {
     kind: event.kind,
     status: event.status,
     toolName: event.toolName,
+    runId: event.runId,
     createdAt: event.createdAt
   });
   return event;

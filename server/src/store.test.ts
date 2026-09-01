@@ -42,6 +42,10 @@ const {
   retryNotificationDelivery,
   resumeNotificationDelivery,
   queryProcessedEmails,
+  readQqAgentRuns,
+  recordQqAgentEvent,
+  startQqAgentRun,
+  finishQqAgentRun,
   undoProcessedEmailsPanelRead
 } = await import("./store");
 
@@ -177,6 +181,8 @@ test("QQ AppSecret is encrypted and never returned by public settings", () => {
     permissions: {
       readMail: true,
       sendMailImages: true,
+      readAttachments: true,
+      sendAttachments: true,
       manageReadState: true,
       manageNotifications: true,
       runProcessing: true,
@@ -438,6 +444,56 @@ test("processed email queries filter by received time window", () => {
   });
 
   assert.deepEqual(result.items.map((email) => email.id), [insideNew, insideOld]);
+});
+
+test("FTS email search indexes full body text and attachment filenames", () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const bodyNeedle = `bodyneedle${suffix.replace(/\D/g, "")}`;
+  const attachmentNeedle = `attachmentneedle${suffix.replace(/\D/g, "")}`;
+  const target = makeStoreEmail({
+    id: `fts-email-${suffix}`,
+    mailboxId: `fts-mailbox-${suffix}`,
+    receivedAt: "2026-08-31T12:00:00.000Z"
+  });
+  target.originalText = `The private body contains ${bodyNeedle} for full text lookup.`;
+  target.attachments = [{
+    id: "attachment-1",
+    filename: `${attachmentNeedle}.pdf`,
+    contentType: "application/pdf",
+    size: 1024,
+    related: false,
+    supportedForVision: true
+  }];
+  addProcessedEmail(target);
+
+  assert.equal(queryProcessedEmails({ q: bodyNeedle, limit: 10 }).items[0]?.id, target.id);
+  assert.equal(queryProcessedEmails({ q: attachmentNeedle, limit: 10 }).items[0]?.id, target.id);
+});
+
+test("QQ Agent runs group tool events and redact stored mail body excerpts", () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `run-user-${suffix}`;
+  const run = startQqAgentRun({ userOpenId, message: `搜索学校邮件 ${suffix}` });
+  recordQqAgentEvent({
+    runId: run.id,
+    userOpenId,
+    kind: "tool",
+    toolName: "mail.getDetail",
+    status: "success",
+    message: "工具执行成功",
+    data: { emailId: `email-${suffix}`, bodyExcerpt: "private email body", query: "school" },
+    step: 2,
+    durationMs: 42
+  });
+  finishQqAgentRun(run.id, { status: "success", reply: "找到一封学校邮件" });
+
+  const stored = readQqAgentRuns(20).find((item) => item.id === run.id);
+  assert.equal(stored?.status, "success");
+  assert.equal(stored?.toolCallCount, 1);
+  assert.equal(stored?.stepCount, 2);
+  assert.equal(stored?.events[0]?.durationMs, 42);
+  assert.equal((stored?.events[0]?.data as { bodyExcerpt?: string }).bodyExcerpt, "[REDACTED]");
+  assert.equal(JSON.stringify(stored).includes("private email body"), false);
 });
 
 test("email state updates preserve QQ button actions and message references", () => {

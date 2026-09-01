@@ -331,12 +331,87 @@
   font-size: 11px;
   line-height: 1.35;
 }
+.qq-agent-isolation-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 1px solid rgba(31, 105, 83, 0.28);
+  border-radius: 6px;
+  background: rgba(226, 239, 233, 0.48);
+  color: var(--accent);
+}
+.qq-agent-isolation-status span { min-width: 0; }
+.qq-agent-isolation-status strong,
+.qq-agent-isolation-status small { display: block; }
+.qq-agent-isolation-status strong { color: var(--ink); font-size: 13px; }
+.qq-agent-isolation-status small { margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.qq-agent-isolation-status em { font-size: 11px; font-style: normal; font-weight: 780; }
+.qq-agent-runs {
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+}
+.qq-agent-runs-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 2px 9px;
+}
+.qq-agent-runs-heading span { display: flex; align-items: center; gap: 7px; color: var(--ink); font-size: 13px; font-weight: 760; }
+.qq-agent-runs-heading small { color: var(--muted); font-size: 11px; }
+.qq-agent-run { border-top: 1px solid var(--line); }
+.qq-agent-run summary {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+  min-height: 52px;
+  padding: 9px 2px;
+  cursor: pointer;
+  list-style: none;
+}
+.qq-agent-run summary::-webkit-details-marker { display: none; }
+.qq-agent-run summary strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qq-agent-run summary small { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.qq-agent-run-state { width: 7px; height: 7px; border-radius: 50%; background: #d39a28; }
+.qq-agent-run-state.success { background: #2c8a68; }
+.qq-agent-run-state.failed { background: #c45151; }
+.qq-agent-run-events { padding: 0 0 10px 18px; }
+.qq-agent-run-events > div {
+  display: grid;
+  grid-template-columns: 20px minmax(90px, 0.6fr) 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border-top: 1px solid rgba(204, 213, 208, 0.62);
+  font-size: 11px;
+}
+.qq-agent-run-events span,
+.qq-agent-run-events em { color: var(--muted); font-style: normal; }
+.qq-agent-run-events strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+.qq-agent-run-events small { overflow-wrap: anywhere; color: var(--muted); }
+.qq-agent-run-events p,
+.qq-agent-runs-empty { margin: 0; padding: 10px 2px; color: var(--muted); font-size: 11px; }
+.qq-agent-run-events .qq-agent-run-error { color: #a73f3f; }
 
 @media (max-width: 560px) {
   .qq-quote-read-toggle { grid-template-columns: auto minmax(0, 1fr); }
   .qq-quote-read-toggle .switch-track { grid-column: 2; }
   .qq-agent-controls,
   .qq-agent-permission-grid { grid-template-columns: 1fr; }
+  .qq-agent-runs-heading { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .qq-agent-run summary { grid-template-columns: 8px minmax(0, 1fr); }
+  .qq-agent-run summary small { grid-column: 2; white-space: normal; }
+  .qq-agent-run-events > div { grid-template-columns: 20px minmax(0, 1fr) 64px; }
+  .qq-agent-run-events small { grid-column: 2 / -1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

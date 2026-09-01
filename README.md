@@ -141,6 +141,9 @@ Most providers require enabling IMAP/POP3 in mailbox settings and using an app p
 | Internal read state | Important mail can stay system-unread until you spend time in the detail view. |
 | WeChat alerts | Integrated WeClaw / ClawBot bridge can push selected email summaries to WeChat. |
 | QQ Bot alerts | Official QQ Bot WebSocket Gateway + REST delivery with private-chat binding. |
+| QQ mail agent | Multi-step tools for full-text search, attachment inspection/sending, confirmed writes, and auditable runs. |
+| Agent isolation | Mail and attachment content is untrusted data; writes and media exports require explicit intent in the current user message. |
+| FTS5 search | Trigram indexing covers subjects, senders, summaries, bodies, and attachment names with automatic backfill. |
 | Self-hosted storage | Indexed, transactional SQLite storage in `data/app.sqlite`. |
 
 ## Priority Queues
@@ -231,7 +234,9 @@ Operational details:
 - Important, Secondary, and Ignore notifications can be enabled independently for QQ and WeChat.
 - Notification delivery is queued after the email transaction commits. A temporary QQ or WeChat outage never blocks database persistence or mailbox read marking.
 - Each email/channel pair has a unique delivery record, preventing duplicate sends while allowing isolated retries.
-- Gateway sessions heartbeat, resume when possible, reconnect with backoff, and never reply to ordinary chat messages.
+- Gateway sessions heartbeat, resume when possible, and reconnect with backoff. Ordinary chat messages are ignored unless the optional QQ agent is enabled.
+- Agent runs are grouped into redacted traces with planning steps, tool names, status, and duration; raw bodies, secrets, and attachment bytes are not retained in the trace.
+- Attachment export blocks executable/script formats and uses the official QQ rich-media file flow for bounded files.
 
 Use a stable, high-entropy `QQ_CREDENTIAL_ENCRYPTION_KEY` in production. Back it up with `data/app.sqlite`; losing or changing it makes the saved QQ AppSecret unreadable.
 

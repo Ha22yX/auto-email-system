@@ -14,6 +14,7 @@ import { createQqGateway } from "./gateway";
 import { createQqQuoteReadService, type QqQuoteReadService } from "./quote-read";
 import type {
   QqBotPublicStatus,
+  QqDirectFileInput,
   QqDirectImageInput,
   QqDirectMarkdownMessageInput,
   QqDirectMessageInput,
@@ -42,6 +43,7 @@ type QqManagerClient = {
   sendDirectMessage(input: QqDirectMessageInput): Promise<QqSendResult>;
   sendDirectMarkdownMessage?(input: QqDirectMarkdownMessageInput): Promise<QqSendResult>;
   sendDirectImage(input: QqDirectImageInput): Promise<QqSendResult>;
+  sendDirectFile?(input: QqDirectFileInput): Promise<QqSendResult>;
   acknowledgeInteraction(interactionId: string): Promise<void>;
 };
 

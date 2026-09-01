@@ -39,6 +39,16 @@ if (process.env.SEED_SCHEMA_V1 === "true") {
       contentFingerprint TEXT NOT NULL,
       data TEXT NOT NULL
     );
+    CREATE TABLE qq_agent_events (
+      id TEXT PRIMARY KEY,
+      userOpenId TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      toolName TEXT,
+      status TEXT NOT NULL,
+      message TEXT,
+      data TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
   \`);
   const legacySettings = {
     enabled: true,
@@ -72,6 +82,7 @@ const uniqueDeliveryIndex = db.prepare("PRAGMA index_list('notification_deliveri
   const columns = db.prepare(\`PRAGMA index_info('\${index.name}')\`).all().map((column) => column.name);
   return columns.join(",") === "emailId,channel";
 });
+const agentEventColumns = db.prepare("PRAGMA table_info('qq_agent_events')").all().map((column) => column.name);
 const beforeEnqueue = db.prepare("SELECT emailId, channel, status FROM notification_deliveries ORDER BY emailId").all();
 const sentDelivery = store.enqueueNotificationDelivery("legacy-sent", "wechat");
 const afterEnqueue = db.prepare("SELECT emailId, channel, status FROM notification_deliveries ORDER BY emailId").all();
@@ -83,7 +94,8 @@ const result = {
   sentDelivery,
   tableNames,
   indexNames,
-  uniqueDeliveryIndex
+  uniqueDeliveryIndex,
+  agentEventColumns
 };
 db.close();
 process.stdout.write(JSON.stringify(result));
@@ -116,6 +128,7 @@ function runFixture(dataDir: string, seedSchemaV1: boolean) {
     tableNames: string[];
     indexNames: string[];
     uniqueDeliveryIndex: boolean;
+    agentEventColumns: string[];
   };
 }
 
@@ -138,6 +151,8 @@ test("schema-v1 migration creates durable channel state idempotently", () => {
       permissions: {
         readMail: true,
         sendMailImages: true,
+        readAttachments: true,
+        sendAttachments: true,
         manageReadState: true,
         manageNotifications: true,
         runProcessing: true,
@@ -153,12 +168,13 @@ test("schema-v1 migration creates durable channel state idempotently", () => {
   assert.equal(first.sentDelivery.status, "sent");
   assert.deepEqual(first.afterEnqueue, first.beforeEnqueue);
   assert.equal(first.uniqueDeliveryIndex, true);
+  assert.deepEqual(["runId", "step", "durationMs"].every((column) => first.agentEventColumns.includes(column)), true);
   assert.deepEqual(
-    ["credentials", "qq_state", "qq_event_dedupe", "notification_deliveries", "qq_notification_refs", "qq_email_read_actions", "qq_agent_events"].every((table) => first.tableNames.includes(table)),
+    ["credentials", "qq_state", "qq_event_dedupe", "notification_deliveries", "qq_notification_refs", "qq_email_read_actions", "qq_agent_runs", "qq_agent_events", "email_fts"].every((table) => first.tableNames.includes(table)),
     true
   );
   assert.deepEqual(
-    ["idx_notification_deliveries_status_next_attempt", "idx_qq_event_dedupe_expires", "idx_qq_notification_refs_ref"].every((index) =>
+    ["idx_notification_deliveries_status_next_attempt", "idx_qq_event_dedupe_expires", "idx_qq_notification_refs_ref", "idx_qq_agent_runs_started", "idx_qq_agent_events_run"].every((index) =>
       first.indexNames.includes(index)
     ),
     true

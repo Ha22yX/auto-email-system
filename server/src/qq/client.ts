@@ -4,6 +4,7 @@ import {
   QqApiError,
   type QqApiErrorKind,
   type QqDirectImageInput,
+  type QqDirectFileInput,
   type QqDirectMarkdownImageInput,
   type QqDirectMarkdownMessageInput,
   type QqDirectMessageInput,
@@ -13,6 +14,7 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_NOTIFICATION_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_DIRECT_FILE_BYTES = 4 * 1024 * 1024;
 
 type QqFetch = (url: string, init?: RequestInit) => Promise<Response>;
 type QqResponseBody = Record<string, unknown> | undefined;
@@ -114,6 +116,25 @@ export class QqClient {
       throw new QqApiError({ kind: "invalid_request", status: 0, code: "invalid_image_input", message: "QQ direct image requires a recipient and a bounded image" });
     }
     return this.withTokenRefresh((token) => this.sendImageWithToken(input, token));
+  }
+
+  async sendDirectFile(input: QqDirectFileInput): Promise<QqSendResult> {
+    if (
+      !input.userOpenId.trim() ||
+      !input.file.length ||
+      input.file.length > MAX_DIRECT_FILE_BYTES ||
+      !input.fileName.trim() ||
+      input.fileName.length > 120 ||
+      /[\u0000-\u001f\\/]/.test(input.fileName)
+    ) {
+      throw new QqApiError({
+        kind: "invalid_request",
+        status: 0,
+        code: "invalid_file_input",
+        message: "QQ direct file requires a recipient, safe filename, and a file no larger than 4 MB"
+      });
+    }
+    return this.withTokenRefresh((token) => this.sendFileWithToken(input, token));
   }
 
   async sendDirectMarkdownImage(input: QqDirectMarkdownImageInput): Promise<QqSendResult> {
@@ -243,6 +264,27 @@ export class QqClient {
     };
 
     const body = await this.requestJson(`${base}/messages`, messagePayload, token);
+    return this.sendResult(body);
+  }
+
+  private async sendFileWithToken(input: QqDirectFileInput, token: string): Promise<QqSendResult> {
+    const base = `${QQ_API_ORIGIN}/v2/users/${encodeURIComponent(input.userOpenId)}`;
+    const uploaded = await this.requestJson(`${base}/files`, {
+      file_type: 4,
+      file_data: input.file.toString("base64"),
+      file_name: input.fileName,
+      srv_send_msg: false
+    }, token);
+    const fileInfo = uploaded?.file_info;
+    if (typeof fileInfo !== "string" || !fileInfo) {
+      throw new QqApiError({ kind: "invalid_request", status: 0, code: "missing_file_info", message: "QQ file upload returned no file_info" });
+    }
+    this.messageSequence = (this.messageSequence % 10_000) + 1;
+    const body = await this.requestJson(`${base}/messages`, {
+      msg_type: 7,
+      msg_seq: this.messageSequence,
+      media: { file_info: fileInfo }
+    }, token);
     return this.sendResult(body);
   }
 

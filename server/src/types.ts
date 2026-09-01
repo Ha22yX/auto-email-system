@@ -14,6 +14,8 @@ export type NotificationChannelSettings = {
 export type QqAgentPermission =
   | "readMail"
   | "sendMailImages"
+  | "readAttachments"
+  | "sendAttachments"
   | "manageReadState"
   | "manageNotifications"
   | "runProcessing"
@@ -25,6 +27,36 @@ export type QqAgentSettings = {
   requireConfirmation: boolean;
   maxResults: number;
   permissions: Record<QqAgentPermission, boolean>;
+};
+
+export type QqAgentRunStatus = "running" | "success" | "failed";
+
+export type QqAgentEvent = {
+  id: string;
+  runId?: string;
+  kind: string;
+  toolName?: string;
+  status: string;
+  message?: string;
+  data: unknown;
+  step?: number;
+  durationMs?: number;
+  createdAt: string;
+};
+
+export type QqAgentRun = {
+  id: string;
+  status: QqAgentRunStatus;
+  maskedUser: string;
+  message: string;
+  reply?: string;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  stepCount: number;
+  toolCallCount: number;
+  events: QqAgentEvent[];
 };
 
 export type QqBotConfig = NotificationChannelSettings & {

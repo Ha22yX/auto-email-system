@@ -15,6 +15,7 @@ import type {
   ProcessingRun,
   PublicQqBotSettings,
   QqBindingChallenge,
+  QqAgentRun,
   QqBotPublicStatus,
   QqBotSettingsInput,
   SystemSettings,
@@ -185,6 +186,9 @@ export const api = {
   },
   qqStatus() {
     return request<{ settings: PublicQqBotSettings; status: QqBotPublicStatus }>("/api/qq/status");
+  },
+  qqAgentRuns(limit = 12) {
+    return request<{ items: QqAgentRun[] }>(`/api/qq/agent/runs?limit=${encodeURIComponent(String(limit))}`);
   },
   startQq() {
     return request<QqBotPublicStatus>("/api/qq/start", { method: "POST" });

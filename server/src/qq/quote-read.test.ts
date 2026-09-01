@@ -20,6 +20,8 @@ function config(enabled = true): QqBotConfig {
       permissions: {
         readMail: true,
         sendMailImages: true,
+        readAttachments: true,
+        sendAttachments: true,
         manageReadState: true,
         manageNotifications: true,
         runProcessing: true,
