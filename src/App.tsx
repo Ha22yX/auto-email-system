@@ -3,7 +3,8 @@ import type {
   CSSProperties,
   FormEvent,
   MouseEvent as ReactMouseEvent,
-  PointerEvent as ReactPointerEvent
+  PointerEvent as ReactPointerEvent,
+  ReactNode
 } from "react";
 import {
   Archive,
@@ -21,7 +22,6 @@ import {
   PencilSimple,
   Play,
   Plugs,
-  Plus,
   QrCode,
   SealCheck,
   ShieldCheck,
@@ -87,6 +87,32 @@ type BulkReadUndo = {
   loadedUnreadIds: string[];
   detailWasUnread: boolean;
 };
+
+type SettingsLayoutMode = "auto" | "two" | "one";
+type SettingsSectionId = "ai" | "system" | "auth" | "wechat" | "qq" | "mailboxes";
+
+const SETTINGS_LAYOUT_STORAGE_KEY = "auto-email-settings-layout";
+const SETTINGS_SECTION_IDS: SettingsSectionId[] = ["ai", "system", "auth", "wechat", "qq", "mailboxes"];
+
+function createSettingsSectionState(open: boolean): Record<SettingsSectionId, boolean> {
+  return {
+    ai: open,
+    system: open,
+    auth: open,
+    wechat: open,
+    qq: open,
+    mailboxes: open
+  };
+}
+
+function readSettingsLayoutMode(): SettingsLayoutMode {
+  try {
+    const saved = window.localStorage.getItem(SETTINGS_LAYOUT_STORAGE_KEY);
+    return saved === "two" || saved === "one" ? saved : "auto";
+  } catch {
+    return "auto";
+  }
+}
 
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL ??
@@ -2224,6 +2250,59 @@ function NotificationQueuePanel({
   );
 }
 
+function SettingsSection({
+  id,
+  kicker,
+  title,
+  summary,
+  icon: Icon,
+  open,
+  onToggle,
+  className = "",
+  children
+}: {
+  id: SettingsSectionId;
+  kicker: string;
+  title: string;
+  summary: string;
+  icon: typeof Warning;
+  open: boolean;
+  onToggle: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  const contentId = `settings-section-${id}`;
+
+  return (
+    <section className={`settings-panel settings-section ${open ? "is-open" : "is-collapsed"} ${className}`.trim()}>
+      <button
+        type="button"
+        className="settings-section-toggle"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={contentId}
+      >
+        <span className="settings-section-icon">
+          <Icon size={20} weight="duotone" />
+        </span>
+        <span className="settings-section-heading">
+          <small>{kicker}</small>
+          <strong>{title}</strong>
+        </span>
+        <span className="settings-section-summary" title={summary}>{summary}</span>
+        <span className="settings-section-caret" aria-hidden="true">
+          <CaretDown size={17} />
+        </span>
+      </button>
+      {open && (
+        <div className="settings-section-body" id={contentId} role="region" aria-label={`${title}设置`}>
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SettingsPanel({
   dashboard,
   onReload,
@@ -2249,7 +2328,23 @@ function SettingsPanel({
   const weclawLogRef = useRef<HTMLPreElement | null>(null);
   const [mailboxForm, setMailboxForm] = useState<Partial<Mailbox>>(emptyMailbox);
   const [saving, setSaving] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<SettingsLayoutMode>(readSettingsLayoutMode);
+  const [openSections, setOpenSections] = useState<Record<SettingsSectionId, boolean>>(() =>
+    createSettingsSectionState(false)
+  );
   const weclawQrUrl = useMemo(() => extractWeclawQrUrl(weclawStatus?.logTail ?? ""), [weclawStatus?.logTail]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SETTINGS_LAYOUT_STORAGE_KEY, layoutMode);
+    } catch {
+      // Layout preference is optional when browser storage is unavailable.
+    }
+  }, [layoutMode]);
+
+  function toggleSettingsSection(id: SettingsSectionId) {
+    setOpenSections((current) => ({ ...current, [id]: !current[id] }));
+  }
 
   useEffect(() => {
     if (!dashboard) return;
@@ -2610,18 +2705,69 @@ function SettingsPanel({
       : "当前使用内置 Node iLink 桥接，无需 WeClaw exe，Linux 可直接运行。";
   const weclawLogText =
     weclawStatus?.logTail || "启动后这里会显示 WeClaw 日志。首次运行时请根据日志提示用手机微信扫码登录。";
+  const openSectionCount = SETTINGS_SECTION_IDS.filter((id) => openSections[id]).length;
+  const allSectionsOpen = openSectionCount === SETTINGS_SECTION_IDS.length;
+  const aiSettingsSummary = aiForm
+    ? `${aiForm.providerName || "自定义服务"} · ${aiForm.model || "未选择模型"}`
+    : "正在读取配置";
+  const systemSettingsSummary = systemForm
+    ? `${systemForm.autoProcessEnabled ? `${systemForm.pollIntervalMinutes} 分钟自动处理` : "自动处理已关闭"} · ${
+        systemForm.autoLoadRemoteImages ? "自动加载图片" : "手动加载图片"
+      }`
+    : "正在读取配置";
+  const authSettingsSummary = `登录状态保存 ${dashboard?.settings.auth.sessionDays ?? 7} 天`;
+  const wechatSettingsSummary = `${notificationForm?.enabled ? "通知已开启" : "通知未开启"} · ${weclawStatusLabel}`;
+  const enabledMailboxCount = dashboard?.mailboxes.filter((mailbox) => mailbox.enabled).length ?? 0;
+  const mailboxSettingsSummary = `${dashboard?.mailboxes.length ?? 0} 个邮箱 · ${enabledMailboxCount} 个启用`;
 
   return (
     <section className="settings-layout">
-      <div className="settings-column control-column">
-        <div className="settings-panel ai-settings-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">AI API</p>
-              <h2>AI API Settings</h2>
-            </div>
-            <Plugs size={22} />
+      <div className="settings-layout-toolbar">
+        <div className="settings-layout-overview">
+          <strong>设置分组</strong>
+          <span>{SETTINGS_SECTION_IDS.length} 个模块 · 已展开 {openSectionCount}</span>
+        </div>
+        <div className="settings-layout-actions">
+          <div className="settings-layout-segments" role="group" aria-label="设置页排版">
+            {([
+              ["auto", "自适应"],
+              ["two", "双栏"],
+              ["one", "单栏"]
+            ] as Array<[SettingsLayoutMode, string]>).map(([mode, label]) => (
+              <button
+                type="button"
+                key={mode}
+                className={layoutMode === mode ? "active" : ""}
+                aria-pressed={layoutMode === mode}
+                onClick={() => setLayoutMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+          <button
+            type="button"
+            className="settings-expand-all"
+            onClick={() => setOpenSections(createSettingsSectionState(!allSectionsOpen))}
+          >
+            <CaretDown size={16} className={allSectionsOpen ? "rotated" : ""} />
+            {allSectionsOpen ? "全部收起" : "全部展开"}
+          </button>
+        </div>
+      </div>
+
+      <div className={`settings-grid layout-${layoutMode}`}>
+        <div className="settings-column control-column">
+          <SettingsSection
+            id="ai"
+            kicker="AI API"
+            title="模型与识别"
+            summary={aiSettingsSummary}
+            icon={Plugs}
+            open={openSections.ai}
+            onToggle={() => toggleSettingsSection("ai")}
+            className="ai-settings-panel"
+          >
           {aiForm && (
             <div className="form-grid">
               <label>
@@ -2777,16 +2923,18 @@ function SettingsPanel({
               </div>
             </div>
           )}
-        </div>
+          </SettingsSection>
 
-        <div className="settings-panel system-settings-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">自动处理</p>
-              <h2>轮询策略</h2>
-            </div>
-            <ClockCounterClockwise size={22} />
-          </div>
+        <SettingsSection
+          id="system"
+          kicker="自动处理"
+          title="轮询策略"
+          summary={systemSettingsSummary}
+          icon={ClockCounterClockwise}
+          open={openSections.system}
+          onToggle={() => toggleSettingsSection("system")}
+          className="system-settings-panel"
+        >
           {systemForm && (
             <div className="form-grid">
               <label className="switch-row full-span">
@@ -2839,16 +2987,18 @@ function SettingsPanel({
               </button>
             </div>
           )}
-        </div>
+        </SettingsSection>
 
-        <div className="settings-panel auth-settings-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">访问控制</p>
-              <h2>登录安全</h2>
-            </div>
-            <LockKey size={22} />
-          </div>
+        <SettingsSection
+          id="auth"
+          kicker="访问控制"
+          title="登录安全"
+          summary={authSettingsSummary}
+          icon={LockKey}
+          open={openSections.auth}
+          onToggle={() => toggleSettingsSection("auth")}
+          className="auth-settings-panel"
+        >
           <div className="auth-settings-summary">
             <span>登录状态</span>
             <strong>保存 {dashboard?.settings.auth.sessionDays ?? 7} 天</strong>
@@ -2895,16 +3045,18 @@ function SettingsPanel({
               保存登录密码
             </button>
           </div>
-        </div>
+        </SettingsSection>
 
-        <div className="settings-panel notification-settings-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">微信通知</p>
-              <h2>ClawBot 推送</h2>
-            </div>
-            <Plugs size={22} />
-          </div>
+        <SettingsSection
+          id="wechat"
+          kicker="微信通知"
+          title="ClawBot 推送"
+          summary={wechatSettingsSummary}
+          icon={BellRinging}
+          open={openSections.wechat}
+          onToggle={() => toggleSettingsSection("wechat")}
+          className="notification-settings-panel"
+        >
           {notificationForm && (
             <div className="notification-form">
               <div className="notification-hero">
@@ -3119,19 +3271,25 @@ function SettingsPanel({
               </div>
             </div>
           )}
-        </div>
-        <QqNotificationPanel setToast={setToast} />
+        </SettingsSection>
+        <QqNotificationPanel
+          setToast={setToast}
+          open={openSections.qq}
+          onToggle={() => toggleSettingsSection("qq")}
+        />
       </div>
 
       <div className="settings-column mailbox-column wide">
-        <div className="settings-panel mailbox-settings-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="section-kicker">多邮箱</p>
-              <h2>{mailboxForm.id ? "编辑邮箱" : "添加邮箱"}</h2>
-            </div>
-            <Plus size={22} />
-          </div>
+        <SettingsSection
+          id="mailboxes"
+          kicker="多邮箱"
+          title={mailboxForm.id ? "编辑邮箱" : "邮箱账户"}
+          summary={mailboxSettingsSummary}
+          icon={MailboxIcon}
+          open={openSections.mailboxes}
+          onToggle={() => toggleSettingsSection("mailboxes")}
+          className="mailbox-settings-panel"
+        >
           <div className="mailbox-form-shell">
             <section className="mailbox-form-section">
               <div className="mailbox-form-section-head">
@@ -3270,58 +3428,59 @@ function SettingsPanel({
               </div>
             </section>
           </div>
-        </div>
 
-        <div className="mailbox-list-header">
-          <div>
-            <p className="section-kicker">已保存邮箱</p>
-            <h3>{dashboard?.mailboxes.length ?? 0} 个邮箱</h3>
-          </div>
-          <span>IMAP / POP3</span>
-        </div>
-
-        <div className="mailbox-table">
-          {dashboard?.mailboxes.length ? (
-            dashboard.mailboxes.map((mailbox) => (
-              <div className="mailbox-row" key={mailbox.id}>
-                <div>
-                  <strong>{mailbox.name}</strong>
-                  <span>{mailbox.email}</span>
-                  {mailbox.lastError && <small className="error-text">{mailbox.lastError}</small>}
-                </div>
-                <div className="mailbox-row-meta">
-                  <span>{mailbox.protocol.toUpperCase()}</span>
-                  <span>{mailbox.lastSyncAt ? formatTime(mailbox.lastSyncAt) : "未同步"}</span>
-                </div>
-                <div className="row-actions">
-                  <button onClick={() => testMailbox(mailbox.id)} title="测试连接">
-                    <Plugs size={17} />
-                  </button>
-                  <button
-                    onClick={() =>
-                      setMailboxForm({
-                        ...mailbox,
-                        password: ""
-                      })
-                    }
-                    title="编辑"
-                  >
-                    <PencilSimple size={17} />
-                  </button>
-                  <button onClick={() => deleteMailbox(mailbox.id)} title="删除">
-                    <Trash size={17} />
-                  </button>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="empty-state compact">
-              <MailboxIcon size={30} />
-              <h3>还没有邮箱</h3>
-              <p>添加 IMAP 或 POP3 邮箱后，系统就能开始读取并分类邮件。</p>
+          <div className="mailbox-list-header">
+            <div>
+              <p className="section-kicker">已保存邮箱</p>
+              <h3>{dashboard?.mailboxes.length ?? 0} 个邮箱</h3>
             </div>
-          )}
-        </div>
+            <span>IMAP / POP3</span>
+          </div>
+
+          <div className="mailbox-table">
+            {dashboard?.mailboxes.length ? (
+              dashboard.mailboxes.map((mailbox) => (
+                <div className="mailbox-row" key={mailbox.id}>
+                  <div>
+                    <strong>{mailbox.name}</strong>
+                    <span>{mailbox.email}</span>
+                    {mailbox.lastError && <small className="error-text">{mailbox.lastError}</small>}
+                  </div>
+                  <div className="mailbox-row-meta">
+                    <span>{mailbox.protocol.toUpperCase()}</span>
+                    <span>{mailbox.lastSyncAt ? formatTime(mailbox.lastSyncAt) : "未同步"}</span>
+                  </div>
+                  <div className="row-actions">
+                    <button onClick={() => testMailbox(mailbox.id)} title="测试连接">
+                      <Plugs size={17} />
+                    </button>
+                    <button
+                      onClick={() =>
+                        setMailboxForm({
+                          ...mailbox,
+                          password: ""
+                        })
+                      }
+                      title="编辑"
+                    >
+                      <PencilSimple size={17} />
+                    </button>
+                    <button onClick={() => deleteMailbox(mailbox.id)} title="删除">
+                      <Trash size={17} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state compact">
+                <MailboxIcon size={30} />
+                <h3>还没有邮箱</h3>
+                <p>添加 IMAP 或 POP3 邮箱后，系统就能开始读取并分类邮件。</p>
+              </div>
+            )}
+          </div>
+        </SettingsSection>
+      </div>
       </div>
     </section>
   );

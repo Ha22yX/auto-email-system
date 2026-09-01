@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive,
   BellRinging,
+  CaretDown,
   CheckCircle,
   FloppyDisk,
   LinkSimple,
@@ -145,7 +146,15 @@ function agentEventStatusLabel(status: string) {
   return labels[status] ?? status;
 }
 
-export function QqNotificationPanel({ setToast }: { setToast: (message: string) => void }) {
+export function QqNotificationPanel({
+  setToast,
+  open,
+  onToggle
+}: {
+  setToast: (message: string) => void;
+  open: boolean;
+  onToggle: () => void;
+}) {
   const [saved, setSaved] = useState<PublicQqBotSettings | null>(null);
   const [status, setStatus] = useState<QqBotPublicStatus | null>(null);
   const [form, setForm] = useState<QqForm | null>(null);
@@ -268,34 +277,48 @@ export function QqNotificationPanel({ setToast }: { setToast: (message: string) 
   }
 
   return (
-    <div className="settings-panel qq-notification-panel">
-      <div className="panel-heading qq-panel-heading">
-        <div>
-          <p className="section-kicker">QQ 通知</p>
-          <h2>官方 QQ Bot</h2>
-        </div>
-        <span className={`qq-live-status ${online ? "online" : status?.gateway.state === "blocked" ? "danger" : ""}`}>
-          <span />
-          {gatewayLabel(status)}
+    <section className={`settings-panel settings-section qq-notification-panel ${open ? "is-open" : "is-collapsed"}`}>
+      <button
+        type="button"
+        className="settings-section-toggle"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls="settings-section-qq"
+      >
+        <span className="settings-section-icon">
+          <Robot size={20} weight="duotone" />
         </span>
-      </div>
+        <span className="settings-section-heading">
+          <small>QQ 通知</small>
+          <strong>官方 QQ Bot</strong>
+        </span>
+        <span className={`settings-section-summary qq-live-status ${online ? "online" : status?.gateway.state === "blocked" ? "danger" : ""}`}>
+          <span />
+          {form?.enabled ? "通知已开启" : "通知未开启"} · {gatewayLabel(status)}
+        </span>
+        <span className="settings-section-caret" aria-hidden="true">
+          <CaretDown size={17} />
+        </span>
+      </button>
 
-      {form ? (
-        <div className="qq-notification-content">
-          <button
-            type="button"
-            className={`notification-primary-toggle qq-primary-toggle${form.enabled ? " active" : ""}`}
-            onClick={() => setForm({ ...form, enabled: !form.enabled })}
-          >
-            <span className="notification-toggle-icon">
-              <BellRinging size={22} weight={form.enabled ? "fill" : "regular"} />
-            </span>
-            <span className="notification-toggle-copy">
-              <strong>{form.enabled ? "QQ 通知已开启" : "开启 QQ 通知"}</strong>
-              <small>邮件入库后通过官方 Bot API 推送到已绑定的 QQ 单聊</small>
-            </span>
-            <em>{form.enabled ? "已开启" : "未开启"}</em>
-          </button>
+      {open && (
+        <div className="settings-section-body" id="settings-section-qq" role="region" aria-label="官方 QQ Bot 设置">
+          {form ? (
+            <div className="qq-notification-content">
+              <button
+                type="button"
+                className={`notification-primary-toggle qq-primary-toggle${form.enabled ? " active" : ""}`}
+                onClick={() => setForm({ ...form, enabled: !form.enabled })}
+              >
+                <span className="notification-toggle-icon">
+                  <BellRinging size={22} weight={form.enabled ? "fill" : "regular"} />
+                </span>
+                <span className="notification-toggle-copy">
+                  <strong>{form.enabled ? "QQ 通知已开启" : "开启 QQ 通知"}</strong>
+                  <small>邮件入库后通过官方 Bot API 推送到已绑定的 QQ 单聊</small>
+                </span>
+                <em>{form.enabled ? "已开启" : "未开启"}</em>
+              </button>
 
           <section className="qq-section qq-credentials-section">
             <div className="qq-section-heading">
@@ -542,14 +565,16 @@ export function QqNotificationPanel({ setToast }: { setToast: (message: string) 
               测试 QQ 通知
             </button>
           </div>
-        </div>
-      ) : (
-        <div className="qq-panel-loading" aria-label="正在加载 QQ 通知设置">
-          <span />
-          <span />
-          <span />
+            </div>
+          ) : (
+            <div className="qq-panel-loading" aria-label="正在加载 QQ 通知设置">
+              <span />
+              <span />
+              <span />
+            </div>
+          )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
