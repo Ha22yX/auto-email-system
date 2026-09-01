@@ -35,6 +35,7 @@ type QqForm = {
 
 const defaultAgentPermissions: Record<QqAgentPermission, boolean> = {
   readMail: true,
+  sendMailImages: true,
   manageReadState: true,
   manageNotifications: true,
   runProcessing: true,
@@ -65,6 +66,7 @@ const agentPermissions: Array<{
   detail: string;
 }> = [
   { id: "readMail", label: "查看/搜索邮件", detail: "最近邮件、分类列表、详情、统计" },
+  { id: "sendMailImages", label: "发送邮件图片", detail: "生成邮件卡片并通过 QQ 富媒体发送" },
   { id: "manageReadState", label: "修改已读状态", detail: "单封、分类、邮箱批量标记已读" },
   { id: "manageNotifications", label: "管理通知队列", detail: "查看失败、重试、暂停、恢复" },
   { id: "runProcessing", label: "手动处理邮箱", detail: "处理全部、指定邮箱、同步新邮件" },

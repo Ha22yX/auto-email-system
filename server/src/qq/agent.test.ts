@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { ProcessedEmail, QqBotBinding, QqBotConfig } from "../types";
-import type { QqDirectMarkdownMessageInput, QqDirectMessageInput, QqDispatchEvent } from "./types";
+import type { QqDirectImageInput, QqDirectMarkdownMessageInput, QqDirectMessageInput, QqDispatchEvent } from "./types";
 
 process.env.DATA_DIR ??= path.join(tmpdir(), `auto-email-system-agent-test-${process.pid}`);
 process.env.QQ_CREDENTIAL_ENCRYPTION_KEY ??= "test-only-qq-credential-encryption-key";
 
-const { addProcessedEmail, getProcessedEmailById, updateAiSettings } = await import("../store");
+const { addProcessedEmail, findQqNotificationReference, getProcessedEmailById, updateAiSettings } = await import("../store");
 const { QqAgentService } = await import("./agent");
 
 const USER_OPEN_ID = "agent-bound-user";
@@ -19,6 +19,7 @@ const agentDefaults: QqBotConfig["agent"] = {
   maxResults: 6,
   permissions: {
     readMail: true,
+    sendMailImages: true,
     manageReadState: true,
     manageNotifications: true,
     runProcessing: true,
@@ -98,13 +99,19 @@ function harness(options: {
   fetch?: typeof fetch;
   markdown?: boolean;
   userOpenId?: string;
+  renderEmailCard?: () => Promise<Buffer>;
 } = {}) {
   const sent: QqDirectMessageInput[] = [];
   const sentMarkdown: QqDirectMarkdownMessageInput[] = [];
+  const sentImages: QqDirectImageInput[] = [];
   const client = {
     async sendDirectMessage(input: QqDirectMessageInput) {
       sent.push(input);
       return { messageId: `reply-${sent.length}` };
+    },
+    async sendDirectImage(input: QqDirectImageInput) {
+      sentImages.push(input);
+      return { messageId: `image-reply-${sentImages.length}`, refIndex: `image-ref-${sentImages.length}` };
     },
     ...(options.markdown
       ? {
@@ -120,9 +127,10 @@ function harness(options: {
     readBinding: () => options.currentBinding ?? binding(options.userOpenId),
     client,
     fetch: options.fetch,
+    renderEmailCard: options.renderEmailCard ?? (async () => Buffer.from("test-png")),
     now: () => Date.parse("2026-08-31T12:00:00.000Z")
   });
-  return { service, sent, sentMarkdown };
+  return { service, sent, sentMarkdown, sentImages };
 }
 
 test("disabled QQ Agent ignores bound direct messages", async () => {
@@ -154,6 +162,53 @@ test("enabled QQ Agent lists recent mail for the bound user", async () => {
   assert.match(target.sent[0].content, /最近邮件/);
   assert.match(target.sent[0].content, /Your Grab E-Receipt/);
   assert.equal(target.sent[0].msgId, `message-list-${suffix}`);
+});
+
+test("QQ Agent sends the selected mail as one rich-media image without duplicate text", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `image-user-${suffix}`;
+  const emailId = `agent-image-${suffix}`;
+  addProcessedEmail(email({
+    id: emailId,
+    subject: `Adobe receipt ${suffix}`,
+    receivedAt: "2026-08-31T10:00:00.000Z"
+  }));
+
+  const target = harness({ markdown: true, userOpenId });
+  await target.service.handleDispatchEvent(event(`搜索 ${suffix}`, `image-search-${suffix}`, userOpenId));
+  const textCountBeforeImage = target.sent.length + target.sentMarkdown.length;
+  const result = await target.service.handleDispatchEvent(event("第一封邮件发给我", `image-send-${suffix}`, userOpenId));
+
+  assert.deepEqual(result, { kind: "handled" });
+  assert.equal(target.sentImages.length, 1);
+  assert.equal(target.sentImages[0].userOpenId, userOpenId);
+  assert.equal(target.sentImages[0].fileName, "mail-summary.png");
+  assert.equal(target.sentImages[0].image.toString(), "test-png");
+  assert.equal(target.sent.length + target.sentMarkdown.length, textCountBeforeImage);
+  assert.equal(findQqNotificationReference({ userOpenId, messageId: "image-reply-1" })?.emailId, emailId);
+});
+
+test("QQ Agent blocks mail image sending when the media permission is disabled", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `image-denied-user-${suffix}`;
+  addProcessedEmail(email({
+    id: `agent-image-denied-${suffix}`,
+    subject: `Denied image ${suffix}`,
+    receivedAt: "2026-08-31T10:05:00.000Z"
+  }));
+
+  const target = harness({
+    userOpenId,
+    config: config({
+      ...agentDefaults,
+      permissions: { ...agentDefaults.permissions, sendMailImages: false }
+    })
+  });
+  await target.service.handleDispatchEvent(event(`搜索 ${suffix}`, `image-denied-search-${suffix}`, userOpenId));
+  await target.service.handleDispatchEvent(event("第 1 封邮件发给我", `image-denied-send-${suffix}`, userOpenId));
+
+  assert.equal(target.sentImages.length, 0);
+  assert.match(target.sent.at(-1)?.content ?? "", /没有开启权限.*mail\.sendImage/);
 });
 
 test("QQ Agent remembers school aliases and searches them instead of unrelated recent mail", async () => {
@@ -337,6 +392,71 @@ test("QQ Agent can run multiple AI tool rounds before finishing", async () => {
     assert.equal(target.sentMarkdown.length, 1);
     assert.match(target.sentMarkdown[0].markdown, /需要处理 1 封邮件/);
     assert.equal(callCount, 3);
+  } finally {
+    updateAiSettings({ apiKey: " ", protocol: "auto" });
+  }
+});
+
+test("QQ Agent can search and send a mail image across AI tool rounds", async () => {
+  const suffix = `${process.pid}-${Date.now()}`;
+  const userOpenId = `ai-image-user-${suffix}`;
+  addProcessedEmail(email({
+    id: `agent-ai-image-${suffix}`,
+    subject: `Requested receipt ${suffix}`,
+    receivedAt: "2026-08-31T09:50:00.000Z"
+  }));
+  updateAiSettings({
+    apiKey: "agent-test-key",
+    baseUrl: "https://api.example.test/v1/chat/completions",
+    model: "agent-test-model",
+    protocol: "openai-chat"
+  });
+  let callCount = 0;
+  const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+    callCount += 1;
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      messages?: Array<{ content?: string }>;
+    };
+    const prompt = body.messages?.at(-1)?.content ?? "";
+    if (callCount === 1) {
+      assert.match(body.messages?.[0]?.content ?? "", /mail\.sendImage/);
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              finish: false,
+              toolCalls: [{ name: "mail.search", arguments: { query: suffix, limit: 1 } }]
+            })
+          }
+        }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    assert.match(prompt, /Requested receipt/);
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            finish: false,
+            toolCalls: [{ name: "mail.sendImage", arguments: { index: 1 } }]
+          })
+        }
+      }]
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  try {
+    const target = harness({ fetch, markdown: true, userOpenId });
+    const result = await target.service.handleDispatchEvent(event(
+      `请找到 ${suffix} 对应的邮件，完成后使用原通知形式交给我`,
+      `ai-image-${suffix}`,
+      userOpenId
+    ));
+
+    assert.deepEqual(result, { kind: "handled" });
+    assert.equal(callCount, 2);
+    assert.equal(target.sentImages.length, 1);
+    assert.equal(target.sent.length, 0);
+    assert.equal(target.sentMarkdown.length, 0);
   } finally {
     updateAiSettings({ apiKey: " ", protocol: "auto" });
   }

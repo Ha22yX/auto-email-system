@@ -193,6 +193,7 @@ export const qqNotificationSchema = z.object({
       permissions: z
         .object({
           readMail: z.coerce.boolean().default(true),
+          sendMailImages: z.coerce.boolean().default(true),
           manageReadState: z.coerce.boolean().default(true),
           manageNotifications: z.coerce.boolean().default(true),
           runProcessing: z.coerce.boolean().default(true),

@@ -65,6 +65,7 @@ const defaultNotifyCategories: Record<MailCategory, boolean> = {
 
 const defaultQqAgentPermissions: Record<QqAgentPermission, boolean> = {
   readMail: true,
+  sendMailImages: true,
   manageReadState: true,
   manageNotifications: true,
   runProcessing: true,
@@ -336,6 +337,7 @@ function normalizeQqAgentSettings(input: Partial<QqAgentSettings> | undefined): 
     maxResults: Math.min(10, Math.max(3, Number.isFinite(maxResults) ? maxResults : defaultQqAgentSettings.maxResults)),
     permissions: {
       readMail: Boolean(permissions.readMail),
+      sendMailImages: Boolean(permissions.sendMailImages),
       manageReadState: Boolean(permissions.manageReadState),
       manageNotifications: Boolean(permissions.manageNotifications),
       runProcessing: Boolean(permissions.runProcessing),

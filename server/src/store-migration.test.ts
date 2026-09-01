@@ -137,6 +137,7 @@ test("schema-v1 migration creates durable channel state idempotently", () => {
       maxResults: 6,
       permissions: {
         readMail: true,
+        sendMailImages: true,
         manageReadState: true,
         manageNotifications: true,
         runProcessing: true,

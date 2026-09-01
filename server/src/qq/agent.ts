@@ -4,6 +4,8 @@ import { buildProviderRequest, extractProviderText } from "../ai-adapters";
 import { resolveAiEndpoint, resolveAiProtocol } from "../ai-protocol";
 import { countUnreadImap } from "../email/imap";
 import { countUnreadPop3 } from "../email/pop3";
+import { renderEmailNotificationCard } from "../notifications/card";
+import { buildEmailNotificationModel, type EmailNotificationModel } from "../notifications/format";
 import {
   getEmailStats,
   getProcessedEmailById,
@@ -17,6 +19,7 @@ import {
   readQqState,
   readSettings,
   recordQqAgentEvent,
+  recordQqNotificationReference,
   retryNotificationDeliveriesByChannel,
   retryNotificationDelivery,
   resumeNotificationDelivery,
@@ -37,7 +40,13 @@ import type {
   QqBotConfig
 } from "../types";
 import { qqEventUserOpenId } from "./quote-read";
-import type { QqDirectMarkdownMessageInput, QqDirectMessageInput, QqDispatchEvent, QqSendResult } from "./types";
+import type {
+  QqDirectImageInput,
+  QqDirectMarkdownMessageInput,
+  QqDirectMessageInput,
+  QqDispatchEvent,
+  QqSendResult
+} from "./types";
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CONFIRMATION_TTL_MS = 10 * 60 * 1000;
@@ -45,6 +54,7 @@ const MAX_TOOL_CALLS = 4;
 const MAX_AGENT_STEPS = 6;
 const MAX_AGENT_TOTAL_TOOL_CALLS = 10;
 const MAX_QQ_MESSAGE_CHARS = 1800;
+const AGENT_MEDIA_SENT = Symbol("agent-media-sent");
 
 const categoryLabels: Record<MailCategory, string> = {
   important: "重要",
@@ -54,6 +64,7 @@ const categoryLabels: Record<MailCategory, string> = {
 
 const defaultAgentPermissions: Record<QqAgentPermission, boolean> = {
   readMail: true,
+  sendMailImages: true,
   manageReadState: true,
   manageNotifications: true,
   runProcessing: true,
@@ -72,6 +83,7 @@ const toolNames = [
   "mail.search",
   "mail.listRecent",
   "mail.getDetail",
+  "mail.sendImage",
   "mail.listByCategory",
   "mail.stats",
   "mail.markPanelRead",
@@ -103,6 +115,7 @@ export type QqAgentToolCall = {
 type QqAgentClient = {
   sendDirectMessage(input: QqDirectMessageInput): Promise<QqSendResult>;
   sendDirectMarkdownMessage?(input: QqDirectMarkdownMessageInput): Promise<QqSendResult>;
+  sendDirectImage?(input: QqDirectImageInput): Promise<QqSendResult>;
 };
 
 type AgentEmailRef = {
@@ -158,7 +171,10 @@ type ToolResult = {
   notificationRefs?: AgentNotificationRef[];
   nextPageTool?: LastList;
   pendingAction?: PendingAction;
+  mediaSent?: boolean;
 };
+
+type AgentResponse = string | typeof AGENT_MEDIA_SENT;
 
 type AgentPlan = {
   finish?: boolean;
@@ -205,6 +221,8 @@ type QqAgentServiceDependencies = {
   classify?: typeof classifyEmail;
   countUnreadImap?: typeof countUnreadImap;
   countUnreadPop3?: typeof countUnreadPop3;
+  renderEmailCard?: (model: EmailNotificationModel) => Promise<Buffer>;
+  recordMessageReference?: typeof recordQqNotificationReference;
 };
 
 const toolNameSet = new Set<string>(toolNames);
@@ -228,6 +246,7 @@ const toolPermissions: Record<QqAgentToolName, QqAgentPermission> = {
   "mail.search": "readMail",
   "mail.listRecent": "readMail",
   "mail.getDetail": "readMail",
+  "mail.sendImage": "sendMailImages",
   "mail.listByCategory": "readMail",
   "mail.stats": "readMail",
   "mail.markPanelRead": "manageReadState",
@@ -466,10 +485,41 @@ function periodFromMessage(message: string) {
   return undefined;
 }
 
+function parseListIndex(value: string | undefined) {
+  if (!value) return undefined;
+  if (/^\d{1,2}$/.test(value)) {
+    const number = Number(value);
+    return number > 0 ? number : undefined;
+  }
+  const digits: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (value === "十") return 10;
+  const [tensText, onesText] = value.split("十");
+  if (onesText !== undefined) {
+    const tens = tensText ? digits[tensText] : 1;
+    const ones = onesText ? digits[onesText] : 0;
+    return tens && ones !== undefined ? tens * 10 + ones : undefined;
+  }
+  return digits[value];
+}
+
 function indexFromMessage(message: string) {
-  const match = message.match(/第\s*(\d{1,2})\s*(?:封|条|个)?|看\s*(\d{1,2})|重试\s*(\d{1,2})|暂停\s*(\d{1,2})|恢复\s*(\d{1,2})/);
-  const value = match ? Number(match[1] || match[2] || match[3] || match[4] || match[5]) : NaN;
-  return Number.isFinite(value) && value > 0 ? value : undefined;
+  const numberPattern = "(\\d{1,2}|[一二三四五六七八九十]{1,3})";
+  const patterns = [
+    new RegExp(`第\\s*${numberPattern}\\s*(?:封|条|个)?`),
+    new RegExp(`(?:看|重试|暂停|恢复)\\s*${numberPattern}`)
+  ];
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    const value = parseListIndex(match?.[1]);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function hasMailImageSendIntent(message: string) {
+  const sendIntent = /(发给我|发我|发送|转发|图片|卡片|截图|重发|再发)/i.test(message);
+  const mailReference = /(邮件|第\s*(?:\d{1,2}|[一二三四五六七八九十]{1,3})|这封|上一封|上一条|刚才)/i.test(message);
+  return sendIntent && mailReference;
 }
 
 function messagePeriodArgs(message: string) {
@@ -556,7 +606,8 @@ function compactToolResult(result: ToolResult) {
     name: result.name,
     ok: result.ok,
     message: result.message,
-    data: result.data
+    data: result.data,
+    mediaSent: Boolean(result.mediaSent)
   };
 }
 
@@ -610,10 +661,11 @@ function helpText() {
     "**我可以帮你：**",
     "1. **查邮件**：`今天重要邮件有哪些`、`搜索 Grab receipt`、`最近有没有学校邮件`",
     "2. **看详情**：`看第 2 封`、`这封要做什么`",
-    "3. **记偏好**：`记住我的学校是 Wardlaw Hartridge`",
-    "4. **管已读**：`把第 2 封标记已读`",
-    "5. **管通知**：`QQ 通知失败有哪些`、`重试全部失败通知`",
-    "6. **管邮箱**：`检查邮箱连接`、`处理 Gmail 邮箱`",
+    "3. **发图片**：`第一封邮件发给我`、`把这封转发成图片`",
+    "4. **记偏好**：`记住我的学校是 Wardlaw Hartridge`",
+    "5. **管已读**：`把第 2 封标记已读`",
+    "6. **管通知**：`QQ 通知失败有哪些`、`重试全部失败通知`",
+    "7. **管邮箱**：`检查邮箱连接`、`处理 Gmail 邮箱`",
     "",
     "> 我会按需要连续调用工具，直到能给出结论。",
     "> 涉及修改或执行任务时，我会先让你确认。"
@@ -704,6 +756,8 @@ export class QqAgentService {
   private readonly classify: typeof classifyEmail;
   private readonly countUnreadImap: typeof countUnreadImap;
   private readonly countUnreadPop3: typeof countUnreadPop3;
+  private readonly renderEmailCard: (model: EmailNotificationModel) => Promise<Buffer>;
+  private readonly recordMessageReference: typeof recordQqNotificationReference;
   private readonly inFlightUsers = new Set<string>();
 
   constructor({
@@ -714,7 +768,9 @@ export class QqAgentService {
     fetch = globalThis.fetch.bind(globalThis),
     classify = classifyEmail,
     countUnreadImap: imapCounter = countUnreadImap,
-    countUnreadPop3: popCounter = countUnreadPop3
+    countUnreadPop3: popCounter = countUnreadPop3,
+    renderEmailCard = renderEmailNotificationCard,
+    recordMessageReference = recordQqNotificationReference
   }: QqAgentServiceDependencies) {
     this.readConfig = readConfig;
     this.readBinding = readBinding;
@@ -724,6 +780,8 @@ export class QqAgentService {
     this.classify = classify;
     this.countUnreadImap = imapCounter;
     this.countUnreadPop3 = popCounter;
+    this.renderEmailCard = renderEmailCard;
+    this.recordMessageReference = recordMessageReference;
   }
 
   async handleDispatchEvent(event: QqDispatchEvent) {
@@ -750,11 +808,14 @@ export class QqAgentService {
       const profile = this.readProfile(userOpenId);
       this.appendHistory(session, "user", message, agent);
       recordQqAgentEvent({ userOpenId, kind: "message", status: "received", message });
-      const reply = await this.respond(message, session, agent, profile);
-      this.appendHistory(session, "assistant", reply, agent);
+      const response = await this.respond(message, session, agent, profile);
+      const historyReply = response === AGENT_MEDIA_SENT ? "[已发送邮件图片]" : response;
+      this.appendHistory(session, "assistant", historyReply, agent);
       this.saveSession(session, agent);
       this.saveProfile(userOpenId, profile);
-      await this.sendReply(userOpenId, reply, incomingMessageId(event));
+      if (response !== AGENT_MEDIA_SENT) {
+        await this.sendReply(userOpenId, response, incomingMessageId(event));
+      }
       return { kind: "handled" as const };
     } catch (error) {
       const safeMessage = error instanceof Error ? error.message : String(error);
@@ -766,7 +827,12 @@ export class QqAgentService {
     }
   }
 
-  private async respond(message: string, session: AgentSession, agent: QqAgentSettings, profile: AgentProfile) {
+  private async respond(
+    message: string,
+    session: AgentSession,
+    agent: QqAgentSettings,
+    profile: AgentProfile
+  ): Promise<AgentResponse> {
     if (session.pendingAction && session.pendingAction.expiresAt <= new Date(this.now()).toISOString()) {
       session.pendingAction = undefined;
     }
@@ -820,7 +886,7 @@ export class QqAgentService {
     agent: QqAgentSettings,
     profile: AgentProfile,
     plan: AgentPlan
-  ) {
+  ): Promise<AgentResponse> {
     if (!plan.toolCalls.length) return plan.reply || helpText();
 
     const results: ToolResult[] = [];
@@ -828,6 +894,7 @@ export class QqAgentService {
       const result = await this.executeTool(call, session, agent, false);
       results.push(result);
       this.rememberToolResult(session, result);
+      if (result.mediaSent) return AGENT_MEDIA_SENT;
       if (result.pendingAction) {
         session.pendingAction = result.pendingAction;
         return result.message;
@@ -840,9 +907,13 @@ export class QqAgentService {
     return results.map((result) => result.message).join("\n\n") || plan.reply || helpText();
   }
 
-  private priorityHeuristicPlan(message: string, _session: AgentSession, profile: AgentProfile): AgentPlan | undefined {
+  private priorityHeuristicPlan(message: string, session: AgentSession, profile: AgentProfile): AgentPlan | undefined {
     if (/(帮助|help|菜单|功能|你会什么|你能干嘛|有什么用|能做什么)/i.test(message.trim())) {
       return { reply: helpText(), toolCalls: [] };
+    }
+    if (hasMailImageSendIntent(message) && session.lastEmails.length) {
+      const index = indexFromMessage(message) ?? session.lastEmails[0]?.index ?? 1;
+      return { toolCalls: [{ name: "mail.sendImage", arguments: { index } }] };
     }
     if (hasSchoolSearchIntent(message)) {
       const schoolName = schoolFromProfile(profile);
@@ -937,7 +1008,12 @@ export class QqAgentService {
     return undefined;
   }
 
-  private async aiAgentLoop(message: string, session: AgentSession, agent: QqAgentSettings, profile: AgentProfile) {
+  private async aiAgentLoop(
+    message: string,
+    session: AgentSession,
+    agent: QqAgentSettings,
+    profile: AgentProfile
+  ): Promise<AgentResponse | undefined> {
     const settings = readSettings().ai;
     if (!settings.apiKey.trim()) return undefined;
 
@@ -970,6 +1046,7 @@ export class QqAgentService {
           stepResults.push(result);
           allResults.push(result);
           this.rememberToolResult(session, result);
+          if (result.mediaSent) return AGENT_MEDIA_SENT;
           if (result.pendingAction) {
             session.pendingAction = result.pendingAction;
             return result.message;
@@ -1021,6 +1098,7 @@ export class QqAgentService {
       "finish=false 表示你还需要工具；此时 toolCalls 必须给出下一步工具调用，reply 可以为空。",
       "不要编造邮件内容。需要邮件数据时必须调用工具；拿到工具结果后再判断是否继续调用工具或 finish。",
       "你可以多轮调用工具：搜索、列表、详情、统计、通知队列等可以组合使用，直到信息足够再结束。",
+      "用户要求把某封邮件发给他、转发、发图片或发卡片时，先定位准确邮件，再调用 mail.sendImage。该工具会直接发送图片并结束本轮，必须单独调用，不要同时调用其他工具。",
       "写操作可以提出工具调用，后端会自动二次确认。",
       "当用户问你能做什么、功能、帮助时，不需要工具，直接用清晰 Markdown 列出能力和例句。",
       "如果用户使用“学校”等模糊词，要优先使用 userProfile.aliases 或 userProfile.schoolName 展开。若没有对应记忆，finish=true 并请用户先说“记住我的学校是 ...”。",
@@ -1030,6 +1108,7 @@ export class QqAgentService {
       "mail.search { query?, queries?, category?, mailboxId?, period?, limit?, offset? }",
       "mail.listRecent { mailboxId?, period?, limit?, offset? }",
       "mail.getDetail { emailId? 或 index? }",
+      "mail.sendImage { emailId? 或 index? }",
       "mail.listByCategory { category, mailboxId?, period?, limit?, offset? }",
       "mail.stats { mailboxId?, period?, since?, until? }",
       "mail.markPanelRead { emailId? 或 index?, panelRead? }",
@@ -1326,6 +1405,8 @@ export class QqAgentService {
         return this.toolListRecent(call, args, limit, offset);
       case "mail.getDetail":
         return this.toolGetDetail(call, args, session);
+      case "mail.sendImage":
+        return this.toolSendImage(call, args, session);
       case "mail.listByCategory":
         return this.toolListByCategory(call, args, limit, offset);
       case "mail.stats":
@@ -1487,6 +1568,58 @@ export class QqAgentService {
       data: {
         email: emailSummariesForAi([email], readMailboxes(), 0)[0],
         bodyExcerpt: body
+      }
+    };
+  }
+
+  private async toolSendImage(
+    call: QqAgentToolCall,
+    args: Record<string, unknown>,
+    session: AgentSession
+  ): Promise<ToolResult> {
+    const email = this.emailFromArgs(args, session);
+    if (!email) {
+      return {
+        name: call.name,
+        ok: false,
+        message: "我没找到要发送的邮件。可以先搜索或查看最近邮件，再说“第一封邮件发给我”。"
+      };
+    }
+    if (!this.client.sendDirectImage) {
+      return { name: call.name, ok: false, message: "当前 QQ 客户端没有开启富媒体图片发送能力。" };
+    }
+
+    const mailbox = readMailboxes().find((item) => item.id === email.mailboxId);
+    const image = await this.renderEmailCard(buildEmailNotificationModel(email, mailbox));
+    const sent = await this.client.sendDirectImage({
+      userOpenId: session.userOpenId,
+      image,
+      fileName: "mail-summary.png"
+    });
+    if (sent.messageId || sent.refIndex) {
+      try {
+        this.recordMessageReference({
+          emailId: email.id,
+          userOpenId: session.userOpenId,
+          messageId: sent.messageId,
+          refIndex: sent.refIndex
+        });
+      } catch {
+        // The image is already delivered; reference persistence must not cause a duplicate send.
+      }
+    }
+
+    return {
+      name: call.name,
+      ok: true,
+      message: `已发送《${safeSubject(email)}》的邮件图片。`,
+      mediaSent: true,
+      emailRefs: [{ index: 1, id: email.id, subject: safeSubject(email) }],
+      data: {
+        emailId: email.id,
+        imageBytes: image.length,
+        messageId: sent.messageId,
+        refIndex: sent.refIndex
       }
     };
   }

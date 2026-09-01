@@ -176,6 +176,7 @@ test("QQ AppSecret is encrypted and never returned by public settings", () => {
     maxResults: 6,
     permissions: {
       readMail: true,
+      sendMailImages: true,
       manageReadState: true,
       manageNotifications: true,
       runProcessing: true,
@@ -197,6 +198,16 @@ test("blank QQ AppSecret updates retain the saved credential", () => {
   assert.equal(publicSettings.enabled, true);
   assert.equal(publicSettings.hasAppSecret, true);
   assert.equal(JSON.stringify(publicSettings).includes("retained-test-secret"), false);
+});
+
+test("QQ Agent mail-image permission persists when disabled", () => {
+  try {
+    updateQqBotSettings({ agent: { permissions: { sendMailImages: false } } });
+    assert.equal(readQqBotConfig().agent.permissions.sendMailImages, false);
+    assert.equal(publicQqBotSettings(readQqBotConfig()).agent.permissions.sendMailImages, false);
+  } finally {
+    updateQqBotSettings({ agent: { permissions: { sendMailImages: true } } });
+  }
 });
 
 test("QQ settings and AppSecret roll back together when settings persistence fails", () => {

@@ -9,6 +9,7 @@ const agent = {
   maxResults: 6,
   permissions: {
     readMail: true,
+    sendMailImages: true,
     manageReadState: true,
     manageNotifications: true,
     runProcessing: true,
@@ -24,11 +25,12 @@ test("QQ notification settings accept a blank write-only secret and validate App
     enabled: true,
     quoteImageMarksRead: true,
     notifyCategories: { important: true, secondary: true, ignore: false },
-    agent: { enabled: true, permissions: { runProcessing: false } }
+    agent: { enabled: true, permissions: { runProcessing: false, sendMailImages: false } }
   });
   assert.equal(parsed.appSecret, "");
   assert.equal(parsed.agent?.enabled, true);
   assert.equal(parsed.agent?.permissions?.runProcessing, false);
+  assert.equal(parsed.agent?.permissions?.sendMailImages, false);
   assert.throws(() => qqNotificationSchema.parse({ ...parsed, appId: "not-an-app-id" }));
 });
 

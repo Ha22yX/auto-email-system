@@ -212,6 +212,7 @@ test("a delayed 401 for token A does not discard a refreshed token B", async () 
         maxResults: 6,
         permissions: {
           readMail: true,
+          sendMailImages: true,
           manageReadState: true,
           manageNotifications: true,
           runProcessing: true,

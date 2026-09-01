@@ -14,6 +14,7 @@ const TEST_CONFIG = {
     maxResults: 6,
     permissions: {
       readMail: true,
+      sendMailImages: true,
       manageReadState: true,
       manageNotifications: true,
       runProcessing: true,

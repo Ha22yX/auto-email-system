@@ -13,6 +13,7 @@ export type NotificationChannelSettings = {
 
 export type QqAgentPermission =
   | "readMail"
+  | "sendMailImages"
   | "manageReadState"
   | "manageNotifications"
   | "runProcessing"
